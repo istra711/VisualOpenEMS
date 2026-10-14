@@ -1,0 +1,416 @@
+"""Per-tab help content + dialog for the main window tabs (English UI)."""
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
+    QPlainTextEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+TAB_ORDER = [
+    "Geometry",
+    "Mesh Viewer",
+    "S-Params",
+    "Antenna",
+]
+
+TAB_HELP: dict[str, str] = {
+    "Geometry": """GEOMETRY — project tree, primitives, imported CAD
+
+Left panel (always visible)
+  • Project / Geometry list — primitives, materials, ports, dumps, assignments.
+  • Add Box / Cylinder Primitive — openEMS primitives in mm (project units).
+  • Add Assignment — bind FreeCAD mesh names to materials / boundary roles.
+  • Add Material — PEC, dielectric, conducting sheet, lumped RLC, or ignore.
+  • Add Port — lumped / MSL / waveguide port (also in the Ports / Dumps window).
+  • Edit / Fit NF2FF box — far-field box around the antenna.
+
+This tab (right)
+  • Imported objects — names + AABB after Import Geometry or FreeCAD export.
+  • Materials — material list currently used by the project.
+
+Workflow
+  1. FreeCAD… → launch FreeCAD or Export CAD (FCStd/STEP → meshes + openems_export.json).
+  2. Import Geometry… / Load project (Open…) — meshes appear in the list.
+  3. FreeCAD port marks (PORT_in1_start/stop or openems_port_* props) auto-fill Ports.
+  4. Next: Mesh preset + Build, then Simulation Parameters, Ports / Dumps (Geometry menu), Run.
+
+Presets (Project menu — they replace the current project)
+  • Preset: Patch Antenna… — 2.45 GHz microstrip patch, one port.
+  • Preset: Yagi Antenna… — 2.45 GHz Yagi-Uda + FreeCAD model (FCStd/STEP/STL).
+  • Preset: PCB Filter… — 2-port microstrip notch filter on FR4, stop band at
+    2.45 GHz (examples/run_pcb_filter_example.py measures both S-matrix columns).
+
+Units: project geometry is always millimetres unless you change Drawing unit on Mesh.
+
+Tips
+  • Double-check that every mesh name has a material assignment (or a sensible ignore).
+  • Port start/stop must sit between conductor and ground / through the feed.
+  • After FreeCAD export, ports are auto-added — review them in the Ports / Dumps window (Geometry menu).
+  • Imported solids that form an axis-aligned box become openEMS boxes (exact metal
+    edges); every other shape stays an STL polyhedron (PolyhedronReader).
+""",
+    "Mesh Viewer": """MESH VIEWER — slices, cell sizes, 3D export
+
+Views (tabs inside the plot area)
+  • XY / XZ / YZ — 2D slice with mesh grid, primitive AABBs, ports, NF2FF box.
+  • Cell sizes — per-axis cell-size plots along the domain.
+  • Domain overview — bounding box and mesh resolution summary.
+
+Navigation
+  • Mouse wheel — zoom at cursor (works even without the toolbar zoom).
+  • Double-click — reset / home view.
+  • Toolbar — matplotlib pan/zoom/home/save.
+  • Pop-out — open the viewer in a large separate window (1200×800).
+  • Slice slider — move the cutting plane (snaps to the nearest mesh line on the slice axis).
+
+Frames (overview + slices)
+  • Black dashed — FDTD domain (geometry + air margin, on mesh lines); size it on
+    Sim Params → Boundary conditions (see that tab's help).
+  • Purple dash-dot — NF2FF box; updated right away after Fit/Edit NF2FF
+    (build the mesh first — without a built mesh nothing is drawn).
+  • Colored rectangles — primitive bounding boxes; red dot — port center.
+  • Red outline + “OUTSIDE DOMAIN” note (red text, overview panel and slice
+    title) — that primitive sticks out of the black frame; openEMS would clip
+    it silently. Fix: bigger air margin (Sim Params) or smaller geometry,
+    then Build Mesh.
+
+AppCSXCAD
+  • “Open in AppCSXCAD” exports CSX XML and launches the 3D viewer for a true mesh review.
+
+Tips
+  • The “Mesh Viewer Scene Info” tab (in the log panel, next to Log / Mesh Report)
+    shows the same info text — useful while you watch the log or the report.
+  • Check that the mesh lines pass through ports and thin substrates (cell size there).
+  • Very large air margins shrink useful resolution — see Simulation Parameters.
+  • The viewer holds the last built CSX — rebuild after geometry or mesh changes.
+""",
+    "Simulation Parameters": """SIMULATION PARAMETERS — standalone window (Ctrl+Shift+P)
+
+Opened from Simulation menu → Simulation Parameters…. Two tabs; the dialog
+keeps its own copy until you Apply. (This window replaces the former Sim
+Params tab — the same fields are here.)
+
+Tab Simulation-Parameter
+  Computed (read-only)
+    • λ_air at f0, effective max timesteps, boundary notes.
+    • Patch / geometry readout when using the built-in patch preset.
+  Overrides
+    • Max timesteps, end criteria (S-param stability).
+    • Boundary xmin/xmax/ymin/ymax/zmin/zmax (PEC / PML / periodic…).
+    • Air margin around geometry + min cell size.
+    • Apply Patch Params — feeds / patch size for the patch antenna example.
+
+Tab NF2FF-Parameter
+  • Enable far-field (NF2FF) — creates the recording box + far-field post.
+  • Evaluation frequencies — Mode:
+      - Auto (S11 minimum): one frequency at the S11 dip.
+      - N points (mesh range): N points equally spaced over the mesh
+        frequency range (start/stop frequency from the Mesh tab), e.g.
+        11 points from 2 to 2.8 GHz → gain vs frequency curve.
+      - Frequency list: explicit entries, each with unit Hz / kHz / MHz /
+        GHz (bare number = Hz), e.g. "2.4 GHz, 2.45 GHz, 2500 MHz".
+    After Run: Antenna tab → Plot combo → "Gain vs Frequency".
+  • NF2FF θ / φ steps — angular resolution of cuts and the 3D pattern.
+  • Fit to geometry + air margin / Edit box… — far-field box editor.
+
+Domain size (black dashed frame in the Mesh Viewer)
+  • There is no direct box editor: domain = geometry bbox + air margin + cell
+    rounding. This is where you control it.
+  • "Air margin auto (λ/4 free-space)" — ON: λ/4 at the STOP frequency, always
+    εr=1 (2.7 GHz → 27.76 mm per face). Changing Stop also changes the margin.
+  • Auto OFF → "Air margin (all faces)" — fixed mm value for all 6 faces.
+    In the project JSON: boundary.air_margin = [xmin,xmax,ymin,ymax,zmin,zmax]
+    (one value per face; the GUI writes the same value to all six).
+  • PML size — each PML face gets PML_size+1 extra cells outside the air region
+    (bigger domain). No effect on faces set to MUR.
+  • Mesh preset — air cells grow up to λ/10…λ/40, so the outer frame line snaps
+    to cells (a few mm off, slightly different per face).
+  • After changing any of this: Build Mesh, then Fit NF2FF to Geometry so the
+    far-field box stays inside the domain. Too small → "outside the field
+    domain" warnings, dumps/NF2FF clamped; too large → more cells (RAM/time).
+
+Buttons
+  • Apply — writes every value into the project, mirrors them back into the
+    (hidden) Sim Params panel used by run/save, and refreshes
+    work/<project>/project_run.py when it already exists (a visible Script
+    editor reloads it unless you have unsaved edits there).
+  • Close — discards anything you edited but did not apply.
+  • Apply patch (rebuild primitives) — rebuilds the patch antenna with the
+    dialog's feed / patch values; the window re-syncs to the new project.
+  • Fit NF2FF / Edit NF2FF — far-field box around the current geometry.
+
+Notes
+  • Second click on the menu entry re-uses the same window (it re-syncs).
+  • Values always stored in Hz (the display unit is display only).
+
+Tips
+  • Effective timestep already accounts for CFL + cell size — don't force tiny max_ts without need.
+  • PML on the radiation sides;PEC often fine on ground.
+  • Auto air margin = λ/4 at the STOP frequency (not geometry-based) — uncheck it
+    if you need a fixed, reproducible domain size.
+  • Change max_timesteps / end_criteria here before a long run.
+  • Threads (numThreads): 0 = Auto (all cores). Set e.g. 4 to leave cores free
+    or to limit CPU load on shared machines — passed to FDTD.Run(numThreads=N).
+
+Run script (toolbar: Script…)
+  • Run Simulation writes work/<project>/project_run.py (plus project_copy.json,
+    geometry_primitives.json) — that file is what actually runs openEMS.
+  • Script… opens it for viewing/editing: Save, Revert, Regenerate from project.
+  • Apply in this window (or in Mesh Parameters) also refreshes an existing
+    script, so the editor always shows the current project state.
+  • Run regenerates the script; hand-edits are copied to project_run_edited.py and
+    you are asked whether to regenerate or run your edited script as-is.
+  • Run an edited script by hand:  <simulation python> work/<project>/project_run.py
+""",
+    "Mesh Parameters": """MESH PARAMETERS — standalone window (Ctrl+Shift+M)
+
+Opened from Mesh menu → Mesh Parameters…. All mesh settings in one place;
+the dialog is lazy — edits never touch the project until you Apply.
+
+Fields
+  • Mesh preset — low / medium / high / very_high (lambda sampling).
+  • Frequency unit — display only (Hz/kHz/MHz/GHz); values stored in Hz.
+  • Center f0 / Corner fc — Gauss excitation; editing f0/fc sets
+    start/stop = f0 ± fc.
+  • Start / Stop — simulation band for mesh λ and S-params (independent
+    overrides; editing these clamps f0 into the band and sets fc).
+  • Drawing unit — project length unit for new primitives (default mm).
+
+Readout (live, before Apply)
+  • λ_air at f_max, max/target cell size, current preset + frequencies.
+  • Computed from the draft buffer, not from the project.
+
+Buttons
+  • Apply — writes into the project (f0 ± fc mirror), mirrors the values into
+    the hidden mesh form, and refreshes work/<project>/project_run.py when it
+    already exists.
+  • Close — discards unapplied changes.
+
+Notes
+  • Second click on the menu entry re-uses the same window (it re-syncs).
+  • Build CSX + Mesh + Validate (Ctrl+M / Mesh menu) reads the project, so
+    Apply first, then Build.
+  • Domain size (black dashed frame in the Mesh Viewer) is NOT here — it
+    comes from air margin / boundary: Sim Params → Boundary conditions.
+""",
+    "Ports / Dumps": """PORTS / DUMPS — excitation, field dumps, NF2FF
+
+Opened from Geometry menu → Ports / Dumps… (Ctrl+Shift+D) — a modeless window
+with live editors: changes apply immediately (no Apply/Close round-trip).
+
+Ports
+  • Double-click a port (or Edit Port…) — name, type (lumped / MSL / rect waveguide),
+    resistance, direction, start/stop, mesh dirs, excite flag.
+  • Remove Port — delete the selected entry.
+  • FreeCAD PORT_in1_start/stop or openems_port_* properties are imported automatically.
+  • Settings → Port defaults — type, R, excite, mesh dirs used when FreeCAD omits them
+    (PORT points are geometry only). Explicit openems_port_* values always win.
+  • Excite exactly one port — one FDTD run measures ONE S-matrix column (S11 + S21 for a
+    2-port). Other columns = more runs with a different port excited ("Excite" flag),
+    merged afterwards: examples/run_pcb_filter_example.py does this for the 2-port
+    PCB filter preset (toolbar: Preset: PCB Filter…).
+
+Dumps
+  • Enable field dumps — writes E/H/J fields for AppCSXCAD / Paraview.
+  • Add Field Dump… — region + quantity (E, H, J, SAR, …).
+
+NF2FF
+  • Enable NF2FF box — far-field box for pattern results.
+  • Edit / Fit NF2FF to Geometry — box around the antenna.
+
+Tips
+  • Port vector direction must cross the intended gap (feed) and be meshed.
+  • Resistance 50 Ω default — change globally in Settings if your system differs.
+  • After editing ports, rebuild the mesh before Run.
+""",
+    "S-Params": """S-PARAMS — results, Smith chart, markers
+
+After a successful Run
+  • Loads Touchstone (sparams.sNp) + simulation JSON from the work folder.
+  • Loaded files lists each entry as subpath relative to the work dir (full
+    path in the tooltip); click an entry to load it.
+  • Marker style picks which format the marker list shows (dB, |S|,
+    Phase, Γ, Z, Y, VSWR, RL — or All formats for every format at once).
+  • Plot |S| in dB (and other formats), Smith chart.
+  • Marker: click the plot or use Go to min (deepest S11 / selected param).
+  • Cursor / markers show frequency + value; right-click a marker in the
+    list to delete it (Clear markers removes all).
+  • Pop-out S-Graph — separate window for a large plot.
+
+Tips
+  • No data → run the simulation first; empty folder → set work dir in Settings.
+  • Marker minimum near 2.45 GHz (or your f0) is the usual resonance check.
+  • Logs tab / Log panel show export paths when Touchstone files are written.
+  • Multi-port (n > 1): one run fills one column — the rest stay empty (NaN) in
+    sparams.json until every run is merged; Touchstone is written only when the
+    matrix is complete (viewer reads .sNp and .json).
+""",
+    "Antenna": """ANTENNA — far-field pattern, directivity, gain
+
+After a successful Run (with NF2FF enabled)
+  • Loads simulation/nf2ff/nf2ff.json written by the NF2FF post-processing.
+  • Loaded files — lists each file as subpath relative to the work dir plus
+    file name (e.g. myproj/simulation/nf2ff/nf2ff.json); tooltip = full path.
+  • Details — header shows the current file name in parentheses; below it
+    Dmax, Gmax, eta, Prad and theta/phi points for the selected frequency.
+  • Plots (combo): E-Plane (phi=90), H-Plane (phi=0), Azimuth (theta=90),
+    Gain vs Frequency, Radiated Efficiency vs Frequency, 3D Pattern.
+  • Radiated Efficiency vs Frequency — eta(f) in % from the exported
+    efficiency array (Prad/P_acc); without it eta derives from gain/Dmax.
+  • Plane cuts show the full 360° plane (phi0 half + phi0+180 mirror half);
+    dB radial tick labels are placed at 90°.
+  • Freq combo — select the evaluation frequency when several were computed.
+  • 3D checkbox — show the 3D pattern (downsampled for large grids); the
+    dedicated "3D Pattern" plot type always shows it (also in the pop-out
+    window). "3D field" selects Gain or Dmax. Absolute dBi scaling: the
+    "dBi min" slider sets the lower bound (max = pattern max); the window
+    maps to both the surface radius (0 at min, 1 at max) and the color scale
+    (colorbar in dBi, extend arrow when data lies below the window). Raise
+    the slider to zoom the color gradient into a dBi range of interest.
+    "cmap" (top button row, next to the 3D checkbox) selects the colormap of
+    the surface and colorbar (viridis, plasma, inferno, turbo, jet, coolwarm,
+    gray); it only appears while the 3D view is active and is mirrored in
+    the pop-out window's top row.
+    The 3D axes show no numbers — the colorbar is the dBi scale.
+  • Markers — left-click a 2D plot to drop a marker (snaps to the nearest data
+    point: angle + dBi on the cuts, frequency + dBi / % on the vs-f plots; the
+    3D view takes no markers). All markers are listed on the left with their
+    plot name; right-click a row → Delete marker, or use Clear markers (also
+    in the pop-out window).
+  • Opening angle (HPBW) — half-power beamwidth of the current polar cut:
+    angular width of the main lobe at −3 dB below the pattern peak
+    (interpolated). Drawn as the grey −3 dB circle + crimson edge lines;
+    value in the Details block and the plot title. Pattern-only (gain or
+    directivity) — no S-parameters.
+  • VRV (F/B) — front-to-back ratio (Vorwärts-Rückwärts-Verhältnis) of the
+    current polar cut: Gmax − gain at Gmax+180°, in dB and as linear ratio.
+    Orange diamond marks the back lobe. Pattern-only, no S-parameters.
+  • Pop out graph — separate window for a large plot.
+
+Enabling NF2FF (far-field)
+  • Simulation Parameters (Ctrl+Shift+P) → NF2FF-Parameter tab → Enable
+    far-field (NF2FF), or Ports / Dumps window → "Enable NF2FF box".
+  • Both the Sim Params flag and the NF2FF box must be on for the run to
+    create the recording box.
+  • Evaluation frequencies — same tab: Auto (S11 minimum), N points
+    equally spaced over the mesh frequency range (gain vs frequency curve),
+    or an explicit list (Hz/kHz/MHz/GHz per entry).
+  • Fit NF2FF to Geometry after mesh changes so the box stays inside the
+    FDTD domain (too small → clamped, Prad ~ 0).
+
+Values
+  • Dmax [dBi] — peak directivity: how strongly the antenna concentrates the
+    radiated power in its best direction, referenced to an isotropic radiator
+    (0 dBi). Radiation pattern only, no losses.
+  • gain [dBi] — usable power in that direction:
+    gain = Dmax + 10*log10(eta), eta = Prad/Pin (radiated / accepted power;
+    Pin taken spectrally from the port voltage/current). gain <= Dmax.
+  • Prad [W*s^2] — total radiated power at the evaluation frequency
+    (pulse-DFT spectral units; the ratios eta and gain are unaffected).
+  • eta / radiated efficiency — fraction of the accepted power that is
+    radiated (0..1, plotted as %); gain = Dmax + 10*log10(eta).
+  • theta 0..180 deg, phi 0..360 deg; polar cuts are in dBi.
+
+Tips
+  • No data → run the simulation first with NF2FF enabled.
+  • If Prad ~ 0 or Dmax looks wrong, the NF2FF box is likely clamped outside
+    the domain — Fit NF2FF to Geometry, rebuild, and re-run.
+  • Summary PNG (nf2ff_summary.png) is written next to nf2ff.json.
+""",
+}
+
+_DEFAULT_HELP = """No help defined for this tab yet."""
+
+
+def help_for(tab_title: str) -> str:
+    return TAB_HELP.get(tab_title, _DEFAULT_HELP)
+
+
+class TabHelpDialog(QDialog):
+    """Dialog showing help for one tab; combo switches tabs without reopening."""
+
+    def __init__(self, parent: QWidget | None, initial_tab: str = "") -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Help")
+        self.resize(640, 520)
+        root = QVBoxLayout(self)
+
+        row = QComboBox()
+        row.addItems(TAB_ORDER)
+        if initial_tab in TAB_ORDER:
+            row.setCurrentText(initial_tab)
+        elif initial_tab:
+            # unknown tab name — still show its content if present
+            row.addItem(initial_tab)
+            row.setCurrentText(initial_tab)
+        root.addWidget(QLabel("Tab"))
+        root.addWidget(row)
+
+        self.viewer = QPlainTextEdit()
+        self.viewer.setReadOnly(True)
+        self.viewer.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.viewer.setFont(self.viewer.font())
+        root.addWidget(self.viewer, 1)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        bb.rejected.connect(self.reject)
+        bb.accepted.connect(self.accept)
+        root.addWidget(bb)
+
+        row.currentTextChanged.connect(self._reload)
+        self._combo = row
+        self._reload(row.currentText())
+
+    def _reload(self, title: str) -> None:
+        self.viewer.setPlainText(help_for(title))
+
+
+def show_tab_help(parent: QWidget | None, tab_title: str) -> None:
+    dlg = TabHelpDialog(parent, tab_title)
+    dlg.exec()
+
+
+def make_help_button(tab_title: str, on_click) -> QPushButton:
+    btn = QPushButton("Help")
+    btn.setToolTip(f"Help for the {tab_title} tab")
+    btn.clicked.connect(on_click)
+    return btn
+
+
+def inject_help_button(page: QWidget, tab_title: str, parent: QWidget | None) -> bool:
+    """Insert a Help button at the top of a tab page that already has a layout.
+
+    SimParamsPanel / SParamViewer / MeshGeometryViewer are panels — this adds
+    a slim header row. Returns True if a button was inserted.
+    """
+    layout = page.layout()
+    if layout is None:
+        return False
+
+    from PySide6.QtWidgets import QHBoxLayout
+
+    header = QWidget()
+    hl = QHBoxLayout(header)
+    hl.setContentsMargins(0, 0, 0, 0)
+    lbl = QLabel(tab_title)
+    lbl.setStyleSheet("font-weight: bold;")
+    hl.addWidget(lbl)
+    hl.addStretch(1)
+    hl.addWidget(make_help_button(tab_title, lambda _=False, t=tab_title: show_tab_help(parent, t)))
+
+    # Insert as first child where possible
+    if hasattr(layout, "insertWidget"):
+        try:
+            layout.insertWidget(0, header)
+        except Exception:  # noqa: BLE001
+            layout.addWidget(header)
+    else:
+        layout.addWidget(header)
+    return True

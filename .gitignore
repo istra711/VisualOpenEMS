@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project runtime data
+work/
+app_settings.json
+app_settings.json.bak
+Backup/
+.build_exe_work/
+
+# Build artifacts
+build_exe.log
+build_exe.log.err
+
+# Test cache
+.pytest_cache/
+
+# easyMesh build artifacts
+third_party/easyMesh4openEMS/build/
+third_party/easyMesh4openEMS/*.o
+third_party/easyMesh4openEMS/*.pyd
+third_party/easyMesh4openEMS/*.so
+
+# Temporary
+*.tmp
+*.temp

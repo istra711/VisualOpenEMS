@@ -1,0 +1,3187 @@
+"""Main window — English UI for FreeCAD → openEMS workflow."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from queue import Empty, Queue
+
+from PySide6 import QtCore
+from PySide6.QtCore import QUrl, QObject, Qt, QTimer, Signal, QThread
+from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSpinBox,
+    QSplitter,
+    QStatusBar,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.freecad_io.importer import load_geometry_file, overall_bounds
+from app.models.project import GeomAssignment, PortDef, Project
+from app.settings import AppSettings
+from app.simulation.runner import SimulationRunner
+from app.simulation.script_gen import generate_run_script
+from app.csxcad_builder.primitives import patch_antenna_primitives
+from app.csxcad_builder.quantize import f32 as _f32
+from app.freecad_io.freecad_mesh import tessellate_cad_to_meshes
+
+# Tree kinds the context menu / geometry menu can duplicate (geom and nf2ff
+# are singleton/read-only entries).
+DUP_TREE_KINDS = frozenset({"prim", "assign", "mat", "port", "dump"})
+
+
+def _read_text(path: Path) -> str | None:
+    """File content, or None when the file is missing/unreadable."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+class _LogBridge(QObject):
+    """Thread-safe log hop: worker threads emit, UI thread runs the slot."""
+
+    line = Signal(str)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, settings: AppSettings) -> None:
+        super().__init__()
+        self.settings = settings
+        self.project = Project.new_default("untitled")
+        self.primitives: list[dict] = []
+        self.runner = SimulationRunner(settings, app_root=APP_ROOT)
+        self._current_file_path: Path | None = None
+        self.setWindowTitle("FreeCAD OpenEMS GUI")
+        self._build_ui()
+        self._apply_window_geometry()
+        self.statusBar().showMessage("Ready")
+
+    def _screen_avail(self):
+        screen = self.screen()
+        if screen is None:
+            from PySide6.QtWidgets import QApplication
+
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return QtCore.QRect(0, 0, 1280, 800)
+        return screen.availableGeometry()
+
+    def _apply_window_geometry(self) -> None:
+        """Restore saved geometry, else fit on the primary available screen."""
+        avail = self._screen_avail()
+        # Adaptive minimum: never force a size larger than the screen
+        min_w = max(700, min(900, avail.width() - 40))
+        min_h = max(450, min(600, avail.height() - 40))
+        self.setMinimumSize(min_w, min_h)
+
+        geo = getattr(self.settings, "window_geometry", "") or ""
+        if geo:
+            try:
+                import base64
+
+                data = base64.b64decode(geo)
+                if self.restoreGeometry(QtCore.QByteArray(data)):
+                    self._clamp_to_screen(avail)
+                    return
+            except Exception as e:  # noqa: BLE001
+                print("restore geometry failed:", e)
+
+        self._fit_default(avail)
+
+    def _fit_default(self, avail) -> None:
+        """~92% of available space, clamped to screen, centered."""
+        min_w = max(700, min(900, avail.width() - 40))
+        min_h = max(450, min(600, avail.height() - 40))
+        w = int(avail.width() * 0.92)
+        h = int(avail.height() * 0.92)
+        w = max(min_w, min(w, avail.width() - 16, 1600))
+        h = max(min_h, min(h, avail.height() - 16, 900))
+        self.resize(w, h)
+        x = avail.x() + max(0, (avail.width() - w) // 2)
+        y = avail.y() + max(0, (avail.height() - h) // 2)
+        self.move(x, y)
+
+    def _clamp_to_screen(self, avail) -> None:
+        geo = self.frameGeometry()
+        if geo.width() > avail.width() or geo.height() > avail.height():
+            self._fit_default(avail)
+            return
+        # pull fully on-screen if needed
+        x = self.x()
+        y = self.y()
+        if x < avail.x():
+            x = avail.x()
+        if y < avail.y():
+            y = avail.y()
+        if x + geo.width() > avail.x() + avail.width():
+            x = max(avail.x(), avail.x() + avail.width() - geo.width())
+        if y + geo.height() > avail.y() + avail.height():
+            y = max(avail.y(), avail.y() + avail.height() - geo.height())
+        self.move(x, y)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # Final safety: if something (sizeHint/docks) blew past the screen, refit.
+        avail = self._screen_avail()
+        if self.width() > avail.width() or self.height() > avail.height():
+            self._fit_default(avail)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        try:
+            import base64
+
+            data = bytes(self.saveGeometry())
+            self.settings.window_geometry = base64.b64encode(data).decode("ascii")
+            self.settings.log_panel_visible = self.btn_log_toggle.isChecked()
+            self.settings.save()
+        except Exception as e:  # noqa: BLE001
+            print("save geometry failed:", e)
+        super().closeEvent(event)
+
+    def _build_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+
+        # Hidden off-screen action buttons (kept referenced — a bare local would
+        # be GC'd and its C++ object deleted). All of them are reachable via the
+        # menu bar; they only exist as the menu's click/state targets (esp.
+        # btn_log_toggle for the View menu check state, btn_help for the label,
+        # btn_build_mesh for run-time enable/disable).
+        self.btn_new = QPushButton("New Project")
+        self.btn_open = QPushButton("Open…")
+        self.btn_save = QPushButton("Save…")
+        self.btn_import = QPushButton("Import Geometry…")
+        self.btn_freecad = QPushButton("FreeCAD…")
+        self.btn_freecad.setToolTip(
+            "Launch FreeCAD GUI or export FCStd/STEP → meshes for openEMS"
+        )
+        self.btn_patch = QPushButton("Preset: Patch Antenna…")
+        self.btn_yagi = QPushButton("Preset: Yagi Antenna…")
+        self.btn_yagi.setToolTip(
+            "2.45 GHz Yagi-Uda + FreeCAD model (FCStd/STEP/STL) under work/yagi_antenna"
+        )
+        self.btn_pcb = QPushButton("Preset: PCB Filter…")
+        self.btn_pcb.setToolTip(
+            "2.45 GHz microstrip notch filter on FR4 (2 ports) under work/pcb_filter"
+        )
+        self.btn_run = QPushButton("Run Simulation")
+        self.btn_abort = QPushButton("Abort")
+        self.btn_script = QPushButton("Script…")
+        self.btn_script.setToolTip(
+            "View / edit the generated project_run.py (Run Simulation regenerates it)"
+        )
+        self.btn_settings = QPushButton("Settings…")
+        self.btn_sparams = QPushButton("S-Params Viewer")
+        self.btn_sparams_popout = QPushButton("Pop-out S-Graph")
+        self.btn_sparams_popout.setToolTip("Open the S-param plot in a separate window")
+        self.btn_antenna = QPushButton("Antenna Pattern Viewer")
+        self.btn_antenna_popout = QPushButton("Pop-out Antenna Graph")
+        self.btn_antenna_popout.setToolTip("Open the antenna pattern plot in a separate window")
+        self.btn_log_toggle = QPushButton("Log")
+        self.btn_log_toggle.setCheckable(True)
+        self.btn_log_toggle.setChecked(bool(getattr(self.settings, "log_panel_visible", True)))
+        self.btn_help = QPushButton("Help")
+        self.btn_help.setToolTip("Open help for the currently selected tab")
+        self.btn_exit = QPushButton("Exit")
+        self._hidden_toolbar_buttons: list[QPushButton] = [
+            self.btn_new,
+            self.btn_open,
+            self.btn_save,
+            self.btn_import,
+            self.btn_freecad,
+            self.btn_patch,
+            self.btn_yagi,
+            self.btn_pcb,
+            self.btn_run,
+            self.btn_abort,
+            self.btn_script,
+            self.btn_settings,
+            self.btn_sparams,
+            self.btn_sparams_popout,
+            self.btn_antenna,
+            self.btn_antenna_popout,
+            self.btn_log_toggle,
+            self.btn_help,
+            self.btn_exit,
+        ]
+        for b in self._hidden_toolbar_buttons:
+            b.hide()
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        root.addWidget(splitter, 1)
+
+        # Left: project tree + geometry
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        lv.addWidget(QLabel("Project / Geometry"))
+        self.tree = QListWidget()
+        # No buttons below the tree any more: everything is reachable via the
+        # Geometry menu (Add/Edit/Duplicate/Delete/NF2FF) or right-click.
+        self.tree.setToolTip(
+            "Project structure.\n"
+            "Double-click to edit · right-click for Edit/Duplicate/Remove · Delete key removes the selection.\n"
+            "Geom entries are imported CAD — edit geometry in FreeCAD."
+        )
+        lv.addWidget(self.tree)
+        self.tree.itemDoubleClicked.connect(self._on_tree_double_clicked)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
+        self.tree.keyPressEvent = self._tree_key_press  # type: ignore[method-assign]
+        splitter.addWidget(left)
+
+        # Right tabs
+        tabs = QTabWidget()
+        # Vertical split: workflow tabs on top, log panel below
+        # (not a QDockWidget, not a tab — avoids duplicate log UI).
+        self.right_split = QSplitter(Qt.Orientation.Vertical)
+        self.right_split.addWidget(tabs)
+        splitter.addWidget(self.right_split)
+
+        # Geometry tab
+        geom_tab = QWidget()
+        gv = QVBoxLayout(geom_tab)
+        self.geom_info = QPlainTextEdit()
+        self.geom_info.setReadOnly(True)
+        gv.addWidget(QLabel("Imported objects"))
+        gv.addWidget(self.geom_info)
+        self.mat_list = QListWidget()
+        gv.addWidget(QLabel("Materials"))
+        gv.addWidget(self.mat_list)
+        self._refresh_materials()
+        tabs.addTab(geom_tab, "Geometry")
+
+        # Mesh form (hidden off-screen — canonical sync/edit target for the
+        # Mesh Parameters dialog + build). The Mesh tab page was removed in
+        # favour of the Mesh Parameters window (Mesh menu → Mesh Parameters…).
+        # Keep a strong ref: without a parent a hidden QWidget would be GC'd
+        # and its child spins/combos would become deleted C++ objects.
+        self._mesh_form = QWidget()
+        self._mesh_form.hide()
+        mv = QVBoxLayout(self._mesh_form)
+        top = QHBoxLayout()
+        form = QFormLayout()
+        self.cmb_preset = QComboBox()
+        self.cmb_preset.addItems(["low", "medium", "high", "very_high"])
+        self.cmb_preset.setCurrentText("high")
+        from app.ui.freq_units import (
+            FREQ_UNITS,
+            configure_freq_spin,
+            set_spin_hz,
+            spin_hz,
+            unit_combo_items,
+        )
+
+        self._freq_unit_name = "GHz"
+        self._freq_unit_factor = float(FREQ_UNITS["GHz"])
+        self.cmb_freq_unit = QComboBox()
+        unit_combo_items(self.cmb_freq_unit)
+        self.cmb_freq_unit.setCurrentText(self._freq_unit_name)
+        self.cmb_freq_unit.setToolTip(
+            "Display unit for frequencies (Hz / kHz / MHz / GHz).\n"
+            "Values are always stored and simulated in Hz."
+        )
+
+        self.spn_f0 = QDoubleSpinBox()
+        self.spn_f0.setKeyboardTracking(False)
+        configure_freq_spin(self.spn_f0, self._freq_unit_name)
+        self.spn_f0.setValue(2.45)  # GHz display default
+        self.spn_f0.setToolTip(
+            "Gauss excitation center (SetGaussExcite f0) and mesh target frequency.\n"
+            "Editing f0/fc updates Start/Stop as f0±fc."
+        )
+        self.spn_fc = QDoubleSpinBox()
+        self.spn_fc.setKeyboardTracking(False)
+        configure_freq_spin(self.spn_fc, self._freq_unit_name)
+        self.spn_fc.setValue(0.5)
+        self.spn_fc.setToolTip(
+            "Gauss corner frequency (bandwidth/2).\n"
+            "Editing f0/fc updates Start/Stop as f0±fc."
+        )
+        self.spn_start_f = QDoubleSpinBox()
+        self.spn_start_f.setKeyboardTracking(False)
+        configure_freq_spin(self.spn_start_f, self._freq_unit_name)
+        self.spn_start_f.setValue(1.95)
+        self.spn_start_f.setToolTip(
+            "Simulation start frequency (mesh λ + S-param range).\n"
+            "Edit this and Stop directly — independent of f0/fc."
+        )
+        self.spn_stop_f = QDoubleSpinBox()
+        self.spn_stop_f.setKeyboardTracking(False)
+        configure_freq_spin(self.spn_stop_f, self._freq_unit_name)
+        self.spn_stop_f.setValue(2.95)
+        self.spn_stop_f.setToolTip(
+            "Simulation stop frequency (mesh λ + S-param range).\n"
+            "Edit this and Start directly — independent of f0/fc."
+        )
+        self.cmb_unit = QComboBox()
+        self.cmb_unit.addItems(["mm", "um", "m"])
+        form.addRow("Mesh preset", self.cmb_preset)
+        form.addRow("Frequency unit", self.cmb_freq_unit)
+        form.addRow("Center frequency f0", self.spn_f0)
+        form.addRow("Corner frequency fc", self.spn_fc)
+        form.addRow("Start frequency", self.spn_start_f)
+        form.addRow("Stop frequency", self.spn_stop_f)
+        form.addRow("Drawing unit", self.cmb_unit)
+        top.addLayout(form)
+        top.addStretch(1)
+        self.btn_build_mesh = QPushButton("Build CSX + Mesh + Validate")
+        top.addWidget(self.btn_build_mesh)
+        mv.addLayout(top)
+
+        # Mesh check report (single source: _set_mesh_report fills the log
+        # panel's Mesh Report tab; this widget is the legacy off-screen target)
+        self.mesh_report = QPlainTextEdit()
+        self.mesh_report.setReadOnly(True)
+        self.mesh_report.hide()
+        mv.addWidget(self.mesh_report)
+
+        # Mesh Viewer tab — full-size interactive slice / cell-size plots
+        from app.ui.mesh_viewer import MeshGeometryViewer
+
+        viewer_tab = QWidget()
+        viewer_layout = QVBoxLayout(viewer_tab)
+        viewer_layout.setContentsMargins(0, 0, 0, 0)
+        self.mesh_viewer = MeshGeometryViewer(work_dir=self.settings.work_path())
+        viewer_layout.addWidget(self.mesh_viewer)
+        self.mesh_viewer_tab_index = tabs.addTab(viewer_tab, "Mesh Viewer")
+
+        # Sim Params (hidden off-screen — canonical sync/edit target). The
+        # Sim Params tab page was removed in favour of the Simulation
+        # Parameters window (Simulation menu → Simulation Parameters…).
+        # Keep a strong ref: without a parent a hidden QWidget would be GC'd
+        # and its child spins/combos would become deleted C++ objects.
+        from app.ui.sim_params import SimParamsPanel
+
+        self._sim_form = QWidget()
+        self._sim_form.hide()
+        sim_form_layout = QVBoxLayout(self._sim_form)
+        self.sim_params = SimParamsPanel()
+        sim_form_layout.addWidget(self.sim_params)
+
+        # Ports / Dumps (hidden off-screen — canonical sync/edit target). The
+        # Ports / Dumps tab page was removed in favour of the Ports / Dumps
+        # window (Geometry menu → Ports / Dumps…). Keep a strong ref: without
+        # a parent a hidden QWidget would be GC'd and its children deleted.
+        ports_tab = QWidget()
+        ports_tab.hide()
+        self._ports_form = ports_tab
+        pv = QVBoxLayout(ports_tab)
+        self.port_list = QListWidget()
+        self.port_list.setToolTip(
+            "Project ports.\nDouble-click a row to edit (type, R, direction, start/stop).\n"
+            "Defaults for FreeCAD import: Settings -> Port defaults."
+        )
+        port_btn_row = QHBoxLayout()
+        self.btn_edit_port = QPushButton("Edit Port…")
+        self.btn_del_port = QPushButton("Remove Port")
+        port_btn_row.addWidget(self.btn_edit_port)
+        port_btn_row.addWidget(self.btn_del_port)
+        port_btn_row.addStretch(1)
+        pv.addWidget(QLabel("Ports (double-click to edit)"))
+        pv.addWidget(self.port_list)
+        pv.addLayout(port_btn_row)
+        self.chk_nf2ff = QCheckBox("Enable NF2FF box")
+        self.chk_nf2ff.setChecked(True)
+        self.chk_dumps = QCheckBox("Enable field dumps")
+        self.chk_dumps.setChecked(True)
+        pv.addWidget(self.chk_nf2ff)
+        pv.addWidget(self.chk_dumps)
+        self.btn_add_dump = QPushButton("Add Field Dump…")
+        pv.addWidget(self.btn_add_dump)
+        self.btn_edit_nf2ff2 = QPushButton("Edit NF2FF Box…")
+        pv.addWidget(self.btn_edit_nf2ff2)
+        # ports_tab is hidden off-screen (no addTab) — see Ports/Dumps window
+
+        # Simulator log — panel under the tabs (single instance, toggle via toolbar Log)
+        log_font = QFont("Consolas")
+        log_font.setStyleHint(QFont.StyleHint.Monospace)
+        log_font.setPointSize(10)
+
+        self.log_panel = QWidget()
+        self.log_panel.setObjectName("log_panel")
+        lp = QVBoxLayout(self.log_panel)
+        lp.setContentsMargins(4, 4, 4, 4)
+        log_bar = QHBoxLayout()
+        self.btn_log_clear = QPushButton("Clear")
+        self.btn_log_pop = QPushButton("Pop-out…")
+        self.btn_log_save = QPushButton("Save log…")
+        self.btn_log_autoscroll = QPushButton("Auto-scroll: ON")
+        self.btn_log_autoscroll.setCheckable(True)
+        self.btn_log_autoscroll.setChecked(True)
+        log_bar.addWidget(self.btn_log_clear)
+        log_bar.addWidget(self.btn_log_pop)
+        log_bar.addWidget(self.btn_log_save)
+        log_bar.addWidget(self.btn_log_autoscroll)
+        log_bar.addStretch(1)
+        self.lbl_log_count = QLabel("0 lines")
+        log_bar.addWidget(self.lbl_log_count)
+        lp.addLayout(log_bar)
+
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setFont(log_font)
+        self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log_view.setMaximumBlockCount(200_000)
+        self.log_view.setPlaceholderText("Simulator / app log output…")
+        self.log_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.log_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # Mesh report (same text as the Mesh tab's report; single source)
+        self.log_mesh_report = QPlainTextEdit()
+        self.log_mesh_report.setReadOnly(True)
+        self.log_mesh_report.setFont(log_font)
+        self.log_mesh_report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log_mesh_report.setPlaceholderText(
+            "Mesh check report appears after Build… (also shown on the Mesh tab)"
+        )
+
+        self.log_tabs = QTabWidget()
+        self.log_tabs.setObjectName("log_tabs")
+        self.log_tabs.addTab(self.log_view, "Log")
+        self.log_tabs.addTab(self.log_mesh_report, "Mesh Report")
+        lp.addWidget(self.log_tabs, 1)
+        self.right_split.addWidget(self.log_panel)
+
+        # Mesh Viewer Scene Info (mirrors the viewer's info_view) — inside log panel
+        self.mesh_viewer_scene_info = QPlainTextEdit()
+        self.mesh_viewer_scene_info.setReadOnly(True)
+        self.mesh_viewer_scene_info.setFont(log_font)
+        self.mesh_viewer_scene_info.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.mesh_viewer_scene_info.setPlaceholderText(
+            "Build mesh first, then the scene info appears here (same as the Mesh Viewer's info panel)"
+        )
+        self.log_tabs.addTab(self.mesh_viewer_scene_info, "Mesh Viewer Scene Info")
+        self.log_mesh_viewer_scene_info_tab_index = self.log_tabs.indexOf(
+            self.mesh_viewer_scene_info
+        )
+
+        self.right_split.setSizes([520, 220])
+        self._log_sizes: list[int] | None = None
+        self._apply_log_panel_visibility(
+            bool(getattr(self.settings, "log_panel_visible", True))
+        )
+
+        # S-parameters tab (skrf Smith chart + markers + cursor)
+        from app.ui.sparam_viewer import SParamViewer
+
+        self.sparam_viewer = SParamViewer(work_dir=self.settings.work_path())
+        tabs.addTab(self.sparam_viewer, "S-Params")
+        self.sparam_tabs = tabs
+        self.tabs = tabs  # main workflow tab widget (View menu)
+        self.sparam_tab_index = tabs.indexOf(self.sparam_viewer)
+
+        # Antenna pattern tab (NF2FF far-field: directivity + gain)
+        from app.ui.antenna_viewer import AntennaPatternViewer
+
+        self.antenna_viewer = AntennaPatternViewer(work_dir=self.settings.work_path())
+        tabs.addTab(self.antenna_viewer, "Antenna")
+        self.antenna_tab_index = tabs.indexOf(self.antenna_viewer)
+
+        # Per-tab help: toolbar button (current tab) + Help on each page
+        from app.ui.tab_help import inject_help_button, show_tab_help
+
+        self._tab_title_map = {tabs.tabText(i): i for i in range(tabs.count())}
+        tabs.currentChanged.connect(self._on_tab_changed_for_help)
+        for i in range(tabs.count()):
+            title = tabs.tabText(i)
+            page = tabs.widget(i)
+            if page is None:
+                continue
+            if page.layout() is not None:
+                inject_help_button(page, title, self)
+        self._on_tab_changed_for_help(tabs.currentIndex())
+
+        self.status = QStatusBar()
+        self.setStatusBar(self.status)
+        # Larger default window so the mesh viewer is usable
+        self.resize(1440, 900)
+
+        self.btn_log_clear.clicked.connect(self._clear_logs)
+        self.btn_log_save.clicked.connect(self._save_log)
+        self.btn_log_pop.clicked.connect(self._pop_out_log)
+        self.btn_log_autoscroll.toggled.connect(self._toggle_autoscroll)
+        self.btn_log_toggle.toggled.connect(self._toggle_log_panel)
+        self._log_autoscroll = True
+        self._script_dialog: object | None = None  # ScriptEditorDialog (modeless)
+
+        # Mesh form ↔ Sim Params computed readout
+        for w in (self.spn_f0, self.spn_fc):
+            w.valueChanged.connect(self._on_mesh_form_changed)
+        for w in (self.spn_start_f, self.spn_stop_f):
+            w.valueChanged.connect(self._on_freq_range_changed)
+        self.cmb_freq_unit.currentTextChanged.connect(self._on_freq_unit_changed)
+        self.cmb_preset.currentTextChanged.connect(self._on_mesh_form_changed)
+        self.cmb_unit.currentTextChanged.connect(self._on_mesh_form_changed)
+        self.sim_params.computed_changed.connect(self._on_sim_params_changed)
+        self.sim_params.btn_apply_patch.clicked.connect(self._on_apply_patch_params)
+        self.sim_params.btn_fit_nf2ff.clicked.connect(self._on_fit_nf2ff)
+        self.sim_params.btn_edit_nf2ff.clicked.connect(self._on_edit_nf2ff)
+
+        # connections
+        self.btn_new.clicked.connect(self._on_new)
+        self.btn_open.clicked.connect(self._on_open)
+        self.btn_save.clicked.connect(self._on_save)
+        self.btn_import.clicked.connect(self._on_import)
+        self.btn_freecad.clicked.connect(self._on_freecad)
+        self.btn_patch.clicked.connect(self._on_load_patch)
+        self.btn_yagi.clicked.connect(self._on_load_yagi)
+        self.btn_pcb.clicked.connect(self._on_load_pcb)
+        self.btn_build_mesh.clicked.connect(self._on_build_mesh)
+        self.btn_run.clicked.connect(self._on_run)
+        self.btn_abort.clicked.connect(self._on_abort)
+        self.btn_script.clicked.connect(self._on_edit_script)
+        self.btn_settings.clicked.connect(self._on_settings)
+        self.btn_sparams.clicked.connect(self._on_show_sparams)
+        self.btn_sparams_popout.clicked.connect(self._on_popout_sparams)
+        self.btn_antenna.clicked.connect(self._on_show_antenna)
+        self.btn_antenna_popout.clicked.connect(self._on_popout_antenna)
+        self.btn_edit_port.clicked.connect(self._on_edit_port)
+        self.btn_del_port.clicked.connect(self._on_remove_port)
+        self.port_list.itemDoubleClicked.connect(self._on_edit_port)
+        self.btn_add_dump.clicked.connect(self._on_add_dump)
+        self.btn_edit_nf2ff2.clicked.connect(self._on_edit_nf2ff)
+        self.btn_exit.clicked.connect(self.close)
+        self.btn_help.clicked.connect(self._show_current_tab_help)
+
+        # Real menu bar over the same buttons (see _build_menu)
+        self._sim_params_dlg: object | None = None  # SimParamsDialog (modeless)
+        self._mesh_params_dlg: object | None = None  # MeshParamsDialog (modeless)
+        self._ports_dlg: object | None = None  # PortsDumpsDialog (modeless)
+        self._build_menu()
+
+        # Cross-thread log: SimulationRunner may call from a worker thread.
+        self._log_bridge = _LogBridge(self)
+        self._log_bridge.line.connect(self._log, Qt.ConnectionType.QueuedConnection)
+        self._log_queue: Queue[str] = Queue()
+        self._log_poll = QTimer(self)
+        self._log_poll.setInterval(200)
+        self._log_poll.timeout.connect(self._drain_log_queue)
+        self._log_poll.start()
+
+    # ----------------------------------------------------------------- menu
+    def _build_menu(self) -> None:
+        """Menu bar over the existing toolbar buttons.
+
+        Every entry is a QAction that either delegates to a button
+        (``btn.click()`` — disabled button = no-op) or to a plain slot, so the
+        buttons and their tests keep working unchanged.
+        """
+        self.menu_btn_pairs: list[tuple[QAction, QWidget]] = []
+        self.menu_view_actions: dict[str, QAction] = {}
+        bar = self.menuBar()
+
+        def add_action(
+            menu,
+            text: str,
+            *,
+            btn: QPushButton | None = None,
+            slot=None,
+            shortcut: str | QKeySequence | None = None,
+            tip: str = "",
+        ) -> QAction:
+            action = QAction(text, self)
+            if shortcut is not None:
+                action.setShortcut(shortcut)
+            if tip:
+                action.setToolTip(tip)
+                action.setStatusTip(tip)
+            if btn is not None:
+                action.triggered.connect(btn.click)
+                if btn.isCheckable():
+                    action.setCheckable(True)
+                    action.setChecked(btn.isChecked())
+                    btn.toggled.connect(action.setChecked)
+                self.menu_btn_pairs.append((action, btn))
+            elif slot is not None:
+                action.triggered.connect(slot)
+            menu.addAction(action)
+            return action
+
+        fmenu = bar.addMenu("&File")
+        add_action(fmenu, "New Project", btn=self.btn_new, shortcut="Ctrl+N")
+        add_action(fmenu, "Open\u2026", btn=self.btn_open, shortcut="Ctrl+O")
+        add_action(fmenu, "Save", btn=self.btn_save, shortcut="Ctrl+S")
+        add_action(fmenu, "Save As\u2026", slot=self._on_save_as, shortcut="Ctrl+Shift+S")
+        fmenu.addSeparator()
+        add_action(fmenu, "Import Geometry\u2026", btn=self.btn_import)
+        add_action(fmenu, "FreeCAD\u2026", btn=self.btn_freecad)
+        fmenu.addSeparator()
+        add_action(fmenu, "Open Work Folder", slot=self._open_work_folder)
+        fmenu.addSeparator()
+        add_action(fmenu, "Exit", btn=self.btn_exit, shortcut="Ctrl+Q")
+
+        pmenu = bar.addMenu("&Presets")
+        add_action(pmenu, "Preset: Patch Antenna\u2026", btn=self.btn_patch)
+        add_action(pmenu, "Preset: Yagi Antenna\u2026", btn=self.btn_yagi)
+        add_action(pmenu, "Preset: PCB Filter\u2026", btn=self.btn_pcb)
+
+        gmenu = bar.addMenu("&Geometry")
+        add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
+        add_action(gmenu, "Add Cylinder…", slot=self._on_add_prim_cyl)
+        gmenu.addSeparator()
+        add_action(gmenu, "Add Assignment…", slot=self._on_add_assignment)
+        add_action(gmenu, "Add Material…", slot=self._on_add_material)
+        gmenu.addSeparator()
+        add_action(gmenu, "Add Port…", slot=self._on_add_port)
+        add_action(gmenu, "Add Field Dump…", btn=self.btn_add_dump)
+        gmenu.addSeparator()
+        add_action(gmenu, "Edit Selected…", slot=self._on_edit_selected_tree)
+        add_action(
+            gmenu,
+            "Duplicate Selected",
+            slot=self._on_duplicate_selected_tree,
+            shortcut="Ctrl+D",
+        )
+        add_action(gmenu, "Delete Selected", slot=self._on_delete_selected_tree, shortcut="Del")
+        gmenu.addSeparator()
+        add_action(
+            gmenu,
+            "Ports / Dumps…",
+            slot=self._on_open_ports_dumps_dialog,
+            shortcut="Ctrl+Shift+D",
+            tip="Ports, field dumps and NF2FF box in one window",
+        )
+        gmenu.addSeparator()
+        add_action(gmenu, "Edit NF2FF Box…", slot=self._on_edit_nf2ff)
+        add_action(gmenu, "Fit NF2FF to Geometry", slot=self._on_fit_nf2ff)
+
+        mmenu = bar.addMenu("Mes&h")
+        add_action(mmenu, "Build CSX + Mesh + Validate", btn=self.btn_build_mesh, shortcut="Ctrl+M")
+        mmenu.addSeparator()
+        add_action(
+            mmenu,
+            "Mesh Parameters\u2026",
+            slot=self._on_open_mesh_params_dialog,
+            shortcut="Ctrl+Shift+M",
+            tip="All mesh parameters in one window (Apply / Close)",
+        )
+        mmenu.addSeparator()
+        add_action(mmenu, "Mesh Report", slot=self._show_mesh_report_tab)
+        add_action(mmenu, "Show Mesh Viewer", slot=self._show_mesh_viewer)
+        mmenu.addSeparator()
+        add_action(mmenu, "Export CSX XML\u2026", btn=self.mesh_viewer.btn_export_xml)
+        add_action(mmenu, "Open in AppCSXCAD (3D)\u2026", btn=self.mesh_viewer.btn_appcsxcad)
+
+        smenu = bar.addMenu("&Simulation")
+        add_action(smenu, "Run Simulation", btn=self.btn_run, shortcut="Ctrl+R")
+        add_action(smenu, "Abort", btn=self.btn_abort)
+        smenu.addSeparator()
+        add_action(
+            smenu,
+            "Simulation Parameters\u2026",
+            slot=self._on_open_sim_params_dialog,
+            shortcut="Ctrl+Shift+P",
+            tip="All simulation parameters in one window (Apply / Close)",
+        )
+        add_action(smenu, "Script\u2026", btn=self.btn_script)
+        smenu.addSeparator()
+        add_action(smenu, "S-Params Viewer", btn=self.btn_sparams)
+        add_action(smenu, "Pop-out S-Graph", btn=self.btn_sparams_popout)
+        smenu.addSeparator()
+        add_action(smenu, "Antenna Pattern Viewer", btn=self.btn_antenna)
+        add_action(smenu, "Pop-out Antenna Graph", btn=self.btn_antenna_popout)
+
+        vmenu = bar.addMenu("&View")
+        for title, idx in self._tab_title_map.items():
+            # NOTE: QAction.triggered(bool checked) overwrites a single lambda/
+            # def argument (i=False/True -> tab 0/1) -> build a 0-arg closure.
+            def _make_switch(i: int):
+                def _switch() -> None:
+                    self.tabs.setCurrentIndex(i)
+
+                return _switch
+
+            action = add_action(vmenu, title, slot=_make_switch(idx))
+            action.setCheckable(True)
+            self.menu_view_actions[title] = action
+        vmenu.addSeparator()
+        add_action(vmenu, "Log Panel", btn=self.btn_log_toggle, shortcut="Ctrl+L")
+        vmenu.aboutToShow.connect(self._sync_view_menu)
+
+        tmenu = bar.addMenu("&Tools")
+        add_action(tmenu, "Settings\u2026", btn=self.btn_settings)
+
+        hmenu = bar.addMenu("&Help")
+        add_action(hmenu, "Help for Current Tab", btn=self.btn_help, shortcut="F1")
+        hmenu.addSeparator()
+        add_action(hmenu, "Open ANLEITUNG_DE.md", slot=lambda: self._open_doc("docs/ANLEITUNG_DE.md"))
+        add_action(hmenu, "Open FreeCAD Workflow (Geometry → Import)", slot=lambda: self._open_doc("docs/FREECAD_WORKFLOW_DE.md"))
+        add_action(hmenu, "Open README.md", slot=lambda: self._open_doc("README.md"))
+        hmenu.addSeparator()
+        add_action(hmenu, "About\u2026", slot=self._about)
+
+        # grey out menu entries whose button is disabled (e.g. during a run)
+        def _sync_enabled() -> None:
+            for action, btn in self.menu_btn_pairs:
+                action.setEnabled(btn.isEnabled())
+
+        for m in (fmenu, pmenu, gmenu, mmenu, smenu, vmenu, tmenu, hmenu):
+            m.aboutToShow.connect(_sync_enabled)
+
+    def _sync_view_menu(self) -> None:
+        """Check the View entry of the tab that is currently on top."""
+        try:
+            cur = self.tabs.currentIndex()
+        except Exception:  # noqa: BLE001
+            return
+        for title, action in self.menu_view_actions.items():
+            action.setChecked(self._tab_title_map.get(title, -1) == cur)
+
+    def _show_mesh_viewer(self) -> None:
+        idx = self._tab_title_map.get("Mesh Viewer", -1)
+        if idx >= 0:
+            self.tabs.setCurrentIndex(idx)
+
+    def _open_work_folder(self) -> None:
+        try:
+            path = self.settings.work_path()
+            path.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+            self._log(f"Opened work folder {path}")
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Open work folder failed: {e}")
+
+    def _open_doc(self, rel: str) -> None:
+        path = APP_ROOT / rel
+        if not path.is_file():
+            self._log(f"Document not found: {path}")
+            QMessageBox.information(self, "Document", f"Not found:\n{path}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _about(self) -> None:
+        from app import APP_NAME, __version__
+
+        QMessageBox.about(
+            self,
+            f"About {APP_NAME}",
+            f"<b>{APP_NAME}</b><br>Version {__version__}<br><br>"
+            "FreeCAD &rarr; openEMS workflow: geometry import, openEMS-conform "
+            "meshing, S-parameters, NF2FF.<br>"
+            "Docs: <tt>docs/ANLEITUNG_DE.md</tt>",
+        )
+
+    def _current_tab_title(self) -> str:
+        try:
+            idx = self.sparam_tabs.currentIndex()
+            if idx < 0:
+                return "Tab"
+            return self.sparam_tabs.tabText(idx) or "Tab"
+        except Exception:  # noqa: BLE001
+            return "Tab"
+
+    def _on_tab_changed_for_help(self, _index: int) -> None:
+        title = self._current_tab_title()
+        try:
+            self.btn_help.setText(f"Help: {title}")
+            self.btn_help.setToolTip(f"Open help for the {title} tab")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _show_current_tab_help(self) -> None:
+        from app.ui.tab_help import show_tab_help
+
+        show_tab_help(self, self._current_tab_title())
+
+    @QtCore.Slot(str)
+    def _log(self, msg: str) -> None:
+        """Safe log entry — always hop to GUI thread via queue."""
+        try:
+            if not isinstance(msg, str):
+                msg = str(msg)
+            # Always queue: worker threads may call this; QTimer drains on GUI thread.
+            self._log_queue.put(msg)
+        except Exception as e:  # noqa: BLE001 — never let log UI kill the app
+            print("log enqueue error:", e)
+
+    def _drain_log_queue(self) -> None:
+        try:
+            while True:
+                msg = self._log_queue.get_nowait()
+                self._append_log_on_gui(msg)
+        except Empty:
+            pass
+
+    def _append_log_on_gui(self, msg: str) -> None:
+        try:
+            self.log_view.appendPlainText(msg)
+            if getattr(self, "_log_autoscroll", True):
+                sb = self.log_view.verticalScrollBar()
+                sb.setValue(sb.maximum())
+            n = self.log_view.blockCount()
+            self.lbl_log_count.setText(f"{n} lines")
+            self.status.showMessage(msg.splitlines()[-1] if msg else "")
+            low = msg.lower()
+            # Refresh only AFTER export messages (not "simulation finished" — too early).
+            if (
+                "wrote touchstone" in low
+                or "s-param outputs" in low
+                or "wrote json" in low
+                or "[exit code" in low
+            ):
+                try:
+                    self.sparam_viewer.set_work_dir(self.settings.work_path())
+                    self.sparam_viewer._on_scan(auto_load=True)
+                except Exception as e:  # noqa: BLE001
+                    print("sparam viewer refresh failed:", e)
+            # NF2FF summary → refresh the antenna pattern viewer
+            if "nf2ff summary" in low or "wrote json:" in low and "nf2ff" in low:
+                try:
+                    self.antenna_viewer.set_work_dir(self.settings.work_path())
+                except Exception as e:  # noqa: BLE001
+                    print("antenna viewer refresh failed:", e)
+        except Exception as e:  # noqa: BLE001
+            print("log append error:", e)
+
+    def _show_mesh_report_tab(self) -> None:
+        """Show the log panel's Mesh Report tab (menu entry)."""
+        self._ensure_log_visible("mesh report")
+        self.log_tabs.setCurrentWidget(self.log_mesh_report)
+
+    def _set_mesh_report(self, text: str) -> None:
+        """Single source for the mesh check report (log Mesh Report tab)."""
+        self.mesh_report.setPlainText(text)
+        self.log_mesh_report.setPlainText(text)
+
+    def _sync_scene_info(self) -> None:
+        """Mirror the Mesh Viewer's info text into the scene info tab."""
+        text = self.mesh_viewer.info_text()
+        self.mesh_viewer_scene_info.setPlainText(text)
+
+    def _clear_logs(self) -> None:
+        self.log_view.clear()
+        self.lbl_log_count.setText("0 lines")
+
+    def _toggle_log_panel(self, checked: bool) -> None:
+        self._apply_log_panel_visibility(checked)
+        self.settings.log_panel_visible = checked
+        try:
+            self.settings.save()
+        except Exception as e:  # noqa: BLE001
+            print("save log_panel_visible failed:", e)
+        self.status.showMessage(
+            "Log panel shown" if checked else "Log panel hidden (Pop-out available from the Log panel)"
+        )
+
+    def _ensure_log_visible(self, reason: str = "") -> None:
+        """Show log panel if hidden (mesh build / simulation). Does not fight a user hide after."""
+        if not self.btn_log_toggle.isChecked():
+            self.btn_log_toggle.setChecked(True)
+            self._log(f"Log panel shown ({reason})")
+
+    def _apply_log_panel_visibility(self, visible: bool) -> None:
+        if not hasattr(self, "log_panel") or not hasattr(self, "right_split"):
+            return
+        if visible:
+            self.log_panel.show()
+            sizes = self._log_sizes or [520, 220]
+            # right_split: [tabs, log_panel]
+            if len(sizes) >= 2:
+                self.right_split.setSizes(sizes)
+        else:
+            sizes = self.right_split.sizes()
+            if sizes and len(sizes) >= 2 and any(s > 0 for s in sizes):
+                self._log_sizes = list(sizes)
+            self.log_panel.hide()
+
+    def _toggle_autoscroll(self, checked: bool) -> None:
+        self._log_autoscroll = checked
+        self.btn_log_autoscroll.setText("Auto-scroll: ON" if checked else "Auto-scroll: OFF")
+
+    def _save_log(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save simulator log",
+            str(self.settings.work_path() / "simulator_log.txt"),
+            "Text (*.txt);;All (*.*)",
+        )
+        if not path:
+            return
+        Path(path).write_text(self.log_view.toPlainText(), encoding="utf-8")
+        self._log(f"Log saved to {path}")
+
+    def _pop_out_log(self) -> None:
+        """Detached large log window with scroll (same content as the log panel)."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Simulator Log")
+        dlg.resize(1100, 700)
+        v = QVBoxLayout(dlg)
+        bar = QHBoxLayout()
+        b = QPushButton("Clear")
+        b2 = QPushButton("Save…")
+        b3 = QPushButton("Close")
+        bar.addWidget(b)
+        bar.addWidget(b2)
+        bar.addStretch(1)
+        bar.addWidget(b3)
+        v.addLayout(bar)
+        view = QPlainTextEdit()
+        view.setReadOnly(True)
+        view.setFont(self.log_view.font())
+        view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        view.setPlainText(self.log_view.toPlainText())
+        v.addWidget(view, 1)
+
+        def _sync_from_main() -> None:
+            view.setPlainText(self.log_view.toPlainText())
+            sb = view.verticalScrollBar()
+            sb.setValue(sb.maximum())
+
+        def _clear() -> None:
+            self._clear_logs()
+
+        def _save() -> None:
+            self._save_log()
+            _sync_from_main()
+
+        b.clicked.connect(_clear)
+        b2.clicked.connect(_save)
+        b3.clicked.connect(dlg.reject)
+        timer = QtCore.QTimer(dlg)
+        timer.timeout.connect(_sync_from_main)
+        timer.start(500)
+        dlg.exec()
+
+    def _on_show_sparams(self) -> None:
+        self.sparam_viewer.set_work_dir(self.settings.work_path())
+        self.sparam_viewer._on_scan(auto_load=True)
+        if self.sparam_tab_index >= 0:
+            self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
+
+    def _on_popout_sparams(self) -> None:
+        self.sparam_viewer.set_work_dir(self.settings.work_path())
+        self.sparam_viewer._on_scan(auto_load=True)
+        self.sparam_viewer.popout_graph()
+        self._log("S-Params viewer opened")
+
+    def _on_show_antenna(self) -> None:
+        self.antenna_viewer.set_work_dir(self.settings.work_path())
+        if self.antenna_tab_index >= 0:
+            self.tabs.setCurrentIndex(self.antenna_tab_index)
+        self._log("Antenna pattern viewer opened")
+
+    def _on_popout_antenna(self) -> None:
+        self.antenna_viewer.set_work_dir(self.settings.work_path())
+        self.antenna_viewer.popout_graph()
+        self._log("Antenna pattern viewer opened")
+
+    def _refresh_materials(self) -> None:
+        self.mat_list.clear()
+        for m in self.project.materials:
+            self.mat_list.addItem(f"{m.name} ({m.kind})")
+        if getattr(self, "tree", None) is not None:
+            self._refresh_tree()
+
+    def _refresh_ports(self) -> None:
+        self.port_list.clear()
+        for p in self.project.ports:
+            self.port_list.addItem(
+                f"{p.name}: {p.type} {p.start} -> {p.stop} R={p.resistance}"
+            )
+        if getattr(self, "tree", None) is not None:
+            self._refresh_tree()
+
+    def _freq_unit(self) -> str:
+        return getattr(self, "_freq_unit_name", None) or getattr(
+            self, "cmb_freq_unit", None
+        ).currentText()
+
+    def _freq_factor(self) -> float:
+        from app.ui.freq_units import FREQ_UNITS
+
+        return float(FREQ_UNITS.get(self._freq_unit(), 1.0))
+
+    def _hz_from_spin(self, spin) -> float:
+        return float(spin.value()) * self._freq_factor()
+
+    def _set_spin_hz(self, spin, hz: float) -> None:
+        from app.ui.freq_units import set_spin_hz
+
+        set_spin_hz(spin, hz, self._freq_unit())
+
+    def _on_freq_unit_changed(self, unit: str) -> None:
+        """Re-display mesh frequencies in the newly selected unit (value stays Hz)."""
+        from app.ui.freq_units import FREQ_UNITS, configure_freq_spin, set_spin_hz
+
+        if unit not in FREQ_UNITS:
+            return
+        old_unit = getattr(self, "_freq_unit_name", None)
+        if old_unit == unit:
+            return
+        old_factor = float(FREQ_UNITS.get(old_unit or "GHz", 1e9))
+        f0_hz = float(self.spn_f0.value()) * old_factor
+        fc_hz = float(self.spn_fc.value()) * old_factor
+        start_hz = float(self.spn_start_f.value()) * old_factor
+        stop_hz = float(self.spn_stop_f.value()) * old_factor
+        self._freq_unit_name = unit
+        self._freq_unit_factor = float(FREQ_UNITS[unit])
+
+        guard = getattr(self, "_freq_guard", False)
+        self._freq_guard = True
+        try:
+            for sp in (self.spn_f0, self.spn_fc, self.spn_start_f, self.spn_stop_f):
+                configure_freq_spin(sp, unit)
+            set_spin_hz(self.spn_f0, f0_hz, unit)
+            set_spin_hz(self.spn_fc, fc_hz, unit)
+            set_spin_hz(self.spn_start_f, start_hz, unit)
+            set_spin_hz(self.spn_stop_f, stop_hz, unit)
+        finally:
+            self._freq_guard = guard
+        self.sim_params.refresh_computed(self.project)
+        self._log(f"Frequency display unit: {unit} (values stored in Hz)")
+
+    def _sync_mesh_freqs_from_widgets(self, source: str = "f0fc") -> None:
+        """Write frequency widgets → project.mesh (always stored in Hz).
+
+        source="f0fc": start/stop derived as f0±fc (excitation-centric).
+        source="range": start/stop are authoritative; f0/fc updated to stay consistent.
+        """
+        if getattr(self, "_freq_guard", False):
+            return
+        self._freq_guard = True
+        try:
+            self.project.mesh.preset = self.cmb_preset.currentText()  # type: ignore[assignment]
+            self.project.mesh.drawing_unit = self.cmb_unit.currentText()  # type: ignore[assignment]
+            f0 = self._hz_from_spin(self.spn_f0)
+            fc = self._hz_from_spin(self.spn_fc)
+            start = self._hz_from_spin(self.spn_start_f)
+            stop = self._hz_from_spin(self.spn_stop_f)
+            if source == "f0fc":
+                start = f0 - fc
+                stop = f0 + fc
+                if stop <= start:
+                    stop = start + max(1e5, 0.05 * start)
+                self._set_spin_hz(self.spn_start_f, start)
+                self._set_spin_hz(self.spn_stop_f, stop)
+                self.project.mesh.start_frequency = start
+                self.project.mesh.stop_frequency = stop
+                self.project.mesh.target_frequency = f0
+            else:
+                if stop <= start:
+                    stop = start + max(1e5, 0.05 * start)
+                    self._set_spin_hz(self.spn_stop_f, stop)
+                self.project.mesh.start_frequency = start
+                self.project.mesh.stop_frequency = stop
+                if f0 < start or f0 > stop:
+                    f0 = 0.5 * (start + stop)
+                    self._set_spin_hz(self.spn_f0, f0)
+                fc = 0.5 * (stop - start)
+                self._set_spin_hz(self.spn_fc, fc)
+                self.project.mesh.target_frequency = f0
+        finally:
+            self._freq_guard = False
+
+    def _sync_project_from_form(self) -> None:
+        # Prefer explicit start/stop widgets if they differ from f0±fc
+        start_w = self._hz_from_spin(self.spn_start_f)
+        stop_w = self._hz_from_spin(self.spn_stop_f)
+        f0 = self._hz_from_spin(self.spn_f0)
+        fc = self._hz_from_spin(self.spn_fc)
+        if abs(start_w - (f0 - fc)) < 1.0 and abs(stop_w - (f0 + fc)) < 1.0:
+            self._sync_mesh_freqs_from_widgets("f0fc")
+        else:
+            self._sync_mesh_freqs_from_widgets("range")
+        self.sim_params.write_to_project(self.project)
+        self.project.sim.nf2ff_enabled = self.chk_nf2ff.isChecked()
+        self.project.nf2ff.enabled = self.chk_nf2ff.isChecked()
+        self.project.sim.field_dumps_enabled = self.chk_dumps.isChecked()
+        # Keep the hidden Sim Params panel's NF2FF toggle in step with the
+        # Ports / Dumps checkbox (both edit project.sim.nf2ff_enabled).
+        self.sim_params.chk_nf2ff_enabled.setChecked(bool(self.chk_nf2ff.isChecked()))
+
+    def _sync_form_from_project(self) -> None:
+        m = self.project.mesh
+        f0 = m.target_frequency or (0.5 * (m.start_frequency + m.stop_frequency))
+        fc = max(1e5, 0.5 * abs(m.stop_frequency - m.start_frequency))
+        # Display in current unit (default GHz if unset)
+        if not getattr(self, "_freq_unit_name", None):
+            from app.ui.freq_units import suggest_freq_unit
+
+            unit = suggest_freq_unit(f0)
+            if hasattr(self, "cmb_freq_unit"):
+                self.cmb_freq_unit.setCurrentText(unit)
+            self._freq_unit_name = unit
+        self._set_spin_hz(self.spn_start_f, float(m.start_frequency))
+        self._set_spin_hz(self.spn_stop_f, float(m.stop_frequency))
+        self._set_spin_hz(self.spn_f0, f0)
+        self._set_spin_hz(self.spn_fc, fc)
+        self.cmb_preset.setCurrentText(m.preset)
+        self.cmb_unit.setCurrentText(m.drawing_unit)
+        self.chk_nf2ff.setChecked(self.project.nf2ff.enabled)
+        self.chk_dumps.setChecked(self.project.sim.field_dumps_enabled)
+        self.sim_params.sync_from_project(self.project)
+
+    def _on_mesh_form_changed(self, *_args: object) -> None:
+        self._sync_mesh_freqs_from_widgets("f0fc")
+        self.sim_params.refresh_computed(self.project)
+
+    def _on_freq_range_changed(self, *_args: object) -> None:
+        self._sync_mesh_freqs_from_widgets("range")
+        self.sim_params.refresh_computed(self.project)
+
+    def _on_sim_params_changed(self) -> None:
+        # Form values live in Sim Params widgets; mesh tab may already hold f0/fc.
+        start_w = self._hz_from_spin(self.spn_start_f)
+        stop_w = self._hz_from_spin(self.spn_stop_f)
+        f0 = self._hz_from_spin(self.spn_f0)
+        fc = self._hz_from_spin(self.spn_fc)
+        self._sync_mesh_freqs_from_widgets(
+            "range" if abs(start_w - (f0 - fc)) > 1.0 else "f0fc"
+        )
+        self.sim_params.refresh_computed(self.project)
+
+    # --- Simulation menu: standalone parameter window -------------------
+    def _on_open_sim_params_dialog(self) -> None:
+        """Open (or re-use) the modeless Simulation Parameters window."""
+        from app.ui.sim_params import SimParamsDialog
+
+        if self._sim_params_dlg is None:
+            dlg = SimParamsDialog(self)
+            dlg.apply_requested.connect(self._apply_sim_params_dialog)
+            dlg.panel.btn_fit_nf2ff.clicked.connect(self._on_fit_nf2ff)
+            dlg.panel.btn_edit_nf2ff.clicked.connect(self._on_edit_nf2ff)
+            dlg.panel.btn_apply_patch.clicked.connect(
+                self._on_apply_patch_params_from_dialog
+            )
+            self._sim_params_dlg = dlg
+        dlg = self._sim_params_dlg
+        dlg.load(
+            self.project,
+            patch_visible=self.sim_params.patch_group_visible,
+            patch_params=self.sim_params.patch_params,
+        )
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _apply_sim_params_dialog(self) -> None:
+        """Push the dialog's values into project + hidden Sim Params panel."""
+        dlg = self._sim_params_dlg
+        if dlg is None:
+            return
+        dlg.panel.write_to_project(self.project)
+        # mirror into the hidden Sim Params panel (run/save re-sync from it)
+        self.sim_params.sync_from_project(self.project)
+        # keep the Ports / Dumps NF2FF checkbox in step with the dialog
+        self.chk_nf2ff.setChecked(bool(self.project.nf2ff.enabled))
+        self.sim_params.set_patch_group_visible(dlg.panel.patch_group_visible)
+        if dlg.panel.patch_group_visible:
+            self.sim_params.patch_params = dict(dlg.panel.patch_params)
+        self._on_sim_params_changed()
+        self._log(
+            "Simulation parameters applied: "
+            f"end_criteria={self.project.sim.end_criteria:g}, "
+            f"max_timesteps={self.project.sim.max_timesteps}, "
+            f"boundary={self.project.boundary.xmin}/{self.project.boundary.ymin}"
+            f"/{self.project.boundary.zmin}"
+        )
+        self._refresh_run_script_if_generated()
+
+    def _on_open_mesh_params_dialog(self) -> None:
+        """Open (or re-use) the modeless Mesh Parameters window."""
+        from app.ui.mesh_params import MeshParamsDialog
+
+        if self._mesh_params_dlg is None:
+            dlg = MeshParamsDialog(self)
+            dlg.apply_requested.connect(self._apply_mesh_params_dialog)
+            self._mesh_params_dlg = dlg
+        dlg = self._mesh_params_dlg
+        dlg.load(self.project)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _apply_mesh_params_dialog(self) -> None:
+        """Push the dialog's values into project + Mesh tab widgets."""
+        dlg = self._mesh_params_dlg
+        if dlg is None:
+            return
+        dlg.panel.write_to_project(self.project)
+        # mirror into the Mesh tab widgets (build re-syncs from that panel)
+        m = self.project.mesh
+        self._freq_guard = True
+        try:
+            self.cmb_preset.setCurrentText(m.preset or "high")
+            self.cmb_unit.setCurrentText(m.drawing_unit or "mm")
+            self._set_spin_hz(self.spn_start_f, float(m.start_frequency))
+            self._set_spin_hz(self.spn_stop_f, float(m.stop_frequency))
+            self._set_spin_hz(self.spn_f0, float(m.target_frequency))
+            fc = max(1e5, 0.5 * abs(m.stop_frequency - m.start_frequency))
+            self._set_spin_hz(self.spn_fc, fc)
+        finally:
+            self._freq_guard = False
+        self.sim_params.refresh_computed(self.project)
+        self._log(
+            "Mesh parameters applied: "
+            f"preset={m.preset}, unit={m.drawing_unit}, "
+            f"start={m.start_frequency:.6g}, stop={m.stop_frequency:.6g}, "
+            f"target={(m.target_frequency or 0.0):.6g}"
+        )
+        self._refresh_run_script_if_generated()
+
+    def _refresh_run_script_if_generated(self) -> None:
+        """Regenerate work/project_run.py after parameter changes (Apply).
+
+        Only when a script already exists (project was saved/built/run before);
+        the first generation still happens via Run Simulation or the Script
+        editor. Hand-edits are backed up as usual (_generate_script /
+        _note_script_backup). A visible Script editor reloads the file unless
+        it holds unsaved edits.
+        """
+        work = self.settings.work_path() / (self.project.name or "project")
+        if not (work / "project_run.py").exists():
+            return
+        try:
+            script = self._generate_script(work)
+        except Exception as e:  # noqa: BLE001 — Apply must not fail on this
+            self._log(f"WARNING: run script could not be refreshed: {e}")
+            return
+        self._log(f"Run script updated: {script}")
+        dlg = self._script_dialog
+        if dlg is not None and dlg.isVisible():
+            dlg.show_path(script)  # reloads unless the editor has unsaved edits
+
+    def _on_open_ports_dumps_dialog(self) -> None:
+        """Open (or re-use) the modeless Ports / Dumps window (Geometry menu)."""
+        from app.ui.ports_dumps import PortsDumpsDialog
+
+        if self._ports_dlg is None:
+            self._ports_dlg = PortsDumpsDialog(self._ports_form, self)
+        self._refresh_ports()
+        self._ports_dlg.show()
+        self._ports_dlg.raise_()
+        self._ports_dlg.activateWindow()
+
+    def _on_apply_patch_params_from_dialog(self) -> None:
+        """Patch rebuild using the dialog's values (then re-sync the dialog)."""
+        dlg = self._sim_params_dlg
+        if dlg is None:
+            return
+        self.sim_params.patch_params = dict(dlg.panel.patch_params)
+        self._on_apply_patch_params()
+        # the rebuild replaced self.project -> re-sync the dialog to it
+        dlg.load(
+            self.project,
+            patch_visible=self.sim_params.patch_group_visible,
+            patch_params=self.sim_params.patch_params,
+        )
+
+    def _on_apply_patch_params(self) -> None:
+        from app.ui.sim_params import DEFAULT_PATCH_PARAMS
+
+        pp = {**DEFAULT_PATCH_PARAMS, **self.sim_params.patch_params}
+        kwargs = {k: float(pp[k]) for k in DEFAULT_PATCH_PARAMS}
+        self.project, self.primitives = patch_antenna_primitives(**kwargs)
+        self.project.patch_params = dict(pp)
+        self.sim_params.patch_params = dict(pp)
+        self._set_spin_hz(self.spn_f0, kwargs["f0"])
+        self._set_spin_hz(self.spn_fc, kwargs["fc"])
+        self._sync_form_from_project()
+        self._refresh_tree()
+        self._refresh_ports()
+        self.geom_info.setPlainText(
+            "Patch antenna rebuilt from Sim Params dialog values.\n"
+            "Press 'Build CSX + Mesh + Validate' then 'Run Simulation'."
+        )
+        self._log(
+            f"Patch geometry applied: W={kwargs['patch_width']} L={kwargs['patch_length']} "
+            f"εr={kwargs['substrate_eps']} h={kwargs['substrate_thickness']} "
+            f"ground={kwargs['ground_thickness']} feed={kwargs['feed_pos']}"
+        )
+        if hasattr(self.sim_params, "set_patch_group_visible"):
+            self.sim_params.set_patch_group_visible(True)
+        self._log_computed_summary()
+
+    def _log_computed_summary(self) -> None:
+        try:
+            self._sync_project_from_form()
+            from app.meshing.rules import air_margin_units, compute_targets
+
+            t = compute_targets(self.project.mesh)
+            air = air_margin_units(
+                self.project.mesh, self.project.boundary.air_margin, t
+            )
+            self._log(
+                f"Computed: λ_air={t.lambda_min_units:.4g} mm, "
+                f"max_cell={t.max_cell_units:.4g} mm, "
+                f"target_cell={t.target_cell_units:.4g} mm, "
+                f"air_margin={air[0]:.4g} mm, "
+                f"NrTS={self.project.sim.max_timesteps}, "
+                f"end_criteria={self.project.sim.end_criteria:g}, "
+                f"boundary={self.project.boundary.as_openems_list()}"
+            )
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Computed summary failed: {e}")
+
+    def _on_new(self) -> None:
+        self.project = Project.new_default("untitled")
+        self.primitives = []
+        self._current_file_path = None
+        self.tree.clear()
+        self.geom_info.clear()
+        self._refresh_materials()
+        self._refresh_ports()
+        self._sync_form_from_project()
+        if hasattr(self.sim_params, "set_patch_group_visible"):
+            self.sim_params.set_patch_group_visible(False)
+        self._refresh_tree()
+        self._log("New project created (generic — not patch-specific)")
+
+    def _on_open(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open project", str(self.settings.work_path()), "Project (*.fcsim.json *.json)"
+        )
+        if not path:
+            return
+        try:
+            self._current_file_path = Path(path)
+            self.project = Project.load(path)
+            # Rebuild primitives from saved project.primitives / mesh_path / patch preset
+            self.primitives = []
+            import numpy as np  # noqa: F401
+
+            if self.project.primitives:
+                self.primitives = [dict(p) for p in self.project.primitives]
+            if not self.primitives:
+                for gf in self.project.geometry_files:
+                    mp = getattr(gf, "mesh_path", "") or ""
+                    if mp and Path(mp).exists():
+                        for name in gf.object_names or [Path(gf.path).stem]:
+                            self.primitives.append(
+                                {
+                                    "kind": "stl",
+                                    "name": name,
+                                    "material": "copper",
+                                    "priority": 10,
+                                    "path": mp,
+                                }
+                            )
+            if self.project.patch_params and not self.primitives:
+                from app.ui.sim_params import DEFAULT_PATCH_PARAMS
+
+                kwargs = {k: float(v) for k, v in {**DEFAULT_PATCH_PARAMS, **self.project.patch_params}.items()}
+                self.project, self.primitives = patch_antenna_primitives(**kwargs)
+                self.sim_params.patch_params = dict(self.project.patch_params)
+            self._sync_form_from_project()
+            if hasattr(self.sim_params, "set_patch_group_visible"):
+                self.sim_params.set_patch_group_visible(bool(self.project.patch_params))
+            self._refresh_tree()
+            self.geom_info.setPlainText(
+                f"Opened {path}\n"
+                f"Primitives: {len(self.primitives)}, ports: {len(self.project.ports)}, "
+                f"materials: {len(self.project.materials)}"
+            )
+            self._refresh_materials()
+            self._refresh_ports()
+            self._log(f"Opened {path}")
+            self._log_computed_summary()
+        except Exception as e:
+            import traceback
+
+            tb = traceback.format_exc()
+            self._log(f"ERROR opening {path}: {e}")
+            self._log(tb)
+            QMessageBox.warning(
+                self,
+                "Open failed",
+                f"Could not open project:\n{path}\n\n{e}\n\nSee Log tab for details.",
+            )
+
+    def _on_save(self) -> None:
+        self._sync_project_from_form()
+        self.project.primitives = list(self.primitives)
+        if self._current_file_path and self._current_file_path.exists():
+            saved = self.project.save(self._current_file_path)
+            self._log(f"Saved {saved}")
+            return
+        # No known file yet — behave like Save As
+        self._on_save_as()
+
+    def _on_save_as(self) -> None:
+        self._sync_project_from_form()
+        self.project.primitives = list(self.primitives)
+        initial = str(self.settings.work_path() / f"{self.project.name}.fcsim.json")
+        if self._current_file_path:
+            initial = str(self._current_file_path)
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save project as",
+            initial,
+            "Project (*.fcsim.json)",
+        )
+        if not path:
+            return
+        self._current_file_path = Path(path)
+        saved = self.project.save(path)
+        self._log(f"Saved {saved}")
+
+    def _object_names_for_dialog(self) -> list[str]:
+        names: list[str] = []
+        for gf in self.project.geometry_files:
+            names.extend(gf.object_names or [])
+            if gf.path and Path(gf.path).stem not in names:
+                names.append(Path(gf.path).stem)
+        for a in self.project.assignments:
+            if a.object_name and a.object_name not in names:
+                names.append(a.object_name)
+        for pr in self.primitives:
+            if pr.get("name") and pr["name"] not in names:
+                names.append(str(pr["name"]))
+        return names
+
+    def _material_names(self) -> list[str]:
+        return [m.name for m in self.project.materials] or ["copper", "substrate", "vacuum"]
+
+    def _on_import(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import FreeCAD geometry (STEP/STL/OBJ/FCStd/manifest)",
+            "",
+            "CAD / FreeCAD meshes (*.step *.stp *.stl *.obj *.fcstd *.json);;All files (*)",
+        )
+        if not path:
+            return
+        self._import_geometry_path(path)
+
+    def _on_freecad(self) -> None:
+        """Launch FreeCAD GUI or export FCStd/STEP → openEMS meshes."""
+        from app.ui.freecad_tools import FreeCADToolsDialog
+
+        work = self.settings.work_path()
+        default_src = ""
+        for gf in self.project.geometry_files:
+            if gf.path and Path(gf.path).exists():
+                default_src = gf.path
+                break
+        if not default_src:
+            yagi = work / "yagi_antenna" / "yagi_2p45.step"
+            if yagi.exists():
+                default_src = str(yagi)
+
+        dlg = FreeCADToolsDialog(
+            self,
+            freecad_cmd=self.settings.freecad_cmd,
+            freecad_gui=getattr(self.settings, "freecad_gui", ""),
+            work_dir=str(work),
+            default_source=default_src,
+        )
+        if not dlg.exec():
+            return
+        if dlg.last_action == "launch":
+            self._log(dlg.status.text() or "FreeCAD launched")
+            self._log(
+                "FreeCAD: draw solids (clear names) → File → Export → STEP "
+                "(or save FCStd), then use FreeCAD… → Export CAD…"
+            )
+            return
+        if dlg.last_action == "export":
+            self._log(f"FreeCAD export done: {dlg.result_out_dir}")
+            self._log(dlg.status.text())
+            src = dlg.result_source
+            if dlg.result_import and src:
+                self._log(f"Importing FreeCAD export into project: {src}")
+                self._import_geometry_path(src)
+            elif src:
+                self._log(
+                    f"Export ready (import skipped). Use Import Geometry… for: {src}"
+                )
+
+    def _import_geometry_path(self, path: str) -> None:
+        import json as _json
+        import numpy as np
+
+        from app.freecad_io.freecad_mesh import tessellate_cad_to_meshes
+        from app.freecad_io.port_marks import find_manifest_ports, parse_ports_payload, ports_to_port_defs
+        from app.models.project import GeometryFile
+
+        fmt = Path(path).suffix.lower().lstrip(".")
+        if not fmt and Path(path).is_dir():
+            # FreeCAD export folder (stl/ with per-object meshes)
+            fmt = "stl"
+        obj_dir = self.settings.work_path() / "imported" / Path(path).stem
+        obj_dir.mkdir(parents=True, exist_ok=True)
+        object_names: list[str] = []
+        mesh_paths: list[str] = []
+        lines: list[str] = []
+        warnings: list[str] = []
+        freecad_ports: list = []
+
+        imported_meshes: list = []
+        if fmt in {"step", "stp", "fcstd"}:
+            # FreeCAD BREP → triangle meshes for openEMS
+            lines.append(
+                f"Tessellating FreeCAD CAD ({fmt}) via FreeCADCmd → {obj_dir}"
+            )
+            mesh_result = tessellate_cad_to_meshes(
+                path,
+                freecad_cmd=self.settings.freecad_cmd,
+                out_dir=obj_dir,
+            )
+            warnings.extend(mesh_result.warnings)
+            imported_meshes = mesh_result.objects
+            freecad_ports = list(getattr(mesh_result, "ports", None) or [])
+            if not mesh_result.ok:
+                lines.append("ERROR: FreeCAD tessellation failed — check FreeCADCmd in Settings.")
+                for w in mesh_result.warnings:
+                    lines.append(f"WARNING: {w}")
+        else:
+            # STL/OBJ/manifest/folder: read FreeCAD mesh objects directly
+            from app.freecad_io.stl_import import load_stl_meshes
+
+            mesh_res = load_stl_meshes(path, out_dir=obj_dir)
+            warnings.extend(mesh_res.warnings)
+            if mesh_res.objects:
+                lines.append(
+                    f"FreeCAD meshes ({len(mesh_res.objects)} objects) → {obj_dir}"
+                )
+                imported_meshes = list(mesh_res.objects)
+            else:
+                # fallback: single mesh file / CAD bounds via importer
+                result = load_geometry_file(
+                    path,
+                    freecad_cmd=self.settings.freecad_cmd,
+                    work_dir=obj_dir,
+                )
+                warnings.extend(result.warnings)
+                for o in result.objects:
+                    tris = getattr(o, "triangles", None)
+                    npy = ""
+                    stl = ""
+                    if tris is not None and len(tris):
+                        npy_path = obj_dir / f"{o.name}.npy"
+                        stl_path = obj_dir / f"{o.name}.stl"
+                        np.save(str(npy_path), tris)
+                        npy = str(npy_path)
+                        stl = str(stl_path)
+                        # also write binary STL for external tools
+                        try:
+                            n = len(tris)
+                            import struct
+
+                            with open(stl_path, "wb") as f:
+                                f.write(b"stl".ljust(80, b" ")[:80])
+                                f.write(struct.pack("<I", n))
+                                for t in tris:
+                                    f.write(struct.pack("<3f", 0.0, 0.0, 0.0))
+                                    for p in t:
+                                        f.write(struct.pack("<3f", float(p[0]), float(p[1]), float(p[2])))
+                                    f.write(struct.pack("<H", 0))
+                        except Exception:
+                            pass
+
+                    class _M:
+                        pass
+
+                    m = _M()
+                    m.name = o.name
+                    m.format = o.format
+                    m.source_path = o.path
+                    m.npy_path = npy
+                    m.stl_path = stl
+                    m.bounds_min = o.bounds_min
+                    m.bounds_max = o.bounds_max
+                    m.triangle_count = int(len(tris)) if tris is not None else 0
+                    m.notes = o.notes
+                    imported_meshes.append(m)
+
+        for m in imported_meshes:
+            name = m.name
+            object_names.append(name)
+            bmin = m.bounds_min
+            bmax = m.bounds_max
+            lines.append(
+                f"{name} [{m.format}] triangles={getattr(m, 'triangle_count', 0)} "
+                f"bounds={bmin}..{bmax}"
+            )
+            mesh_path = ""
+            npy = getattr(m, "npy_path", "") or ""
+            if npy and Path(npy).exists():
+                mesh_path = npy
+                mesh_paths.append(mesh_path)
+            elif getattr(m, "stl_path", "") and Path(m.stl_path).exists():
+                # load stl → npy for CSX.AddMesh
+                tris = None
+                try:
+                    from app.freecad_io.freecad_mesh import load_stl_or_obj_triangles
+
+                    tris = load_stl_or_obj_triangles(m.stl_path)
+                except Exception:
+                    tris = None
+                if tris is not None and len(tris):
+                    npy_path = obj_dir / f"{name}.npy"
+                    np.save(str(npy_path), tris)
+                    mesh_path = str(npy_path)
+                    mesh_paths.append(mesh_path)
+
+            if mesh_path:
+                stl_out = ""
+                if getattr(m, "stl_path", "") and Path(m.stl_path).exists():
+                    stl_out = str(m.stl_path)
+                else:
+                    stl_candidate = obj_dir / f"{name}.stl"
+                    if stl_candidate.exists():
+                        stl_out = str(stl_candidate)
+                # Material/priority come from an existing assignment (Yagi preset:
+                # boom -> GFRP dielectric; a copper boom would short the feed gap).
+                assign = next(
+                    (a for a in self.project.assignments if a.object_name == name), None
+                )
+                if assign is not None and assign.role != "ignore":
+                    mat = assign.material or (
+                        "copper" if assign.role in ("pec", "conducting_sheet") else ""
+                    )
+                    pri = int(assign.priority)
+                else:
+                    mat, pri = "copper", 10
+                # Default material: copper PEC (user can change via Assignment)
+                prim = {
+                    "kind": "stl",
+                    "name": name,
+                    "material": mat,
+                    "priority": pri,
+                    "path": mesh_path,
+                    "mesh_path": mesh_path,
+                    "stl_path": stl_out,
+                    "start": list(bmin) if bmin else [0, 0, 0],
+                    "stop": list(bmax) if bmax else [0, 0, 0],
+                    "source_format": getattr(m, "format", "") or fmt,
+                    "source_file": path,
+                }
+                dup = next(
+                    (
+                        i
+                        for i, pr in enumerate(self.primitives)
+                        if pr.get("kind") == "stl" and pr.get("name") == name
+                    ),
+                    None,
+                )
+                if dup is None:
+                    self.primitives.append(prim)
+                else:
+                    # re-import: refresh mesh in place
+                    self.primitives[dup] = {**self.primitives[dup], **prim}
+                    lines.append(f"updated existing mesh primitive: {name}")
+                if name not in [a.object_name for a in self.project.assignments]:
+                    self.project.assignments.append(
+                        GeomAssignment(
+                            object_name=name,
+                            role="pec",
+                            material="copper",
+                            priority=10,
+                            notes=f"imported from {Path(path).name}",
+                        )
+                    )
+            else:
+                warnings.append(f"No simulation mesh for {name} (no triangles)")
+
+        # --- FreeCAD port marks → PortDef (Settings → port defaults) ---
+        port_defaults = self.settings.port_defaults()
+        if not freecad_ports:
+            # STEP import may sit next to openems_export.json
+            for cand in (
+                Path(path).parent / "openems_export.json",
+                obj_dir / "openems_export.json",
+            ):
+                freecad_ports = find_manifest_ports(str(cand), port_defaults)
+                if freecad_ports:
+                    lines.append(f"Ports from manifest: {cand}")
+                    break
+        if freecad_ports:
+            new_defs = ports_to_port_defs(
+                parse_ports_payload(freecad_ports, port_defaults),
+                port_defaults,
+            )
+            existing = {p.name.lower() for p in self.project.ports}
+            added = 0
+            for pd in new_defs:
+                if pd.name.lower() in existing:
+                    continue
+                self.project.ports.append(pd)
+                existing.add(pd.name.lower())
+                added += 1
+            lines.append(
+                f"FreeCAD ports detected: {len(new_defs)} (added {added}); "
+                f"defaults type={port_defaults.get('type')} "
+                f"R={port_defaults.get('resistance')} "
+                f"excite={port_defaults.get('excite_port')}"
+            )
+            self._log(
+                f"FreeCAD ports detected: {len(new_defs)} (added {added}) "
+                f"[defaults type={port_defaults.get('type')} "
+                f"R={port_defaults.get('resistance')}]"
+            )
+            for pd in new_defs:
+                self._log(
+                    f"  Port {pd.name}: {pd.type} {pd.start}→{pd.stop} R={pd.resistance} "
+                    f"dir={pd.direction} excite={pd.excite_port}"
+                )
+            if added:
+                self._log(
+                    "  Edit ports: double-click in Ports / Dumps "
+                    "(defaults: Settings -> Port defaults)"
+                )
+
+        gf = GeometryFile(
+            path=path,
+            format=fmt,
+            unit="mm",
+            mesh_path=mesh_paths[0] if mesh_paths else "",
+            object_names=object_names,
+        )
+        existing_gf = next(
+            (i for i, g in enumerate(self.project.geometry_files) if g.path == path), None
+        )
+        if existing_gf is None:
+            self.project.geometry_files.append(gf)
+        else:
+            self.project.geometry_files[existing_gf] = gf
+        # Remember tessellated mesh directory for script_gen fallback
+        note = f"import_mesh_dir={obj_dir}"
+        if note not in (self.project.notes or ""):
+            self.project.notes = (self.project.notes + "\n" if self.project.notes else "") + note
+        self._sync_assignment_materials_to_primitives()
+
+        for w in warnings:
+            lines.append(f"WARNING: {w}")
+        self.geom_info.setPlainText("\n".join(lines) or "No objects")
+        self._log(f"Imported {path}")
+        if mesh_paths:
+            self._log(f"Simulation meshes (.npy): {len(mesh_paths)} object(s)")
+        for w in warnings:
+            self._log(f"WARNING: {w}")
+        if fmt in {"step", "stp", "fcstd"}:
+            self._log(
+                "Tip: FreeCAD → mark ports (PORT_x_start/stop points or openems_port_* props) "
+                "→ Export CAD… / Import; ports are auto-added."
+            )
+        elif fmt in {"stl", "obj", "json"} or Path(path).is_dir():
+            self._log(
+                "Tip: STL meshes are simulated as Polyhedron surfaces; "
+                "change material/role via Assignment."
+            )
+        self._refresh_ports()
+        self._refresh_materials()
+        self._refresh_tree()
+
+    def _sync_assignment_materials_to_primitives(self) -> None:
+        """Keep stl primitive materials in sync with Geometry assignment dialogs."""
+        for a in self.project.assignments:
+            if a.role == "ignore":
+                continue
+            mat = (a.material or "").strip()
+            if not mat:
+                mat = "copper" if a.role == "pec" else a.role
+            for pr in self.primitives:
+                if pr.get("name") == a.object_name and pr.get("kind") == "stl":
+                    pr["material"] = mat
+                    pr["priority"] = int(a.priority)
+
+    def _on_load_patch(self) -> None:
+        from app.ui.sim_params import DEFAULT_PATCH_PARAMS
+
+        self._current_file_path = None
+        if self.project.patch_params:
+            self.sim_params.patch_params = {
+                **DEFAULT_PATCH_PARAMS,
+                **{k: float(v) for k, v in self.project.patch_params.items()},
+            }
+        else:
+            self.sim_params.patch_params = dict(DEFAULT_PATCH_PARAMS)
+        kwargs = {k: float(self.sim_params.patch_params[k]) for k in DEFAULT_PATCH_PARAMS}
+        self.project, self.primitives = patch_antenna_primitives(**kwargs)
+        self.project.patch_params = dict(self.sim_params.patch_params)
+        self._sync_form_from_project()
+        self.sim_params.set_patch_group_visible(True)
+        self._refresh_tree()
+        self._refresh_ports()
+        self.geom_info.setPlainText(
+            "Patch antenna PRESET loaded (not required for other antennas/PCBs).\n"
+            "Use Import Geometry / Add Primitive / Add Port for custom structures.\n"
+            "Simulation Parameters window holds patch overrides when this preset is active."
+        )
+        self._log("Patch antenna preset loaded")
+        self._log_computed_summary()
+
+    def _on_load_yagi(self) -> None:
+        """Load 2.45 GHz Yagi-Uda preset + generate FreeCAD model if possible."""
+        from app.csxcad_builder.primitives import yagi_antenna_primitives
+        from app.models.project import GeometryFile
+
+        self._current_file_path = None
+
+        project, primitives = yagi_antenna_primitives()
+        self.project = project
+        self.primitives = primitives
+        self.project.primitives = list(primitives)
+        if hasattr(self.sim_params, "set_patch_group_visible"):
+            self.sim_params.set_patch_group_visible(False)
+        self._sync_form_from_project()
+        self._refresh_tree()
+        self._refresh_ports()
+        self._refresh_materials()
+
+        work = self.settings.work_path() / "yagi_antenna"
+        work.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "Yagi-Uda PRESET loaded (2.45 GHz, 5 elements + boom).",
+            "X=elements, Y=boom, Z=up. Lumped 50 Ω port at driven dipole gap.",
+            f"Work dir: {work}",
+        ]
+        model_info = {"ok": False}
+        try:
+            from examples.run_yagi_example import generate_freecad_model
+
+            model_info = generate_freecad_model(work, freecad_cmd=Path(self.settings.freecad_cmd))
+            if model_info.get("ok") and Path(model_info["step"]).exists():
+                # Analytic primitives already define the full geometry. Do NOT
+                # register the STEP in geometry_files — that would make script_gen
+                # tessellate it and add 14 duplicate STL primitives next to the
+                # analytic cylinders (boom, reflector, driven_*, director_*).
+                lines += [
+                    f"FreeCAD model (reference only): {model_info['fcstd']}",
+                    f"STEP: {model_info['step']}",
+                    f"STL: {model_info['stl']}",
+                    f"Params: {model_info['params']}",
+                    "Simulation uses the analytic primitives below (STEP is reference only).",
+                ]
+            else:
+                lines.append(model_info.get("log") or "FreeCAD model not generated (check FreeCADCmd path).")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"FreeCAD model generation error: {e}")
+            self._log(f"Yagi FreeCAD model error: {e}")
+
+        self.geom_info.setPlainText("\n".join(lines))
+        self._log("Yagi antenna preset loaded")
+        for ln in lines:
+            self._log(ln)
+        self._log_computed_summary()
+
+    def _on_load_pcb(self, use_freecad: bool = True) -> None:
+        self._current_file_path = None
+        """Load the 2-port microstrip notch filter preset.
+
+        Default path: FreeCADCmd builds the board as named solids, the export
+        turns them into per-object STL meshes and the simulation runs on those
+        meshes (same as Import Geometry). Analytic boxes only as fallback when
+        FreeCAD is unavailable.
+        """
+        from app.csxcad_builder.primitives import pcb_filter_primitives
+
+        work = self.settings.work_path() / "pcb_filter"
+        work.mkdir(parents=True, exist_ok=True)
+
+        project = None
+        prims: list[dict] = []
+        source_lines: list[str] = []
+        if use_freecad:
+            try:
+                from examples.run_pcb_filter_example import prepare_freecad_project
+
+                self._log("PCB filter preset: building FreeCAD model (please wait) ...")
+                project, prims, info = prepare_freecad_project(
+                    work, freecad_cmd=Path(self.settings.freecad_cmd)
+                )
+                if project is None:
+                    self._log(f"FreeCAD PCB model failed: {info.get('error')}")
+                else:
+                    port_txt = ", ".join(
+                        f"{p.name}{' [exc]' if p.excite_port else ''}"
+                        for p in project.ports
+                    )
+                    source_lines = [
+                        f"FreeCAD model: {info.get('fcstd')}",
+                        f"STEP: {info.get('step')}",
+                        f"Mesh manifest: {info.get('manifest')}",
+                        "FreeCAD solids -> STL meshes: "
+                        + ", ".join(info.get("objects") or []),
+                        f"Ports (FreeCAD marks): {port_txt}",
+                    ]
+            except Exception as e:  # noqa: BLE001
+                self._log(f"FreeCAD PCB model error: {e}")
+                project = None
+
+        if project is None:
+            project, prims = pcb_filter_primitives()
+            source_lines = [
+                "FreeCAD path unavailable - analytic boxes (fallback).",
+                "Set FreeCADCmd in Settings to build the board in FreeCAD instead.",
+            ]
+
+        self.project = project
+        self.primitives = prims
+        self.project.primitives = list(prims)
+        if hasattr(self.sim_params, "set_patch_group_visible"):
+            self.sim_params.set_patch_group_visible(False)
+        self._sync_form_from_project()
+        self._refresh_tree()
+        self._refresh_ports()
+        self._refresh_materials()
+
+        stub = next((p for p in prims if p.get("name") == "msl_stub"), None)
+        stub_len = (stub["stop"][1] - stub["start"][1]) if stub else 0.0
+        lines = [
+            "PCB filter PRESET loaded: 2-port microstrip notch filter on FR4 1.6 mm.",
+            f"50 Ω line + open λg/4 stub ({stub_len:.2f} mm) -> stop band at 2.45 GHz.",
+            *source_lines,
+            "Two lumped edge ports: one run measures one S-matrix column — "
+            "examples/run_pcb_filter_example.py runs both and merges them to S2P.",
+            f"Work dir: {work}",
+        ]
+        self.geom_info.setPlainText("\n".join(lines))
+        self._log("PCB filter preset loaded")
+        for ln in lines:
+            self._log(ln)
+        self._log_computed_summary()
+
+    def _on_add_assignment(self) -> None:
+        from app.ui.geometry_editors import AssignmentDialog
+
+        dlg = AssignmentDialog(
+            self._object_names_for_dialog(),
+            self._material_names(),
+            self,
+        )
+        if dlg.exec() and dlg.result:
+            a = dlg.result
+            # replace existing assignment for same object
+            self.project.assignments = [
+                x for x in self.project.assignments if x.object_name != a.object_name
+            ]
+            self.project.assignments.append(a)
+            self._sync_assignment_materials_to_primitives()
+            self._refresh_tree()
+            self._log(f"Assignment: {a.object_name} -> {a.role}/{a.material}")
+
+    def _on_add_material(self) -> None:
+        from app.ui.geometry_editors import MaterialDialog
+
+        dlg = MaterialDialog(self)
+        if dlg.exec() and dlg.result:
+            m = dlg.result
+            self.project.materials = [x for x in self.project.materials if x.name != m.name]
+            self.project.materials.append(m)
+            self._refresh_materials()
+            self._log(f"Material: {m.name} ({m.kind}, εr={m.epsilon})")
+
+    def _on_add_prim_box(self) -> None:
+        from app.ui.geometry_editors import PrimitiveBoxDialog
+
+        dlg = PrimitiveBoxDialog(self)
+        if dlg.exec() and dlg.result:
+            pr = dlg.result
+            self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
+            self.primitives.append(pr)
+            self._log(f"Box primitive: {pr['name']} {pr['material']} {pr['start']}→{pr['stop']}")
+            self._refresh_tree()
+
+    def _on_add_prim_cyl(self) -> None:
+        from app.ui.geometry_editors import PrimitiveCylinderDialog
+
+        dlg = PrimitiveCylinderDialog(self)
+        if dlg.exec() and dlg.result:
+            pr = dlg.result
+            self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
+            self.primitives.append(pr)
+            self._log(
+                f"Cylinder primitive: {pr['name']} r={pr['radius']} "
+                f"{pr['start']}→{pr['stop']}"
+            )
+            self._refresh_tree()
+
+    def _on_add_port(self) -> None:
+        from app.ui.geometry_editors import PortDialog
+
+        from app.models.project import PortDef as _PD
+
+        # New port starts from Settings → port defaults (empty geometry)
+        pd = self.settings.port_defaults()
+        seed = _PD(
+            name="in1",
+            type=pd.get("type", "lumped"),  # type: ignore[arg-type]
+            resistance=float(pd.get("resistance", 50.0)),
+            excite_port=bool(pd.get("excite_port", True)),
+            mesh_dirs=str(pd.get("mesh_dirs") or "xyz"),
+            direction=str(pd.get("direction") or "z"),
+        )
+        dlg = PortDialog(self, port=seed)
+        if dlg.exec() and dlg.result_port:
+            self.project.ports.append(dlg.result_port)
+            self._refresh_ports()
+            self._log(
+                f"Port {dlg.result_port.name}: {dlg.result_port.type} "
+                f"{dlg.result_port.start}→{dlg.result_port.stop} R={dlg.result_port.resistance}"
+            )
+
+    def _selected_port_index(self) -> int:
+        row = self.port_list.currentRow()
+        if row < 0 or row >= len(self.project.ports):
+            return -1
+        return row
+
+    def _on_edit_port(self, _item=None) -> None:
+        from app.ui.geometry_editors import PortDialog
+
+        idx = self._selected_port_index()
+        if idx < 0:
+            self._log("Select a port to edit (double-click a row)")
+            return
+        old = self.project.ports[idx]
+        dlg = PortDialog(self, port=old)
+        if dlg.exec() and dlg.result_port:
+            self.project.ports[idx] = dlg.result_port
+            self._refresh_ports()
+            if idx < self.port_list.count():
+                self.port_list.setCurrentRow(idx)
+            self._log(
+                f"Port updated: {dlg.result_port.name} {dlg.result_port.type} "
+                f"{dlg.result_port.start}→{dlg.result_port.stop} "
+                f"R={dlg.result_port.resistance} dir={dlg.result_port.direction} "
+                f"excite={dlg.result_port.excite_port}"
+            )
+
+    def _on_remove_port(self) -> None:
+        idx = self._selected_port_index()
+        if idx < 0:
+            self._log("Select a port to remove")
+            return
+        p = self.project.ports.pop(idx)
+        self._refresh_ports()
+        self._log(f"Port removed: {p.name}")
+
+    def _on_add_dump(self) -> None:
+        from app.ui.geometry_editors import DumpDialog
+
+        dlg = DumpDialog(self)
+        if dlg.exec() and dlg.result:
+            d = dlg.result
+            self.project.dumps = [x for x in self.project.dumps if x.name != d.name]
+            self.project.dumps.append(d)
+            self._log(f"Field dump: {d.name} ({d.quantity}) {d.start}→{d.stop}")
+            self._refresh_tree()
+
+    def _update_viewer_nf2ff(self) -> None:
+        """Push a changed NF2FF box to the Mesh Viewer so the frame updates now."""
+        try:
+            if getattr(self.mesh_viewer, "_csx", None) is None:
+                self._log("(Mesh Viewer: build mesh first — the NF2FF frame is drawn from the built mesh)")
+                return
+            self.mesh_viewer.set_nf2ff(self.project.nf2ff)
+        except Exception as e:  # noqa: BLE001 — viewer must not block editing
+            print(f"viewer NF2FF refresh failed: {e}")
+
+    def _on_edit_nf2ff(self) -> None:
+        from app.ui.geometry_editors import NF2FFBoxDialog
+
+        n = self.project.nf2ff
+        dlg = NF2FFBoxDialog(self, start=n.start, stop=n.stop, center=n.center)
+        if dlg.exec() and dlg.result_start and dlg.result_stop:
+            n.start = dlg.result_start
+            n.stop = dlg.result_stop
+            n.center = [
+                0.5 * (dlg.result_start[i] + dlg.result_stop[i]) for i in range(3)
+            ]
+            n.enabled = True
+            self.project.sim.nf2ff_enabled = True
+            self.chk_nf2ff.setChecked(True)
+            self._log(f"NF2FF box: {n.start} → {n.stop}")
+            self._refresh_tree()
+            self._update_viewer_nf2ff()
+
+    def _on_fit_nf2ff(self) -> None:
+        xs: list[float] = []
+        ys: list[float] = []
+        zs: list[float] = []
+        for pr in self.primitives:
+            if pr.get("kind") in ("box", "stl", "cylinder"):
+                for key in ("start", "stop"):
+                    p = pr.get(key)
+                    if not p:
+                        continue
+                    xs.append(float(p[0]))
+                    ys.append(float(p[1]))
+                    zs.append(float(p[2]))
+        for gf in self.project.geometry_files:
+            # bounds not always stored on GeometryFile; skip
+            del gf
+        if not xs:
+            self._log("Fit NF2FF: no primitives/geometry bounds found")
+            return
+        # air margin ~ λ/4 free-space at stop frequency; the FDTD domain delivers a
+        # bit less than that (graded air region), so the NF2FF box uses 70% of it to
+        # stay strictly inside the domain (openEMS drops boxes outside the domain).
+        from app.meshing.rules import air_margin_units, compute_targets, wavelength_m
+
+        t = compute_targets(self.project.mesh)
+        unit = t.unit_m
+        lam = wavelength_m(max(self.project.mesh.start_frequency, self.project.mesh.stop_frequency), 1.0)
+        margin = 0.7 * (lam / 4.0) / unit
+        start = [min(xs) - margin, min(ys) - margin, min(zs) - margin * 0.3]
+        stop = [max(xs) + margin, max(ys) + margin, max(zs) + margin * 0.5]
+        n = self.project.nf2ff
+        n.start = [float(v) for v in start]
+        n.stop = [float(v) for v in stop]
+        n.center = [0.5 * (start[i] + stop[i]) for i in range(3)]
+        n.enabled = True
+        self.project.sim.nf2ff_enabled = True
+        self.chk_nf2ff.setChecked(True)
+        self._log(f"NF2FF fitted to geometry + air margin≈{margin:.3g}: {n.start} → {n.stop}")
+        self._refresh_tree()
+        self._update_viewer_nf2ff()
+
+    def _tree_item(self, text: str, kind: str, index: int) -> QListWidgetItem:
+        it = QListWidgetItem(text)
+        it.setData(Qt.UserRole, kind)
+        it.setData(Qt.UserRole + 1, index)
+        it.setToolTip(
+            "Double-click to edit" if kind != "geom" else "Imported geometry (read-only) — edit in FreeCAD"
+        )
+        return it
+
+    def _refresh_tree(self) -> None:
+        prev: tuple[str, int] = ("", -1)
+        cur = self.tree.currentItem()
+        if cur is not None:
+            k_raw = cur.data(Qt.UserRole)
+            i_raw = cur.data(Qt.UserRole + 1)
+            prev = (
+                "" if k_raw is None else str(k_raw),
+                -1 if i_raw is None else int(i_raw),
+            )
+        self.tree.clear()
+        restore_row = -1
+
+        def _add(text: str, kind: str, index: int) -> None:
+            nonlocal restore_row
+            self.tree.addItem(self._tree_item(text, kind, index))
+            if kind == prev[0] and index == prev[1]:
+                restore_row = self.tree.count() - 1
+
+        for i, gf in enumerate(self.project.geometry_files):
+            _add(f"Geom: {Path(gf.path).name} [{gf.format}]", "geom", i)
+        for i, pr in enumerate(self.primitives):
+            kind = pr.get("kind", "box")
+            _add(
+                f"Prim: {pr.get('name')} ({kind}/{pr.get('material', '?')})",
+                "prim",
+                i,
+            )
+        for i, a in enumerate(self.project.assignments):
+            _add(
+                f"Assign: {a.object_name} -> {a.role}/{a.material}",
+                "assign",
+                i,
+            )
+        for i, m in enumerate(self.project.materials):
+            _add(f"Mat: {m.name} ({m.kind})", "mat", i)
+        for i, p in enumerate(self.project.ports):
+            _add(f"Port: {p.name} {p.type} {p.start}→{p.stop}", "port", i)
+        for i, d in enumerate(self.project.dumps):
+            _add(f"Dump: {d.name} ({d.quantity})", "dump", i)
+        n = self.project.nf2ff
+        _add(
+            f"NF2FF: {'on' if n.enabled else 'off'} {n.start}→{n.stop}",
+            "nf2ff",
+            0,
+        )
+        if restore_row >= 0:
+            self.tree.setCurrentRow(restore_row)
+
+    def _tree_key_press(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self._on_delete_selected_tree()
+            event.accept()
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._on_edit_selected_tree()
+            event.accept()
+            return
+        QListWidget.keyPressEvent(self.tree, event)
+
+    def _current_tree_entry(self) -> tuple[str, int]:
+        item = self.tree.currentItem()
+        if item is None:
+            return "", -1
+        kind_raw = item.data(Qt.UserRole)
+        idx_raw = item.data(Qt.UserRole + 1)
+        kind = "" if kind_raw is None else str(kind_raw)
+        idx = -1 if idx_raw is None else int(idx_raw)
+        return kind, idx
+
+    def _on_edit_selected_tree(self) -> None:
+        kind, idx = self._current_tree_entry()
+        if not kind:
+            self._log("Select a tree entry to edit (double-click also works)")
+            return
+        self._edit_tree_entry(kind, idx)
+
+    def _on_delete_selected_tree(self) -> None:
+        kind, idx = self._current_tree_entry()
+        if not kind:
+            self._log("Select a tree entry to remove (Delete key or Geometry menu)")
+            return
+        if kind == "geom":
+            gf = (
+                self.project.geometry_files[idx]
+                if 0 <= idx < len(self.project.geometry_files)
+                else None
+            )
+            name = Path(gf.path).name if gf else "?"
+            self.project.geometry_files.pop(idx)
+            self._log(f"Geometry file removed from project: {name}")
+            self._refresh_tree()
+            return
+        if kind == "nf2ff":
+            n = self.project.nf2ff
+            n.enabled = False
+            n.start = [-20, -20, -20]
+            n.stop = [20, 20, 20]
+            n.center = [0, 0, 0]
+            self.project.sim.nf2ff_enabled = False
+            self.chk_nf2ff.setChecked(False)
+            self._log("NF2FF disabled and reset")
+            self._refresh_tree()
+            return
+        self._remove_tree_entry(kind, idx)
+
+    def _on_duplicate_selected_tree(self) -> None:
+        """Insert a deep copy of the selected tree entry right after it.
+
+        Copies get a unique ``… (copy)`` name (prim/mat/port/dump); the copy
+        is selected afterwards, so repeated duplication chains naturally.
+        """
+        kind, idx = self._current_tree_entry()
+        if not kind:
+            self._log("Select a tree entry to duplicate (right-click → Duplicate)")
+            return
+        if kind not in DUP_TREE_KINDS:
+            self._log(f"'{kind}' entries cannot be duplicated")
+            return
+        import copy as _copy
+        import re as _re
+
+        def _uniq(base: object, taken) -> str:
+            base = _re.sub(r" \(copy( \d+)?\)$", "", str(base or "item"))
+            names = {str(t) for t in taken if t}
+            cand = f"{base} (copy)"
+            n = 2
+            while cand in names:
+                cand = f"{base} (copy {n})"
+                n += 1
+            return cand
+
+        if kind == "prim":
+            if not (0 <= idx < len(self.primitives)):
+                return
+            pr = _copy.deepcopy(self.primitives[idx])
+            pr["name"] = _uniq(pr.get("name"), [p.get("name") for p in self.primitives])
+            self.primitives.insert(idx + 1, pr)
+            label = f"Primitive duplicated: {pr['name']}"
+            self._refresh_tree()
+        elif kind == "assign":
+            if not (0 <= idx < len(self.project.assignments)):
+                return
+            a = _copy.deepcopy(self.project.assignments[idx])
+            self.project.assignments.insert(idx + 1, a)
+            self._sync_assignment_materials_to_primitives()
+            label = f"Assignment duplicated: {a.object_name} -> {a.role}/{a.material}"
+            self._refresh_tree()
+        elif kind == "mat":
+            if not (0 <= idx < len(self.project.materials)):
+                return
+            m = _copy.deepcopy(self.project.materials[idx])
+            m.name = _uniq(m.name, [x.name for x in self.project.materials])
+            self.project.materials.insert(idx + 1, m)
+            label = f"Material duplicated: {m.name}"
+            self._refresh_materials()  # also refreshes the tree
+        elif kind == "port":
+            if not (0 <= idx < len(self.project.ports)):
+                return
+            p = _copy.deepcopy(self.project.ports[idx])
+            p.name = _uniq(p.name, [x.name for x in self.project.ports])
+            self.project.ports.insert(idx + 1, p)
+            label = f"Port duplicated: {p.name}"
+            self._refresh_ports()  # also refreshes the tree
+        elif kind == "dump":
+            if not (0 <= idx < len(self.project.dumps)):
+                return
+            d = _copy.deepcopy(self.project.dumps[idx])
+            d.name = _uniq(d.name, [x.name for x in self.project.dumps])
+            self.project.dumps.insert(idx + 1, d)
+            label = f"Field dump duplicated: {d.name}"
+            self._refresh_tree()
+        else:  # pragma: no cover - guarded by DUP_TREE_KINDS
+            return
+        self._select_tree_entry(kind, idx + 1)
+        self._log(label)
+
+    def _select_tree_entry(self, kind: str, idx: int) -> None:
+        """Move the current-row cursor to the (kind, idx) tree entry."""
+        for i in range(self.tree.count()):
+            it = self.tree.item(i)
+            if it.data(Qt.UserRole) == kind and it.data(Qt.UserRole + 1) == idx:
+                self.tree.setCurrentRow(i)
+                return
+
+    def _on_tree_double_clicked(self, item: QListWidgetItem) -> None:
+        kind_raw = item.data(Qt.UserRole)
+        idx_raw = item.data(Qt.UserRole + 1)
+        kind = "" if kind_raw is None else str(kind_raw)
+        idx = 0 if idx_raw is None else int(idx_raw)
+        self._edit_tree_entry(kind, idx)
+
+    def _on_tree_context_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QMenu
+
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        kind_raw = item.data(Qt.UserRole)
+        idx_raw = item.data(Qt.UserRole + 1)
+        kind = "" if kind_raw is None else str(kind_raw)
+        idx = 0 if idx_raw is None else int(idx_raw)
+        self.tree.setCurrentItem(item)
+        menu = QMenu(self)
+        act_edit = menu.addAction("Edit…")
+        act_edit.setEnabled(kind != "geom")
+        act_dup = menu.addAction("Duplicate")
+        act_dup.setEnabled(kind in DUP_TREE_KINDS)
+        act_del = menu.addAction("Remove")
+        act_del.setEnabled(kind in {"geom", "prim", "assign", "mat", "port", "dump", "nf2ff"})
+        chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
+        if chosen is act_edit:
+            self._edit_tree_entry(kind, idx)
+        elif chosen is act_dup:
+            self._on_duplicate_selected_tree()
+        elif chosen is act_del:
+            self._on_delete_selected_tree()
+
+    def _edit_tree_entry(self, kind: str, idx: int) -> None:
+        if kind == "geom":
+            gf = self.project.geometry_files[idx] if 0 <= idx < len(self.project.geometry_files) else None
+            if gf:
+                self._log(
+                    f"Geometry file: {gf.path} [{gf.format}] — "
+                    "edit in FreeCAD, then re-import (FreeCAD... / Import Geometry...)"
+                )
+            return
+        if kind == "prim":
+            if not (0 <= idx < len(self.primitives)):
+                return
+            pr = self.primitives[idx]
+            ptype = str(pr.get("kind", "box"))
+            if ptype in {"box", "cylinder"}:
+                from app.ui.geometry_editors import (
+                    PrimitiveBoxDialog,
+                    PrimitiveCylinderDialog,
+                )
+
+                if ptype == "box":
+                    dlg = PrimitiveBoxDialog(self, prim=pr)
+                else:
+                    dlg = PrimitiveCylinderDialog(self, prim=pr)
+                if dlg.exec() and dlg.result:
+                    old_name = pr.get("name")
+                    self.primitives[idx] = dlg.result
+                    new_name = dlg.result.get("name")
+                    if old_name and new_name and old_name != new_name:
+                        self._rename_primitive(old_name, new_name)
+                    self._log(
+                        f"Primitive updated: {new_name} {dlg.result.get('material')} "
+                        f"{dlg.result.get('start')}→{dlg.result.get('stop')}"
+                    )
+                    self._refresh_tree()
+                return
+            # stl / imported mesh — material + priority only
+            self._edit_stl_primitive(idx)
+            return
+        if kind == "assign":
+            if not (0 <= idx < len(self.project.assignments)):
+                return
+            from app.ui.geometry_editors import AssignmentDialog
+
+            a = self.project.assignments[idx]
+            dlg = AssignmentDialog(
+                self._object_names_for_dialog(),
+                self._material_names(),
+                self,
+                assignment=a,
+            )
+            if dlg.exec() and dlg.result:
+                old_obj = a.object_name
+                new = dlg.result
+                # keep stable identity: don't allow silent second row for same object
+                self.project.assignments = [
+                    x
+                    for x in self.project.assignments
+                    if x is not a and x.object_name != new.object_name
+                ]
+                self.project.assignments.append(new)
+                if old_obj != new.object_name:
+                    for pr in self.primitives:
+                        if pr.get("name") == old_obj:
+                            pr["name"] = new.object_name
+                self._sync_assignment_materials_to_primitives()
+                self._log(
+                    f"Assignment updated: {new.object_name} -> {new.role}/{new.material}"
+                )
+                self._refresh_tree()
+            return
+        if kind == "mat":
+            if not (0 <= idx < len(self.project.materials)):
+                return
+            from app.ui.geometry_editors import MaterialDialog
+
+            m = self.project.materials[idx]
+            dlg = MaterialDialog(self, material=m)
+            if dlg.exec() and dlg.result:
+                old = m.name
+                new = dlg.result
+                self.project.materials = [
+                    x for x in self.project.materials if x is not m and x.name != new.name
+                ]
+                self.project.materials.append(new)
+                if old != new.name:
+                    for a in self.project.assignments:
+                        if a.material == old:
+                            a.material = new.name
+                    for pr in self.primitives:
+                        if pr.get("material") == old:
+                            pr["material"] = new.name
+                self._refresh_materials()
+                self._log(f"Material updated: {new.name} ({new.kind}, εr={new.epsilon})")
+                self._refresh_tree()
+            return
+        if kind == "port":
+            if not (0 <= idx < len(self.project.ports)):
+                return
+            from app.ui.geometry_editors import PortDialog
+
+            p = self.project.ports[idx]
+            dlg = PortDialog(self, port=p)
+            if dlg.exec() and dlg.result_port:
+                self.project.ports[idx] = dlg.result_port
+                self._refresh_ports()
+                self._log(
+                    f"Port updated: {dlg.result_port.name} {dlg.result_port.type} "
+                    f"{dlg.result_port.start}→{dlg.result_port.stop} "
+                    f"R={dlg.result_port.resistance}"
+                )
+                self._refresh_tree()
+            return
+        if kind == "dump":
+            if not (0 <= idx < len(self.project.dumps)):
+                return
+            from app.ui.geometry_editors import DumpDialog
+
+            d = self.project.dumps[idx]
+            dlg = DumpDialog(self, dump=d)
+            if dlg.exec() and dlg.result:
+                self.project.dumps[idx] = dlg.result
+                self._log(f"Field dump updated: {dlg.result.name} ({dlg.result.quantity})")
+                self._refresh_tree()
+            return
+        if kind == "nf2ff":
+            self._on_edit_nf2ff()
+            self._refresh_tree()
+
+    def _edit_stl_primitive(self, idx: int) -> None:
+        from PySide6.QtWidgets import (
+            QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QFormLayout,
+            QSpinBox,
+        )
+
+        pr = self.primitives[idx]
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Mesh: {pr.get('name', '')}")
+        form = QFormLayout(dlg)
+        ed_name = QLineEdit(str(pr.get("name", "")))
+        ed_name.setReadOnly(True)
+        cmb_mat = QComboBox()
+        cmb_mat.setEditable(True)
+        names = self._material_names() or ["copper", "substrate", "vacuum"]
+        cmb_mat.addItems(names)
+        cmb_mat.setCurrentText(str(pr.get("material", "copper")))
+        spn_pri = QSpinBox()
+        spn_pri.setRange(0, 200)
+        spn_pri.setValue(int(pr.get("priority", 10)))
+        form.addRow("Name (imported)", ed_name)
+        form.addRow("Material", cmb_mat)
+        form.addRow("Priority", spn_pri)
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        form.addRow(bb)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        if not dlg.exec():
+            return
+        pr["material"] = cmb_mat.currentText().strip() or "copper"
+        pr["priority"] = spn_pri.value()
+        # keep assignment in sync for this object
+        name = pr.get("name")
+        for a in self.project.assignments:
+            if a.object_name == name and a.role != "ignore":
+                a.material = pr["material"]
+                a.priority = pr["priority"]
+        self._sync_assignment_materials_to_primitives()
+        self._log(f"Mesh material updated: {name} -> {pr['material']} pri={pr['priority']}")
+        self._refresh_tree()
+
+    def _rename_primitive(self, old: str, new: str) -> None:
+        if not old or not new or old == new:
+            return
+        for a in self.project.assignments:
+            if a.object_name == old:
+                a.object_name = new
+        for gf in self.project.geometry_files:
+            if old in (gf.object_names or []):
+                gf.object_names = [new if n == old else n for n in gf.object_names]
+
+    def _remove_tree_entry(self, kind: str, idx: int) -> None:
+        if kind == "prim":
+            if 0 <= idx < len(self.primitives):
+                pr = self.primitives.pop(idx)
+                self._log(f"Primitive removed: {pr.get('name')}")
+        elif kind == "assign":
+            if 0 <= idx < len(self.project.assignments):
+                a = self.project.assignments.pop(idx)
+                self._log(f"Assignment removed: {a.object_name}")
+                self._sync_assignment_materials_to_primitives()
+        elif kind == "mat":
+            if 0 <= idx < len(self.project.materials):
+                m = self.project.materials.pop(idx)
+                self._log(f"Material removed: {m.name}")
+                self._refresh_materials()
+        elif kind == "port":
+            if 0 <= idx < len(self.project.ports):
+                p = self.project.ports.pop(idx)
+                self._log(f"Port removed: {p.name}")
+                self._refresh_ports()
+        elif kind == "dump":
+            if 0 <= idx < len(self.project.dumps):
+                d = self.project.dumps.pop(idx)
+                self._log(f"Field dump removed: {d.name}")
+        else:
+            return
+        self._refresh_tree()
+
+    def _on_build_mesh(self) -> None:
+        if getattr(self, "_mesh_building", False):
+            self._log("Mesh build already running — ignored.")
+            return
+        self._mesh_building = True
+        self.btn_build_mesh.setEnabled(False)
+        self._ensure_log_visible("mesh build")
+        self._sync_project_from_form()
+        self._log_computed_summary()
+        self._log("Building mesh (this uses easyMesh + validators)…")
+        try:
+            report = self._build_and_validate()
+            self._set_mesh_report(report)
+        except Exception as e:  # noqa: BLE001
+            self._set_mesh_report(f"ERROR: {e}")
+            self._log(f"Mesh build failed: {e}")
+        finally:
+            self._mesh_building = False
+            self.btn_build_mesh.setEnabled(True)
+
+    def _build_and_validate(self) -> str:
+        import numpy as np
+
+        from app.meshing.easy_wrapper import apply_boundary, enhance_csx, enhance_fdtd, generate_mesh
+        from app.meshing.rules import compute_targets
+        from app.meshing.validators import report_to_lines, validate_mesh
+        from app.meshing.preview import save_mesh_preview
+        from openEMS import openEMS
+        from CSXCAD import ContinuousStructure
+
+        if not self.primitives and self.project.patch_params:
+            self.project, self.primitives = patch_antenna_primitives(
+                **{
+                    k: float(v)
+                    for k, v in self.project.patch_params.items()
+                }
+            )
+            self.sim_params.patch_params = dict(self.project.patch_params)
+            self._sync_form_from_project()
+
+        FDTD = openEMS(NrTS=1000, EndCriteria=1e-3)
+        f0 = self.project.mesh.target_frequency or 2.45e9
+        fc = 0.5 * abs(self.project.mesh.stop_frequency - self.project.mesh.start_frequency) or 1e6
+        FDTD.SetGaussExcite(f0, fc)
+        CSX = ContinuousStructure()
+        FDTD.SetCSX(CSX)
+        primitives_mesh_setup = {}
+        CSX = enhance_csx(CSX, primitives_mesh_setup)
+        FDTD = enhance_fdtd(FDTD, primitives_mesh_setup)
+        targets = compute_targets(self.project.mesh, eps_max=1.0)
+        apply_boundary(FDTD, self.project.boundary, self.project.mesh, targets)
+        CSX.GetGrid().SetDeltaUnit(self.project.mesh.unit_to_meters())
+
+        mat_by_name = {m.name: m for m in self.project.materials}
+        props: dict = {}
+        for mat in self.project.materials:
+            if mat.kind == "pec":
+                props[mat.name] = CSX.AddMetal(mat.name)
+            elif mat.kind == "dielectric":
+                kwargs = {"epsilon": mat.epsilon}
+                if mat.kappa:
+                    kwargs["kappa"] = mat.kappa
+                props[mat.name] = CSX.AddMaterial(mat.name, **kwargs)
+            elif mat.kind == "conducting_sheet":
+                props[mat.name] = CSX.AddConductingSheet(mat.name, conductivity=mat.kappa)
+
+        def _prop_for(mat_name: str):
+            if mat_name in props:
+                return props[mat_name]
+            m = mat_by_name.get(mat_name)
+            if m is None:
+                if mat_name in ("copper", "pec") or "copper" in mat_name:
+                    props[mat_name] = CSX.AddMetal(mat_name)
+                else:
+                    props[mat_name] = CSX.AddMaterial(mat_name, epsilon=2.2)
+                return props[mat_name]
+            if m.kind == "pec":
+                props[mat_name] = CSX.AddMetal(m.name)
+            elif m.kind == "conducting_sheet":
+                props[mat_name] = CSX.AddConductingSheet(m.name, conductivity=m.kappa)
+            else:
+                kwargs = {"epsilon": m.epsilon}
+                if m.kappa:
+                    kwargs["kappa"] = m.kappa
+                props[mat_name] = CSX.AddMaterial(m.name, **kwargs)
+            return props[mat_name]
+
+        for pr in self.primitives:
+            kind = pr.get("kind", "box")
+            name = str(pr.get("name", "prim"))
+            mat = pr.get("material", "copper")
+            pri = int(pr.get("priority", 10))
+            prop = _prop_for(mat)
+            if kind == "box":
+                prop.AddBox(
+                    start=[_f32(x) for x in pr["start"]],
+                    stop=[_f32(x) for x in pr["stop"]],
+                    priority=pri,
+                )
+                if pr.get("edges2grid"):
+                    try:
+                        FDTD.AddEdges2Grid(
+                            dirs=pr.get("edges2grid", "xy"),
+                            properties=prop,
+                            metal_edge_res=pr.get("metal_edge_res"),
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        self._log(f"AddEdges2Grid warning: {e}")
+            elif kind == "cylinder":
+                prop.AddCylinder(
+                    [_f32(x) for x in pr["start"]],
+                    [_f32(x) for x in pr["stop"]],
+                    float(pr.get("radius", 0.5)),
+                    priority=pri,
+                )
+            elif kind == "polygon":
+                prop.AddPolygon(
+                    [[_f32(v) for v in pt] for pt in pr["points"]],
+                    pr.get("axis", "z"),
+                    _f32(pr.get("coord", 0)),
+                    priority=pri,
+                )
+            elif kind == "stl":
+                from app.csxcad_builder.triangle_mesh import add_triangle_mesh
+
+                path = pr.get("path") or pr.get("mesh_path")
+                stl_path = pr.get("stl_path") or ""
+                if stl_path and not Path(stl_path).exists():
+                    stl_path = ""
+                if (not path or not Path(path).exists()) and (not stl_path):
+                    raise FileNotFoundError(f"STL primitive '{name}' missing: {path}")
+                tris = None
+                if path and Path(path).exists() and Path(path).suffix.lower() == ".npy":
+                    tris = np.load(path)
+                # CSXCAD has no AddMesh — use Polyhedron / PolyhedronReader
+                add_triangle_mesh(
+                    prop,
+                    name=name,
+                    triangles=tris,
+                    stl_path=stl_path or None,
+                    mesh_path=path if path and Path(path).exists() else None,
+                    priority=pri,
+                )
+                if pr.get("edges2grid"):
+                    try:
+                        FDTD.AddEdges2Grid(
+                            dirs=pr.get("edges2grid", "xy"),
+                            properties=prop,
+                            metal_edge_res=pr.get("metal_edge_res"),
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        self._log(f"AddEdges2Grid warning (stl): {e}")
+            else:
+                raise ValueError(f"Unknown primitive kind: {kind}")
+
+        for idx, port in enumerate(self.project.ports, start=1):
+            start = [_f32(x) for x in port.start]
+            stop = [_f32(x) for x in port.stop]
+            excite = 1.0 if port.excite_port else 0.0
+            if port.type == "msl":
+                FDTD.AddMSLPort(
+                    idx,
+                    port.resistance,
+                    start,
+                    stop,
+                    port.direction,
+                    excite,
+                    priority=15,
+                )
+            elif port.type == "rect_waveguide":
+                try:
+                    FDTD.AddRectWaveGuidePort(
+                        idx,
+                        start,
+                        stop,
+                        port.direction,
+                        port.resistance,
+                        excite=excite,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    self._log(f"rect_waveguide port preview failed: {e}")
+            else:
+                FDTD.AddLumpedPort(
+                    idx,
+                    port.resistance,
+                    start,
+                    stop,
+                    port.direction,
+                    excite,
+                    priority=15,
+                )
+
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            setup = generate_mesh(
+                CSX,
+                self.project.mesh,
+                self.project.boundary,
+                targets,
+                primitives_mesh_setup=primitives_mesh_setup,
+            )
+        report = validate_mesh(
+            CSX, targets, ports=self.project.ports, max_grading=self.project.mesh.max_grading_ratio
+        )
+        lines = report_to_lines(report)
+        lines.append("")
+        lines.append("Mesh setup:")
+        import json
+
+        lines.append(json.dumps(setup, indent=2, default=str))
+
+        # Keep previous CSX/FDTD alive until the viewer has switched to the new
+        # ones. Freeing FDTD while the viewer still holds its CSX causes an
+        # access violation on the 2nd Build Mesh click (CSXCAD parent freed).
+        old_csx = getattr(self, "_last_csx", None)
+        old_fdtd = getattr(self, "_last_fdtd", None)
+
+        # Backend-safe PNG export (does not switch matplotlib backend).
+        try:
+            preview = save_mesh_preview(CSX, self.settings.work_path() / "mesh_preview.png", "Mesh cells")
+            lines.append(f"Preview: {preview}")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"(preview export failed: {e})")
+
+        self._last_csx = CSX
+        self._last_fdtd = FDTD
+        # Feed interactive mesh/geometry viewer (new CSX only)
+        try:
+            self.mesh_viewer.set_project_context(
+                project=self.project,
+                primitives=self.primitives,
+                ports=self.project.ports,
+                nf2ff=self.project.nf2ff,
+            )
+            self.mesh_viewer.set_csx(CSX)
+            self._sync_scene_info()
+            # Switch to the viewer tab so the user sees the new mesh
+            idx = getattr(self, "mesh_viewer_tab_index", None)
+            if idx is not None and idx >= 0:
+                self.sparam_tabs.setCurrentIndex(idx)
+        except Exception as e:  # noqa: BLE001 — viewer must not block mesh build
+            lines.append(f"(viewer update failed: {e})")
+
+        # Delay old-object destruction: park them until next build / shutdown.
+        # Immediate del/GC of FDTD while Qt is painting can hard-crash.
+        if not hasattr(self, "_retired_csx"):
+            self._retired_csx = []
+        if not hasattr(self, "_retired_fdtd"):
+            self._retired_fdtd = []
+        if old_csx is not None:
+            self._retired_csx.append(old_csx)
+        if old_fdtd is not None:
+            self._retired_fdtd.append(old_fdtd)
+        # Bound memory: keep only the last few retired objects
+        if len(self._retired_csx) > 4:
+            self._retired_csx = self._retired_csx[-4:]
+        if len(self._retired_fdtd) > 4:
+            self._retired_fdtd = self._retired_fdtd[-4:]
+
+        self._log("Mesh build finished")
+        return "\n".join(lines)
+
+    def _prepare_run_state(self, work: Path) -> None:
+        """Work dir + patch-preset fallback — shared by Run Simulation and Script…."""
+        work.mkdir(parents=True, exist_ok=True)
+        if not self.primitives and self.project.patch_params:
+            from app.ui.sim_params import DEFAULT_PATCH_PARAMS
+
+            pp = {**DEFAULT_PATCH_PARAMS, **(self.project.patch_params or {})}
+            kwargs = {k: float(pp[k]) for k in DEFAULT_PATCH_PARAMS}
+            self.project, self.primitives = patch_antenna_primitives(**kwargs)
+            self.sim_params.patch_params = dict(pp)
+            self._sync_form_from_project()
+        if not self.primitives:
+            self._log(
+                "WARNING: no primitives/geometry — Import STEP/STL/OBJ from FreeCAD, "
+                "or add boxes/cylinders first"
+            )
+
+    def _generate_script(self, work: Path) -> Path:
+        """Save the project and (re)write work/project_run.py.
+
+        Hand-edits of the previous script are detected via the pristine
+        project_run.py.lastgen copy and backed up to project_run_edited.py.
+        """
+        project_path = self.project.save(work / "project.fcsim.json")
+        previous = _read_text(work / "project_run.py")
+        script = generate_run_script(self.project, project_path, work, primitives=self.primitives)
+        self._note_script_backup(work, previous)
+        return script
+
+    def _note_script_backup(self, work: Path, previous: str | None) -> None:
+        current = _read_text(work / "project_run.py")
+        if current is None:
+            return
+        lastgen_path = work / "project_run.py.lastgen"
+        lastgen = _read_text(lastgen_path)
+        # lastgen is the pristine output of the previous generation: a difference
+        # between the script we just overwrote and it means the user edited by hand.
+        edited = previous is not None and lastgen is not None and previous != lastgen
+        try:
+            lastgen_path.write_text(current, encoding="utf-8", newline="\n")
+        except OSError:
+            return
+        if not edited:
+            return
+        backup = work / "project_run_edited.py"
+        try:
+            backup.write_text(previous, encoding="utf-8", newline="\n")
+        except OSError:
+            return
+        self._log(f"NOTE: your edited script was backed up to {backup} (Run regenerates it)")
+
+    def _ensure_script_baseline(self, work: Path, script_path: Path) -> None:
+        """Record the current script as pristine so later hand-edits are detected."""
+        lastgen = work / "project_run.py.lastgen"
+        if _read_text(lastgen) is not None:
+            return
+        text = _read_text(script_path)
+        if text is None:
+            return
+        try:
+            lastgen.write_text(text, encoding="utf-8", newline="\n")
+        except OSError:
+            pass
+
+    def _on_edit_script(self) -> None:
+        """View / edit work/<project>/project_run.py in a modeless editor."""
+        from app.ui.script_editor import ScriptEditorDialog
+
+        self._sync_project_from_form()
+        work = self.settings.work_path() / (self.project.name or "project")
+        self._prepare_run_state(work)
+        script_path = work / "project_run.py"
+        error: str | None = None
+        if not script_path.exists():
+            try:
+                script_path = self._generate_script(work)
+            except Exception as e:  # noqa: BLE001 — editor must still open
+                error = str(e)
+                self._log(f"Script generation failed: {e}")
+        self._ensure_script_baseline(work, script_path)
+
+        def _regenerate() -> Path:
+            # resolve the work dir at call time (project may have been renamed)
+            return self._generate_script(
+                self.settings.work_path() / (self.project.name or "project")
+            )
+
+        dlg = self._script_dialog
+        if dlg is None or not dlg.isVisible():
+            dlg = ScriptEditorDialog(script_path, regenerate_cb=_regenerate, parent=self)
+            self._script_dialog = dlg
+            dlg.show()
+        else:
+            dlg.show_path(script_path)
+        if error:
+            dlg.lbl_status.setText(f"Generation failed: {error}")
+        self._log(f"Script editor: {script_path}")
+
+    def _script_has_edits(self, work: Path) -> bool:
+        current = _read_text(work / "project_run.py")
+        lastgen = _read_text(work / "project_run.py.lastgen")
+        return current is not None and lastgen is not None and current != lastgen
+
+    def _run_script_for(self, work: Path) -> Path:
+        """Regenerate project_run.py, or keep hand-edits when the user wants that."""
+        script_path = work / "project_run.py"
+        if self._script_has_edits(work):
+            answer = QMessageBox.question(
+                self,
+                "Edited script",
+                "project_run.py was edited by hand.\n\n"
+                "Yes — regenerate it from the project (your edits are backed up to "
+                "project_run_edited.py; run them manually with the simulation Python).\n"
+                "No — run your edited script as it is.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.No:
+                self._log(f"Running your edited script as-is: {script_path}")
+                return script_path
+        script = self._generate_script(work)
+        self._log(f"Generated script: {script}")
+        return script
+
+    def _on_run(self) -> None:
+        self._ensure_log_visible("simulation")
+        self._sync_project_from_form()
+        work = self.settings.work_path() / (self.project.name or "project")
+        self._prepare_run_state(work)
+        f0 = self.project.mesh.target_frequency or 2.45e9
+        fc = max(1e6, 0.5 * abs(self.project.mesh.stop_frequency - self.project.mesh.start_frequency))
+        # User-controlled max_timesteps — warn below recommended floor, do not silently override.
+        min_ts = 150_000
+        user_ts = int(self.project.sim.max_timesteps or 0)
+        if user_ts < min_ts:
+            self._log(
+                f"WARNING: max_timesteps={user_ts} < recommended {min_ts} "
+                f"(f0={f0/1e9:.3f} GHz, fc={fc/1e9:.3f} GHz). Using your value — may not converge."
+            )
+        self._log_computed_summary()
+        script = self._run_script_for(work)
+        self._log(
+            f"Sim settings: f0={f0/1e9:.3f} GHz, max_timesteps={self.project.sim.max_timesteps}, "
+            f"end_criteria={self.project.sim.end_criteria}, "
+            f"boundary={self.project.boundary.as_openems_list()}"
+        )
+        if self.runner.is_running():
+            QMessageBox.warning(self, "Busy", "A simulation is already running.")
+            return
+        try:
+            # _log is thread-safe (queue only) — do not pass Signal.emit
+            self.runner.start(script, log_cb=self._log)
+            self._log("Simulation started")
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Run failed", str(e))
+            self._log(f"Run failed: {e}")
+
+        # poll for finished sim and open S-param viewer (GUI thread only)
+        def _check() -> None:
+            try:
+                if self.runner.is_running():
+                    return
+                timer.stop()
+                exit_code = getattr(self.runner, "last_exit", None)
+                log_path = getattr(self.runner, "log_path", None)
+                sim = work / "simulation"
+                files = [
+                    sim / "sparams.s1p",
+                    sim / "sparams.s2p",
+                    sim / "sparams.s3p",
+                    sim / "sparams.s4p",
+                    sim / "sparams.json",
+                ]
+                found = next((p for p in files if p.exists()), None)
+                # Antenna pattern (NF2FF) — load alongside the S-params result
+                nf2ff_json = sim / "nf2ff" / "nf2ff.json"
+                if nf2ff_json.exists():
+                    try:
+                        self.antenna_viewer.set_work_dir(self.settings.work_path())
+                        self.antenna_viewer.load_path(nf2ff_json)
+                        self._log(f"Antenna pattern ready: {nf2ff_json}")
+                    except Exception as e:  # noqa: BLE001
+                        self._log(f"Antenna pattern load failed: {e}")
+                if found:
+                    self.sparam_viewer.set_work_dir(self.settings.work_path())
+                    self.sparam_viewer.load_path(found)
+                    if self.sparam_tab_index >= 0:
+                        self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
+                    self._log(f"S-param results ready: {found}")
+                    if exit_code not in (0, None):
+                        self._log(f"WARNING: simulation exit code {exit_code} (S-params may be partial)")
+                else:
+                    self._log(f"S-param results MISSING under: {sim}")
+                    self._log(f"Simulation exit code: {exit_code}")
+                    if log_path:
+                        self._log(f"Full simulation log: {log_path}")
+                    self._log(
+                        "Look for: S-param postproc FAILED / CalcPort failed / mesh validation failed"
+                    )
+                    self.sparam_viewer.set_work_dir(self.settings.work_path())
+                    self.sparam_viewer._on_scan(auto_load=True)
+                    if self.sparam_tab_index >= 0:
+                        self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
+                    QMessageBox.warning(
+                        self,
+                        "S-params missing",
+                        f"No sparams.s1p / sparams.json under:\n{sim}\n\n"
+                        f"Exit code: {exit_code}\n"
+                        f"Log: {log_path}\n\n"
+                        "Check the simulator log for CalcPort / export / mesh errors.",
+                    )
+            except Exception as e:  # noqa: BLE001
+                print("post-sim viewer error:", e)
+                self._log(f"Post-sim viewer error: {e}")
+
+        timer = QTimer(self)
+        timer.timeout.connect(_check)
+        timer.start(1000)
+
+    def _on_abort(self) -> None:
+        self.runner.abort()
+        self._log("Abort requested")
+
+    def _on_settings(self) -> None:
+        # Settings dialog: paths + port defaults
+        from PySide6.QtWidgets import (
+            QCheckBox,
+            QComboBox,
+            QDialog,
+            QDialogButtonBox,
+            QDoubleSpinBox,
+            QFormLayout as QFL,
+            QGroupBox,
+            QVBoxLayout,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Settings")
+        dlg.resize(480, 460)
+        root = QVBoxLayout(dlg)
+
+        form = QFL()
+        e_fc = QLineEdit(self.settings.freecad_cmd)
+        e_fgui = QLineEdit(getattr(self.settings, "freecad_gui", ""))
+        e_py = QLineEdit(self.settings.simulation_python)
+        e_oe = QLineEdit(self.settings.openems_root)
+        e_wd = QLineEdit(self.settings.work_dir)
+        form.addRow("FreeCADCmd", e_fc)
+        form.addRow("FreeCAD GUI", e_fgui)
+        form.addRow("Simulation Python", e_py)
+        form.addRow("openEMS root", e_oe)
+        form.addRow("Work dir", e_wd)
+        root.addLayout(form)
+
+        # --- Port defaults (FreeCAD import + Add Port seed) ---
+        grp = QGroupBox("Port defaults")
+        pform = QFL(grp)
+        cmb_ptype = QComboBox()
+        cmb_ptype.addItems(["lumped", "msl", "rect_waveguide"])
+        cmb_ptype.setCurrentText(
+            str(getattr(self.settings, "default_port_type", "lumped") or "lumped")
+        )
+        cmb_ptype.setToolTip(
+            "Type used when FreeCAD/export does not specify openems_port_type."
+        )
+        spn_pr = QDoubleSpinBox()
+        spn_pr.setRange(0.1, 1e4)
+        spn_pr.setDecimals(2)
+        spn_pr.setValue(float(getattr(self.settings, "default_port_resistance", 50.0)))
+        spn_pr.setSuffix(" Ω")
+        spn_pr.setToolTip("Resistance for imported/new ports without explicit R.")
+        chk_excite = QCheckBox("Excite new/imported ports by default")
+        chk_excite.setChecked(bool(getattr(self.settings, "default_port_excite", True)))
+        cmb_mesh = QComboBox()
+        cmb_mesh.addItems(["xyz", "xy", "xz", "yz", "x", "y", "z", ""])
+        cmb_mesh.setCurrentText(
+            str(getattr(self.settings, "default_port_mesh_dirs", "xyz") or "xyz")
+        )
+        cmb_mesh.setToolTip("Mesh dirs when the CAD mark has none (empty = auto).")
+        cmb_dir = QComboBox()
+        cmb_dir.addItems(["", "x", "y", "z"])  # "" = auto from start/stop
+        cmb_dir.setCurrentText(
+            str(getattr(self.settings, "default_port_direction", "") or "")
+        )
+        cmb_dir.setToolTip(
+            "Direction: empty = infer from start/stop vector (recommended)."
+        )
+        pform.addRow("Default type", cmb_ptype)
+        pform.addRow("Default resistance", spn_pr)
+        pform.addRow("", chk_excite)
+        pform.addRow("Default mesh dirs", cmb_mesh)
+        pform.addRow("Default direction", cmb_dir)
+        root.addWidget(grp)
+
+        hint = QLabel(
+            "Port defaults fill values FreeCAD omitted (PORT_* points have no R/type).\n"
+            "Explicit openems_port_* properties always win. "
+            "Edit single ports later in Ports / Dumps (double-click)."
+        )
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        root.addWidget(bb)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        if not dlg.exec():
+            return
+
+        self.settings.freecad_cmd = e_fc.text()
+        self.settings.freecad_gui = e_fgui.text()
+        self.settings.simulation_python = e_py.text()
+        self.settings.openems_root = e_oe.text()
+        self.settings.work_dir = e_wd.text()
+        self.settings.default_port_type = cmb_ptype.currentText() or "lumped"
+        self.settings.default_port_resistance = float(spn_pr.value())
+        self.settings.default_port_excite = bool(chk_excite.isChecked())
+        self.settings.default_port_mesh_dirs = cmb_mesh.currentText()
+        self.settings.default_port_direction = cmb_dir.currentText()
+        self.settings.save()
+        self.runner = SimulationRunner(self.settings, app_root=APP_ROOT)
+        pd = self.settings.port_defaults()
+        self._log(
+            f"Settings saved (port defaults: type={pd['type']} "
+            f"R={pd['resistance']} excite={pd['excite_port']} "
+            f"mesh={pd['mesh_dirs']} dir={pd['direction'] or 'auto'})"
+        )
+
+
+from app.paths import app_root as _app_root
+
+APP_ROOT = _app_root()

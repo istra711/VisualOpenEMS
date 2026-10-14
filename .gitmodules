@@ -1,0 +1,3 @@
+[submodule "third_party/easyMesh4openEMS"]
+	path = third_party/easyMesh4openEMS
+	url = https://github.com/MustafaAlchalabi/easyMesh4openEMS.git
