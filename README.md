@@ -1,5 +1,13 @@
 # VisualOpenEMS
 
+> **⚠️ Pre-Alpha — Work in Progress**
+>
+> VisualOpenEMS is currently in **pre-alpha** development. The code is a work in progress and **not suitable for production use**. APIs, project file formats, and GUI layouts may change without notice. Simulation results should be independently verified.
+>
+> **Found a bug?** Please [open an issue](https://github.com/istra711/VisualOpenEMS/issues) with a description of the problem, steps to reproduce, and — if possible — a suggested fix or pull request. Contributions are welcome!
+
+---
+
 A standalone desktop GUI that takes 3D structures from **FreeCAD**, builds an **openEMS/CSXCAD** simulation model, runs **FDTD** simulations via Python bindings, and post-processes **S-parameters**, **field dumps**, and **NF2FF far-field patterns**.
 
 Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
