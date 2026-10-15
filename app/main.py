@@ -15,13 +15,19 @@ if _EASY.is_dir() and str(_EASY) not in sys.path:
 
 
 def main() -> int:
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
+    from app.paths import app_root
     from app.ui.main_window import MainWindow
     from app.settings import AppSettings
 
     app = QApplication(sys.argv)
     app.setApplicationName("FreeCAD OpenEMS GUI")
+    # window/taskbar icon (same asset PyInstaller embeds as the EXE icon)
+    icon_path = app_root() / "assets" / "app_icon.ico"
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
     settings = AppSettings.load()
     win = MainWindow(settings)
     win.show()

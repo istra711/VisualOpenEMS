@@ -51,12 +51,16 @@ def main() -> int:
         "--noconfirm",
         "--clean",
         "--noupx",
+        # taskbar / explorer icon (generated from assets/logo.svg by
+        # tools_svg_to_ico.py; the file itself is bundled for the window icon)
+        f"--icon={ROOT / 'assets' / 'app_icon.ico'}",
         f"--path={ROOT}",
         f"--distpath={dist}",
         f"--workpath={build}",
         f"--specpath={build}",
         # real source trees for the external simulation python / FreeCADCmd:
         f"--add-data={ROOT / 'app'};app",
+        f"--add-data={ROOT / 'assets'};assets",
         f"--add-data={ROOT / 'third_party' / 'easyMesh4openEMS'};third_party/easyMesh4openEMS",
         f"--add-data={ROOT / 'examples'};examples",
         f"--add-data={ROOT / 'docs'};docs",
