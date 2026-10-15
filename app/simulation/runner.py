@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.settings import AppSettings
+from app.winproc import hidden_console_kwargs
 
 
 class SimulationRunner:
@@ -60,6 +61,7 @@ class SimulationRunner:
             encoding="utf-8",
             errors="replace",
             env=env,
+            **hidden_console_kwargs(),
         )
         t = threading.Thread(target=self._pump, daemon=True)
         t.start()

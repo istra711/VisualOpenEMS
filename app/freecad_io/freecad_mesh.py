@@ -16,6 +16,8 @@ from typing import Any
 
 import numpy as np
 
+from app.winproc import hidden_console_kwargs
+
 
 @dataclass
 class CadMeshObject:
@@ -264,6 +266,7 @@ def tessellate_cad_to_meshes(
             capture_output=True,
             text=True,
             timeout=timeout,
+            **hidden_console_kwargs(),
         )
     except subprocess.TimeoutExpired as e:
         result.warnings.append(f"FreeCADCmd tessellation timed out: {e}")

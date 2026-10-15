@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from app.winproc import hidden_console_kwargs
+
 
 @dataclass
 class ImportedObject:
@@ -157,6 +159,7 @@ def convert_fcstd_to_step(fcstd: Path, out_step: Path, freecad_cmd: Path | str) 
         capture_output=True,
         text=True,
         timeout=180,
+        **hidden_console_kwargs(),
     )
     if not out_step.exists():
         raise RuntimeError(

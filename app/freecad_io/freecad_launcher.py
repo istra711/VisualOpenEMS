@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.paths import app_root
+from app.winproc import hidden_console_kwargs
 
 APP_ROOT = app_root()
 EXPORT_SCRIPT = APP_ROOT / "examples" / "freecad_export_for_openems.py"
@@ -151,6 +152,7 @@ def export_cad_for_openems(
             capture_output=True,
             text=True,
             timeout=timeout,
+            **hidden_console_kwargs(),
         )
     except subprocess.TimeoutExpired as e:
         return False, f"FreeCADCmd export timed out: {e}", out
