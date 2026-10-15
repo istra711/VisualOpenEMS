@@ -120,12 +120,29 @@ if doc is None:
 
 doc.recompute()
 idx = 0
+seen_labels = set()
 for obj in doc.Objects:
-    shape = getattr(obj, "Shape", None)
+    # Only real, visible solid geometry. doc.Objects also contains
+    # construction helpers (Origin, axes, planes), container groups
+    # (App::Part), port markers, and — for files edited in FreeCAD —
+    # deleted "ghost" solids that stay in the document for Undo history.
+    type_id = str(getattr(obj, "TypeId", "") or "")
+    if type_id.startswith(("App::Origin", "App::Line", "App::Plane", "App::Part",
+                           "App::DocumentObjectGroup", "App::Link")):
+        continue
     label = getattr(obj, "Label", "") or getattr(obj, "Name", "")
     # Skip FreeCAD port marker objects (PORT_* points) — not solid geometry
     if str(label).startswith("PORT_") or str(getattr(obj, "Name", "")).startswith("PORT_"):
         continue
+    # Skip objects deleted in the GUI but retained in the Undo history.
+    # FreeCAD 1.x marks these with "Removing"/"Invalid" in State; older
+    # versions expose no reliable flag, so we also drop empty/null shapes.
+    state = list(getattr(obj, "State", []) or [])
+    if any(s in ("Removing", "Invalid", "Error") for s in state):
+        continue
+    if not getattr(obj, "Visibility", True):
+        continue
+    shape = getattr(obj, "Shape", None)
     if shape is None:
         continue
     try:
@@ -137,13 +154,27 @@ for obj in doc.Objects:
         solids = list(shape.Solids) if (hasattr(shape, "Solids") and shape.Solids) else [shape]
     except Exception:
         solids = [shape]
+    if not solids:
+        continue
 
+    # Prefer the user-visible Label over the internal Name. FreeCAD's
+    # internal Name ("Cylinder", "Part__Feature") is an implementation
+    # detail that changes on copy/import; the Label ("Arm_links") is what
+    # the user actually named the object and is stable across edits.
+    base_label = str(label).strip() or str(getattr(obj, "Name", "")).strip()
     for si, solid in enumerate(solids):
         tris = _tris_from_shape(solid, DEFL)
         if tris is None:
             continue
         idx += 1
-        name = obj.Name if len(solids) == 1 else f"{obj.Name}_{si+1}"
+        if len(solids) == 1:
+            name = base_label
+        else:
+            name = f"{base_label}_{si+1}"
+        # Disambiguate duplicate labels (FreeCAD allows them).
+        if name in seen_labels:
+            name = f"{name}_{idx}"
+        seen_labels.add(name)
         safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
         npy = OUT / f"{safe}.npy"
         stl = OUT / f"{safe}.stl"
@@ -152,7 +183,8 @@ for obj in doc.Objects:
         bb = solid.BoundBox
         results.append({
             "name": name,
-            "object": obj.Name,
+            "object": base_label,
+            "freecad_name": getattr(obj, "Name", ""),
             "stl": str(stl),
             "npy": str(npy),
             "bounds_min": [float(bb.XMin), float(bb.YMin), float(bb.ZMin)],

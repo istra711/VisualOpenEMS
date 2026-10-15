@@ -337,6 +337,47 @@ def get_domain_box(CSX):
     return [float(v) for v in area[0]], [float(v) for v in area[1]]
 
 
+def dedupe_grid_lines(CSX, tol: float = 1e-12) -> None:
+    """Remove exact-duplicate grid lines that create zero-size FDTD cells.
+
+    Port ``edges2grid`` inserts the arm-axis line (x=0 / y=0) which collides with
+    the mesh line already on that coordinate, leaving a zero-width cell that
+    collapses the Courant timestep. Domain-boundary lines are never touched —
+    they define the FDTD box edges.
+    """
+    import numpy as np
+
+    grid = CSX.GetGrid()
+    dom = get_domain_box(CSX)
+    removed_total = 0
+    for axis in range(3):
+        raw = grid.GetLines(axis)
+        if raw is None:
+            continue
+        vals = np.array(raw, dtype=float)
+        if vals.size < 2:
+            continue
+        keep: list[float] = []
+        removed = 0
+        # domain edges are structural: never drop them
+        dom_lo = dom[0][axis] if dom is not None else None
+        dom_hi = dom[1][axis] if dom is not None else None
+        for v in vals:
+            if dom_lo is not None and (abs(v - dom_lo) < tol or abs(v - dom_hi) < tol):
+                keep.append(float(v))
+                continue
+            if any(abs(v - k) < tol for k in keep):
+                removed += 1
+            else:
+                keep.append(float(v))
+        if removed:
+            grid.SetLines(axis, np.array(keep, dtype=float))
+            removed_total += removed
+            print(f"  dedupe axis {axis}: removed {removed} zero-size cell(s), {len(keep)} lines left")
+    if removed_total == 0:
+        print("  dedupe: no zero-size cells found")
+
+
 def clamp_box_into_domain(start, stop, dom_lo, dom_hi, pad=1.0):
     """Shrink [start, stop] so it stays strictly inside the FDTD domain.
 
@@ -542,6 +583,8 @@ def main() -> int:
         )
     print("Mesh setup:", json.dumps(setup, indent=2, default=str))
 
+    dedupe_grid_lines(CSX)
+
     report = validate_mesh(CSX, targets, ports=project.ports, max_grading=project.mesh.max_grading_ratio)
     for line in report_to_lines(report):
         print(line)
@@ -582,6 +625,35 @@ def main() -> int:
                 ):
                     print(f"NF2FF box clamped into FDTD domain: {nf_start} -> {nf_stop} => {clamped[0]} -> {clamped[1]}")
                 nf_start, nf_stop = clamped
+        # Snap all six box faces onto existing grid lines. openEMS expands
+        # each dump face independently to the enclosing cell: a zero-extent
+        # face snaps to the nearest line while a finite-extent face expands
+        # outward.  If the box coordinates are not exactly on grid lines the
+        # adjacent faces end up on different lines and the recording surface
+        # has gaps -> leaked fields -> systematically underestimated Prad /
+        # efficiency.  Snapping the corner coordinates to the grid makes all
+        # six faces share the same lines, closing the surface.
+        _grid = CSX.GetGrid()
+        _snapped = False
+        for _ny in range(3):
+            _lines = np.asarray(_grid.GetLines(_ny), dtype=float)
+            if _lines.size == 0:
+                continue
+            _s = float(_lines[int(np.argmin(np.abs(_lines - nf_start[_ny])))])
+            _e = float(_lines[int(np.argmin(np.abs(_lines - nf_stop[_ny])))])
+            if _s > _e:
+                _s, _e = _e, _s
+            if _s == _e:
+                print(
+                    f"WARNING: NF2FF box collapses in axis {_ny} after grid snap "
+                    f"({_s}); NF2FF surface will be degenerate"
+                )
+            if _s != nf_start[_ny] or _e != nf_stop[_ny]:
+                _snapped = True
+            nf_start[_ny] = _s
+            nf_stop[_ny] = _e
+        if _snapped:
+            print(f"NF2FF box snapped to grid lines: {nf_start} -> {nf_stop}")
         # Force all six faces: FDTD.CreateNF2FFBox derives directions/mirror from
         # the *domain* boundary types (PEC/PMC face -> skip + mirrored copy),
         # which is only correct for a box pinned to the domain edges — and the
@@ -609,7 +681,13 @@ def main() -> int:
     FDTD.Run(str(out_dir), **run_kw)
     print("Simulation finished (FDTD.Run complete)")
 
-    freqs = np.linspace(max(1e8, project.mesh.start_frequency), project.mesh.stop_frequency, 201)
+    # Evaluate S-params over a wider band than the mesh window so a resonance
+    # shifted out of the mesh band (e.g. a longer-than-expected dipole) is still
+    # captured. The mesh is sized for the target frequency; the post-processing
+    # sweep can safely extend a few hundred MHz either side.
+    _f_lo = max(1e8, project.mesh.start_frequency * 0.5)
+    _f_hi = project.mesh.stop_frequency * 1.15
+    freqs = np.linspace(_f_lo, _f_hi, 301)
     s_table = {}
     written = {}
     try:

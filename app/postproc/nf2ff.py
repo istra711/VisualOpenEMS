@@ -293,14 +293,16 @@ def _compute_directivity_gain(
     ``nf2ff_results.P_rad``, shape [n_freq, n_theta, n_phi]) and total radiated
     power ``Prad``:
 
-        D(theta,phi) = 4*pi * S_r(theta,phi) / Prad
-                     = 4*pi * P_rad / (Prad / r^2)   (P_rad already ~ S_r*r^2)
+        D(theta,phi) = 4*pi * r^2 * S_r(theta,phi) / Prad_total
 
-    ``Prad`` is the spherical integral ``sum(P_rad*sin(theta))*dtheta*dphi`` —
-    authoritative because openEMS's own Prad attribute can be sign-flipped
-    (negative) while the stored ``P_rad`` density stays positive. Gain adds
-    the radiation efficiency: ``gain = D * eta`` with ``eta = Prad / Pin``
-    (``Pin`` = accepted port power, same spectral units).
+    openEMS stores ``P_rad`` as the far-field power density S_r (W/m^2 at
+    radius r), NOT as the total radiated power.  The total radiated power is
+    ``Prad_total = r^2 * sum(P_rad*sin(theta))*dtheta*dphi`` (the r^2 factor
+    converts density to power).  The spherical integral of the stored density
+    is authoritative because openEMS's own Prad attribute can be sign-flipped
+    (negative) while the stored ``P_rad`` density stays positive.  Gain adds
+    the radiation efficiency: ``gain = D * eta`` with ``eta = Prad_total /
+    Pin`` (``Pin`` = accepted port power, same spectral units).
     """
     try:
         p_rad = np.asarray(getattr(result, "P_rad", []), dtype=float)
@@ -312,6 +314,13 @@ def _compute_directivity_gain(
     theta = np.asarray(getattr(result, "theta", np.linspace(0, np.pi, p_rad.shape[1])), dtype=float)
     phi = np.asarray(getattr(result, "phi", np.linspace(0, 2 * np.pi, p_rad.shape[2])), dtype=float)
     prad = np.asarray(getattr(result, "Prad", np.full(p_rad.shape[0], np.nan)), dtype=float).reshape(-1)
+    # Far-field radius used by the NF2FF transformation (metres).  P_rad is a
+    # power *density* at this radius; multiply the spherical integral by r^2
+    # to obtain the total radiated power.
+    _r_arr = np.asarray(getattr(result, "r", 1.0), dtype=float).reshape(-1)
+    radius = float(_r_arr[0]) if _r_arr.size else 1.0
+    if not np.isfinite(radius) or radius <= 0:
+        radius = 1.0
     n_f = p_rad.shape[0]
 
     sin_t = np.sin(theta)[:, None]  # (n_theta, 1)
@@ -324,18 +333,25 @@ def _compute_directivity_gain(
 
     for i in range(n_f):
         s_r = p_rad[i]
-        # Spherical integral of the stored density is authoritative; openEMS's
-        # Prad attribute can be sign-flipped (negative) and only matches |value|.
-        prad_i = float(np.nansum(s_r * sin_t) * dtheta * dphi)
-        if not np.isfinite(prad_i) or prad_i <= 0:
-            prad_i = float(prad[i]) if i < prad.size else np.nan
-        if not np.isfinite(prad_i) or prad_i <= 0:
-            prad_corr.append(None)
-            continue
-        prad_corr.append(prad_i)
-        # D = 4*pi*P_rad / Prad  (P_rad already carries the r^2 factor).
-        with np.errstate(divide="ignore", invalid="ignore"):
-            d_lin = 4.0 * np.pi * s_r / prad_i
+        # Spherical integral of the density S_r  ->  P_total / r^2
+        prad_sph = float(np.nansum(s_r * sin_t) * dtheta * dphi)
+        if np.isfinite(prad_sph) and prad_sph > 0:
+            # Total radiated power (same spectral units as Pin).
+            prad_total = prad_sph * radius**2
+            # Directivity: D = 4*pi*S_r / (P_total/r^2) = 4*pi*S_r / prad_sph
+            # (the r^2 factor cancels).
+            with np.errstate(divide="ignore", invalid="ignore"):
+                d_lin = 4.0 * np.pi * s_r / prad_sph
+        else:
+            # Fallback: openEMS Prad attribute IS the total radiated power.
+            prad_total = float(prad[i]) if i < prad.size else np.nan
+            if not np.isfinite(prad_total) or prad_total <= 0:
+                prad_corr.append(None)
+                continue
+            # Directivity: D = 4*pi*r^2*S_r / P_total
+            with np.errstate(divide="ignore", invalid="ignore"):
+                d_lin = 4.0 * np.pi * s_r * radius**2 / prad_total
+        prad_corr.append(prad_total)
         d_lin = np.where(np.isfinite(d_lin) & (d_lin > 0), d_lin, np.nan)
         d_dbi[i] = 10.0 * np.log10(d_lin)
 
@@ -344,7 +360,7 @@ def _compute_directivity_gain(
             pin_arr = np.asarray(pin, dtype=float).reshape(-1)
             pin_i = float(pin_arr[i]) if i < pin_arr.size else np.nan
             if np.isfinite(pin_i) and pin_i > 0:
-                eff[i] = prad_i / pin_i
+                eff[i] = prad_total / pin_i
 
     # Gain = D * eta (eta clipped to (0, 1] for physical reasonableness).
     gain_dbi = d_dbi.copy()
