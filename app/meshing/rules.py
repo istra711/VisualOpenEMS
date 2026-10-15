@@ -79,4 +79,11 @@ def air_margin_units(mesh: MeshSpec, boundary_air: list[float | str], targets: M
             out.append(auto)
         else:
             out.append(float(b))
+    if getattr(mesh, "coord_system", "cartesian") == "cylindrical":
+        # Polar roles (list = [r-, r+, phi-, phi+, z-, z+]): r- is the r=0
+        # axis (no margin possible) and phi+/- are unused — the cylinder is
+        # closed over the full 2*pi. Only r+, z- and z+ take air margin.
+        out[0] = 0.0
+        out[2] = 0.0
+        out[3] = 0.0
     return out

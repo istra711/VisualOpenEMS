@@ -185,12 +185,15 @@ class SimParamsPanel(QWidget):
         g_b = QGroupBox("Boundary conditions")
         fb = QFormLayout(g_b)
         self.cmb_b: dict[str, QComboBox] = {}
+        self.lbl_b: dict[str, QLabel] = {}
         for axis in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax"):
             cb = QComboBox()
             cb.addItems(BOUNDARY_KINDS)
             cb.setCurrentText("PML")
             self.cmb_b[axis] = cb
-            fb.addRow(axis, cb)
+            lbl = QLabel(axis)
+            self.lbl_b[axis] = lbl
+            fb.addRow(lbl, cb)
         self.spn_pml = QSpinBox()
         self.spn_pml.setRange(1, 32)
         self.spn_pml.setValue(8)
@@ -502,6 +505,47 @@ class SimParamsPanel(QWidget):
         finally:
             self._syncing = False
 
+    def _apply_coord_system_ui(self, coord_system: str) -> None:
+        """Cylindrical mode: ρ/φ/z boundary labels, disabled φ faces, NF2FF gate."""
+        polar = coord_system == "cylindrical"
+        axes = ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
+        labels = ("ρ−", "ρ+", "φ−", "φ+", "z−", "z+") if polar else axes
+        for axis, text in zip(axes, labels):
+            lbl = getattr(self, "lbl_b", {}).get(axis)
+            if lbl is not None:
+                lbl.setText(text)
+            cb = self.cmb_b.get(axis)
+            if cb is not None:
+                phi_face = axis in ("ymin", "ymax")
+                cb.setEnabled(not (polar and phi_face))
+                cb.setToolTip(
+                    "φ faces do not exist in cylindrical mode "
+                    "(closed full-turn cylinder)"
+                    if polar and phi_face
+                    else ""
+                )
+        nf_tip = (
+            "NF2FF far-field post-processing is not supported in cylindrical mode "
+            "(S-params and field dumps still work)."
+            if polar
+            else ""
+        )
+        self.chk_nf2ff_enabled.setEnabled(not polar)
+        self.btn_fit_nf2ff.setEnabled(not polar)
+        self.btn_edit_nf2ff.setEnabled(not polar)
+        self.chk_nf2ff_enabled.setToolTip(nf_tip)
+        self.btn_fit_nf2ff.setToolTip(nf_tip)
+        self.btn_edit_nf2ff.setToolTip(nf_tip)
+        if polar:
+            with QSignalBlocker(self.chk_nf2ff_enabled):
+                self.chk_nf2ff_enabled.setChecked(False)
+        self.spn_air.setToolTip(
+            "Cylindrical mode: only ρ+ and z−/z+ take air margin "
+            "(ρ− is the r=0 axis, φ± are unused)."
+            if polar
+            else "Air margin in drawing units on all six faces (auto = λ/4)."
+        )
+
     def _sync_from_project_impl(self, project: Project, m: MeshSpec) -> None:
         self.spn_end_criteria.setValue(float(project.sim.end_criteria))
         self.spn_max_ts.setValue(int(project.sim.max_timesteps or 200_000))
@@ -547,6 +591,9 @@ class SimParamsPanel(QWidget):
         self._sync_antenna_density(m.preset)
         self.chk_antenna.setChecked(bool(getattr(project.sim, "antenna_mode", False)))
         self._on_antenna_toggled(self.chk_antenna.isChecked())
+        self._apply_coord_system_ui(
+            str(getattr(m, "coord_system", "cartesian") or "cartesian")
+        )
         self.refresh_computed()
 
     def build_temp_project(self, base: Project | None = None) -> Project:

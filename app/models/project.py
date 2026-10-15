@@ -131,6 +131,14 @@ class MeshSpec:
     num_lines: int = 5  # extra mesh lines per edge gap
     dirs: str = "xyz"  # mesh axes: xyz|xy|xz|yz|x|y|z
     add_graded_mesh_lines_at_material_transitions: bool = False
+    # Mesh/FDTD coordinate system: "cartesian" (easyMesh, default) or
+    # "cylindrical" (polar (r, alpha, z) mesher; openEMS CoordSystem=1).
+    # Old project JSONs miss the key and load with the default.
+    coord_system: Literal["cartesian", "cylindrical"] = "cartesian"
+
+    @property
+    def is_cylindrical(self) -> bool:
+        return self.coord_system == "cylindrical"
 
     def unit_to_meters(self) -> float:
         return {"m": 1.0, "mm": 1e-3, "um": 1e-6, "cm": 1e-2}[self.drawing_unit]
@@ -150,6 +158,7 @@ class MeshSpec:
             "handle_closely_placed_edges": self.handle_closely_placed_edges,
             "num_lines": self.num_lines,
             "dirs": self.dirs,
+            "coord_system": self.coord_system,
             "add_graded_mesh_lines_at_material_transitions": self.add_graded_mesh_lines_at_material_transitions,
         }
         if self.target_frequency is not None:

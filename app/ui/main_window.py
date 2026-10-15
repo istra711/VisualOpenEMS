@@ -335,6 +335,11 @@ class MainWindow(QMainWindow):
         )
         self.cmb_unit = QComboBox()
         self.cmb_unit.addItems(["mm", "um", "m"])
+        self.cmb_coords = QComboBox()
+        self.cmb_coords.addItems(["cartesian", "cylindrical"])
+        self.cmb_coords.setToolTip(
+            "FDTD coordinate system (mirror of Mesh Parameters → Coordinate system)"
+        )
         form.addRow("Mesh preset", self.cmb_preset)
         form.addRow("Frequency unit", self.cmb_freq_unit)
         form.addRow("Center frequency f0", self.spn_f0)
@@ -342,6 +347,7 @@ class MainWindow(QMainWindow):
         form.addRow("Start frequency", self.spn_start_f)
         form.addRow("Stop frequency", self.spn_stop_f)
         form.addRow("Drawing unit", self.cmb_unit)
+        form.addRow("Coordinate system", self.cmb_coords)
         top.addLayout(form)
         top.addStretch(1)
         self.btn_build_mesh = QPushButton("Build CSX + Mesh + Validate")
@@ -532,6 +538,7 @@ class MainWindow(QMainWindow):
         self.cmb_freq_unit.currentTextChanged.connect(self._on_freq_unit_changed)
         self.cmb_preset.currentTextChanged.connect(self._on_mesh_form_changed)
         self.cmb_unit.currentTextChanged.connect(self._on_mesh_form_changed)
+        self.cmb_coords.currentTextChanged.connect(self._on_mesh_form_changed)
         self.sim_params.computed_changed.connect(self._on_sim_params_changed)
         self.sim_params.btn_apply_patch.clicked.connect(self._on_apply_patch_params)
         self.sim_params.btn_fit_nf2ff.clicked.connect(self._on_fit_nf2ff)
@@ -642,7 +649,13 @@ class MainWindow(QMainWindow):
         add_action(gmenu, "Add Assignment…", slot=self._on_add_assignment)
         add_action(gmenu, "Add Material…", slot=self._on_add_material)
         gmenu.addSeparator()
-        add_action(gmenu, "Add Port…", slot=self._on_add_port)
+        self.act_add_port = add_action(
+            gmenu,
+            "Add Port…",
+            slot=self._on_add_port,
+            tip="Ports need the cartesian coordinate system (openEMS LumpedPort "
+            "is not cylindrical-mesh aware)",
+        )
         add_action(gmenu, "Add Field Dump…", btn=self.btn_add_dump)
         gmenu.addSeparator()
         add_action(gmenu, "Edit Selected…", slot=self._on_edit_selected_tree)
@@ -727,6 +740,11 @@ class MainWindow(QMainWindow):
             hmenu,
             "Antenna Simulation (FDTD hints)…",
             slot=lambda: show_tab_help(self, "Antenna Simulation"),
+        )
+        add_action(
+            hmenu,
+            "Cylindrical (polar) mesh…",
+            slot=lambda: show_tab_help(self, "Cylindrical Mesh"),
         )
         hmenu.addSeparator()
         add_action(hmenu, "Open ANLEITUNG_DE.md", slot=lambda: self._open_doc("docs/ANLEITUNG_DE.md"))
@@ -1067,6 +1085,8 @@ class MainWindow(QMainWindow):
         try:
             self.project.mesh.preset = self.cmb_preset.currentText()  # type: ignore[assignment]
             self.project.mesh.drawing_unit = self.cmb_unit.currentText()  # type: ignore[assignment]
+            if hasattr(self, "cmb_coords"):
+                self.project.mesh.coord_system = self.cmb_coords.currentText()  # type: ignore[assignment]
             f0 = self._hz_from_spin(self.spn_f0)
             fc = self._hz_from_spin(self.spn_fc)
             start = self._hz_from_spin(self.spn_start_f)
@@ -1132,8 +1152,29 @@ class MainWindow(QMainWindow):
         self._set_spin_hz(self.spn_fc, fc)
         self.cmb_preset.setCurrentText(m.preset)
         self.cmb_unit.setCurrentText(m.drawing_unit)
-        self.chk_nf2ff.setChecked(self.project.nf2ff.enabled)
+        if hasattr(self, "cmb_coords"):
+            self.cmb_coords.setCurrentText(
+                str(getattr(m, "coord_system", "cartesian") or "cartesian")
+            )
+        _polar = bool(getattr(m, "coord_system", "cartesian") == "cylindrical")
+        self.chk_nf2ff.setEnabled(not _polar)
+        self.chk_nf2ff.setToolTip(
+            "NF2FF far-field is not supported in cylindrical mode."
+            if _polar
+            else ""
+        )
+        self.chk_nf2ff.setChecked(self.project.nf2ff.enabled and not _polar)
         self.chk_dumps.setChecked(self.project.sim.field_dumps_enabled)
+        if hasattr(self, "act_add_port"):
+            self.act_add_port.setEnabled(not _polar)
+            self.act_add_port.setToolTip(
+                "Ports are not supported in cylindrical mode (openEMS LumpedPort "
+                "produces NaN fields there). Switch Mesh Parameters -> Coordinate "
+                "system to cartesian to use ports."
+                if _polar
+                else "Ports need the cartesian coordinate system (openEMS "
+                "LumpedPort is not cylindrical-mesh aware)"
+            )
         self.sim_params.sync_from_project(self.project)
 
     def _on_mesh_form_changed(self, *_args: object) -> None:
@@ -1237,6 +1278,10 @@ class MainWindow(QMainWindow):
         try:
             self.cmb_preset.setCurrentText(m.preset or "high")
             self.cmb_unit.setCurrentText(m.drawing_unit or "mm")
+            if hasattr(self, "cmb_coords"):
+                self.cmb_coords.setCurrentText(
+                    str(getattr(m, "coord_system", "cartesian") or "cartesian")
+                )
             self._set_spin_hz(self.spn_start_f, float(m.start_frequency))
             self._set_spin_hz(self.spn_stop_f, float(m.stop_frequency))
             self._set_spin_hz(self.spn_f0, float(m.target_frequency))
@@ -2001,7 +2046,7 @@ class MainWindow(QMainWindow):
     def _on_add_prim_box(self) -> None:
         from app.ui.geometry_editors import PrimitiveBoxDialog
 
-        dlg = PrimitiveBoxDialog(self)
+        dlg = PrimitiveBoxDialog(self, coord_system=self.project.mesh.coord_system)
         if dlg.exec() and dlg.result:
             pr = dlg.result
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
@@ -2012,7 +2057,7 @@ class MainWindow(QMainWindow):
     def _on_add_prim_cyl(self) -> None:
         from app.ui.geometry_editors import PrimitiveCylinderDialog
 
-        dlg = PrimitiveCylinderDialog(self)
+        dlg = PrimitiveCylinderDialog(self, coord_system=self.project.mesh.coord_system)
         if dlg.exec() and dlg.result:
             pr = dlg.result
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
@@ -2023,8 +2068,28 @@ class MainWindow(QMainWindow):
             )
             self._refresh_tree()
 
+    def _polar_ports_blocked(self) -> bool:
+        """Cylindrical mode: refuse port dialogs (openEMS LumpedPort is NaN).
+
+        The installed openEMS LumpedPort is not cylindrical-mesh aware: its
+        Capacity computation returns NaN on a polar grid, which poisons the
+        excitation and the whole field. The cylindrical-aware CoaxialPort
+        exists only in openEMS >= 0.37.
+        """
+        if getattr(self.project.mesh, "coord_system", "cartesian") == "cylindrical":
+            self._log(
+                "Ports are not supported in cylindrical mode (openEMS LumpedPort "
+                "produces NaN fields there). Remove the port or switch Mesh "
+                "Parameters -> Coordinate system to cartesian."
+            )
+            return True
+        return False
+
     def _on_add_port(self) -> None:
         from app.ui.geometry_editors import PortDialog
+
+        if self._polar_ports_blocked():
+            return
 
         from app.models.project import PortDef as _PD
 
@@ -2038,7 +2103,7 @@ class MainWindow(QMainWindow):
             mesh_dirs=str(pd.get("mesh_dirs") or "xyz"),
             direction=str(pd.get("direction") or "z"),
         )
-        dlg = PortDialog(self, port=seed)
+        dlg = PortDialog(self, port=seed, coord_system=self.project.mesh.coord_system)
         if dlg.exec() and dlg.result_port:
             self.project.ports.append(dlg.result_port)
             self._refresh_ports()
@@ -2056,12 +2121,15 @@ class MainWindow(QMainWindow):
     def _on_edit_port(self, _item=None) -> None:
         from app.ui.geometry_editors import PortDialog
 
+        if self._polar_ports_blocked():
+            return
+
         idx = self._selected_port_index()
         if idx < 0:
             self._log("Select a port to edit (double-click a row)")
             return
         old = self.project.ports[idx]
-        dlg = PortDialog(self, port=old)
+        dlg = PortDialog(self, port=old, coord_system=self.project.mesh.coord_system)
         if dlg.exec() and dlg.result_port:
             self.project.ports[idx] = dlg.result_port
             self._refresh_ports()
@@ -2086,7 +2154,7 @@ class MainWindow(QMainWindow):
     def _on_add_dump(self) -> None:
         from app.ui.geometry_editors import DumpDialog
 
-        dlg = DumpDialog(self)
+        dlg = DumpDialog(self, coord_system=self.project.mesh.coord_system)
         if dlg.exec() and dlg.result:
             d = dlg.result
             self.project.dumps = [x for x in self.project.dumps if x.name != d.name]
@@ -2107,6 +2175,12 @@ class MainWindow(QMainWindow):
     def _on_edit_nf2ff(self) -> None:
         from app.ui.geometry_editors import NF2FFBoxDialog
 
+        if self.project.mesh.is_cylindrical:
+            self._log(
+                "NF2FF far-field is not supported in cylindrical mode — box editing disabled "
+                "(S-params and field dumps still work)"
+            )
+            return
         n = self.project.nf2ff
         dlg = NF2FFBoxDialog(self, start=n.start, stop=n.stop, center=n.center)
         if dlg.exec() and dlg.result_start and dlg.result_stop:
@@ -2123,6 +2197,11 @@ class MainWindow(QMainWindow):
             self._update_viewer_nf2ff()
 
     def _on_fit_nf2ff(self) -> None:
+        if self.project.mesh.is_cylindrical:
+            self._log(
+                "Fit NF2FF: far-field is not supported in cylindrical mode — skipped"
+            )
+            return
         xs: list[float] = []
         ys: list[float] = []
         zs: list[float] = []
@@ -2411,9 +2490,13 @@ class MainWindow(QMainWindow):
                 )
 
                 if ptype == "box":
-                    dlg = PrimitiveBoxDialog(self, prim=pr)
+                    dlg = PrimitiveBoxDialog(
+                        self, prim=pr, coord_system=self.project.mesh.coord_system
+                    )
                 else:
-                    dlg = PrimitiveCylinderDialog(self, prim=pr)
+                    dlg = PrimitiveCylinderDialog(
+                        self, prim=pr, coord_system=self.project.mesh.coord_system
+                    )
                 if dlg.exec() and dlg.result:
                     old_name = pr.get("name")
                     self.primitives[idx] = dlg.result
@@ -2489,10 +2572,12 @@ class MainWindow(QMainWindow):
         if kind == "port":
             if not (0 <= idx < len(self.project.ports)):
                 return
+            if self._polar_ports_blocked():
+                return
             from app.ui.geometry_editors import PortDialog
 
             p = self.project.ports[idx]
-            dlg = PortDialog(self, port=p)
+            dlg = PortDialog(self, port=p, coord_system=self.project.mesh.coord_system)
             if dlg.exec() and dlg.result_port:
                 self.project.ports[idx] = dlg.result_port
                 self._refresh_ports()
@@ -2509,7 +2594,7 @@ class MainWindow(QMainWindow):
             from app.ui.geometry_editors import DumpDialog
 
             d = self.project.dumps[idx]
-            dlg = DumpDialog(self, dump=d)
+            dlg = DumpDialog(self, dump=d, coord_system=self.project.mesh.coord_system)
             if dlg.exec() and dlg.result:
                 self.project.dumps[idx] = dlg.result
                 self._log(f"Field dump updated: {dlg.result.name} ({dlg.result.quantity})")
@@ -2643,11 +2728,12 @@ class MainWindow(QMainWindow):
             self.sim_params.patch_params = dict(self.project.patch_params)
             self._sync_form_from_project()
 
-        FDTD = openEMS(NrTS=1000, EndCriteria=1e-3)
+        _cs = 1 if self.project.mesh.is_cylindrical else 0
+        FDTD = openEMS(NrTS=1000, EndCriteria=1e-3, CoordSystem=_cs)
         f0 = self.project.mesh.target_frequency or 2.45e9
         fc = 0.5 * abs(self.project.mesh.stop_frequency - self.project.mesh.start_frequency) or 1e6
         FDTD.SetGaussExcite(f0, fc)
-        CSX = ContinuousStructure()
+        CSX = ContinuousStructure(CoordSystem=_cs)
         FDTD.SetCSX(CSX)
         primitives_mesh_setup = {}
         CSX = enhance_csx(CSX, primitives_mesh_setup)
@@ -2693,6 +2779,10 @@ class MainWindow(QMainWindow):
         for pr in self.primitives:
             kind = pr.get("kind", "box")
             name = str(pr.get("name", "prim"))
+            if self.project.mesh.is_cylindrical:
+                from app.meshing.polar import ensure_polar_primitive
+
+                ensure_polar_primitive(kind, name)
             mat = pr.get("material", "copper")
             pri = int(pr.get("priority", 10))
             prop = _prop_for(mat)
@@ -2805,9 +2895,14 @@ class MainWindow(QMainWindow):
                 self.project.boundary,
                 targets,
                 primitives_mesh_setup=primitives_mesh_setup,
+                ports=self.project.ports,
             )
         report = validate_mesh(
-            CSX, targets, ports=self.project.ports, max_grading=self.project.mesh.max_grading_ratio
+            CSX,
+            targets,
+            ports=self.project.ports,
+            max_grading=self.project.mesh.max_grading_ratio,
+            coord_system=self.project.mesh.coord_system,
         )
         lines = report_to_lines(report)
         lines.append("")

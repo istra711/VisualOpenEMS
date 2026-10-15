@@ -15,7 +15,7 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-MENUS = ["File", "Project", "Geometry", "Mesh", "Simulation", "View", "Tools", "Help"]
+MENUS = ["File", "Presets", "Geometry", "Mesh", "Simulation", "View", "Tools", "Help"]
 
 _APP = None
 _WIN = None
@@ -64,7 +64,8 @@ def test_menu_structure_and_shortcuts() -> None:
 
     assert _find(_menu("File"), "New Project").shortcut().toString() == "Ctrl+N"
     assert _find(_menu("File"), "Open\u2026").shortcut().toString() == "Ctrl+O"
-    assert _find(_menu("File"), "Save\u2026").shortcut().toString() == "Ctrl+S"
+    assert _find(_menu("File"), "Save").shortcut().toString() == "Ctrl+S"
+    assert _find(_menu("File"), "Save As\u2026").shortcut().toString() == "Ctrl+Shift+S"
     assert _find(_menu("File"), "Exit").shortcut().toString() == "Ctrl+Q"
     mesh_actions = [_strip(a.text()) for a in _menu("Mesh").actions()]
     assert "Build Mesh" not in mesh_actions, mesh_actions
@@ -77,7 +78,7 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("Geometry"), "Delete Selected").shortcut().toString() == "Del"
     assert _find(_menu("Geometry"), "Duplicate Selected").shortcut().toString() == "Ctrl+D"
 
-    presets = [_strip(a.text()) for a in _menu("Project").actions()]
+    presets = [_strip(a.text()) for a in _menu("Presets").actions()]
     assert presets == [
         "Preset: Patch Antenna\u2026",
         "Preset: Yagi Antenna\u2026",

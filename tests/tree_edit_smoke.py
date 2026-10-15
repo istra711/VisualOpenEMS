@@ -12,7 +12,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class _FakeBoxDialog:
-    def __init__(self, parent=None, prim=None):
+    def __init__(self, parent=None, prim=None, coord_system="cartesian"):
+        del coord_system  # accepted for API parity (polar wedge editor)
         self.result = {
             "kind": "box",
             "name": "box1_edited",
@@ -27,7 +28,8 @@ class _FakeBoxDialog:
 
 
 class _FakeCylDialog:
-    def __init__(self, parent=None, prim=None):
+    def __init__(self, parent=None, prim=None, coord_system="cartesian"):
+        del coord_system  # accepted for API parity
         self.result = {
             "kind": "cylinder",
             "name": "cyl1_edited",
@@ -73,7 +75,8 @@ class _FakeMaterialDialog:
 
 
 class _FakePortDialog:
-    def __init__(self, parent=None, port=None):
+    def __init__(self, parent=None, port=None, coord_system="cartesian"):
+        del coord_system  # accepted for API parity
         from app.models.project import PortDef
 
         self.result_port = PortDef(
@@ -89,7 +92,8 @@ class _FakePortDialog:
 
 
 class _FakeDumpDialog:
-    def __init__(self, parent=None, dump=None):
+    def __init__(self, parent=None, dump=None, coord_system="cartesian"):
+        del coord_system  # accepted for API parity
         from app.models.project import DumpDef
 
         self.result = DumpDef(name="Ht", quantity="H", frequency=1e9)

@@ -47,6 +47,7 @@ from app.ui.tab_help import show_tab_help
 
 MESH_PRESETS: list[str] = ["low", "medium", "high", "very_high"]
 DRAWING_UNITS: list[str] = ["mm", "um", "m"]
+COORD_SYSTEMS: list[str] = ["cartesian", "cylindrical"]
 
 
 class MeshParamsPanel(QWidget):
@@ -133,6 +134,16 @@ class MeshParamsPanel(QWidget):
         self.cmb_dirs = QComboBox()
         self.cmb_dirs.addItems(["xyz", "xy", "xz", "yz", "x", "y", "z"])
         self.cmb_dirs.setToolTip("Mesh only these axes")
+        self.cmb_coords = QComboBox()
+        self.cmb_coords.addItems(COORD_SYSTEMS)
+        self.cmb_coords.setToolTip(
+            "FDTD coordinate system:\n"
+            "cartesian — x/y/z grid (easyMesh), full geometry support.\n"
+            "cylindrical — openEMS CoordSystem=1 (ρ/φ/z) for cylinders and "
+            "rotationally symmetric structures.\n"
+            "Cylindrical mode: box = wedge in (ρ, φ, z), φ in degrees in the "
+            "editors (stored as radians), no STL/polygon/polyhedron, no NF2FF."
+        )
         self.cmb_smooth = QComboBox()
         self.cmb_smooth.addItems(["one_third_two_thirds", "extra_lines", "False"])
         self.chk_circle = QCheckBox("Use circle detection")
@@ -148,6 +159,7 @@ class MeshParamsPanel(QWidget):
         fm.addRow("Max cell size", self.spn_max_cell)
         fm.addRow("Max grading ratio", self.spn_grading)
         fm.addRow("Num lines (edge gaps)", self.spn_num_lines)
+        fm.addRow("Coordinate system", self.cmb_coords)
         fm.addRow("Mesh directions", self.cmb_dirs)
         fm.addRow("Smooth metal edge", self.cmb_smooth)
         fm.addRow(self.chk_circle)
@@ -176,6 +188,7 @@ class MeshParamsPanel(QWidget):
             w.valueChanged.connect(self._on_changed)
         self.cmb_smooth.currentTextChanged.connect(self._on_changed)
         self.cmb_dirs.currentTextChanged.connect(self._on_changed)
+        self.cmb_coords.currentTextChanged.connect(self._on_changed)
         self.chk_circle.toggled.connect(self._on_changed)
         self.chk_arc.toggled.connect(self._on_changed)
         self.chk_edges.toggled.connect(self._on_changed)
@@ -310,6 +323,9 @@ class MeshParamsPanel(QWidget):
         dirs = str(getattr(m, "dirs", "xyz") or "xyz")
         idx = self.cmb_dirs.findText(dirs)
         self.cmb_dirs.setCurrentIndex(idx if idx >= 0 else 0)
+        coord = str(getattr(m, "coord_system", "cartesian") or "cartesian")
+        idx = self.cmb_coords.findText(coord)
+        self.cmb_coords.setCurrentIndex(idx if idx >= 0 else 0)
         smooth = str(m.smooth_metal_edge)
         idx = self.cmb_smooth.findText(smooth)
         self.cmb_smooth.setCurrentIndex(idx if idx >= 0 else 0)
@@ -346,6 +362,7 @@ class MeshParamsPanel(QWidget):
         m.max_grading_ratio = float(self.spn_grading.value())
         m.num_lines = int(self.spn_num_lines.value())
         m.dirs = self.cmb_dirs.currentText()
+        m.coord_system = self.cmb_coords.currentText()  # type: ignore[assignment]
         m.smooth_metal_edge = self.cmb_smooth.currentText()  # type: ignore[assignment]
         m.use_circle_detection = self.chk_circle.isChecked()
         m.use_arc_detection = self.chk_arc.isChecked()
@@ -380,6 +397,15 @@ class MeshParamsPanel(QWidget):
         info.append(
             f"preset={m.preset}, drawing_unit={m.drawing_unit}, "
             f"f0={f0:.6g} Hz"
+        )
+        info.append(
+            f"coord_system={getattr(m, 'coord_system', 'cartesian')}"
+            + (
+                "  (box=wedge in rho/phi/z, phi in editors shown in degrees, "
+                "no STL, no NF2FF)"
+                if getattr(m, "coord_system", "cartesian") == "cylindrical"
+                else ""
+            )
         )
         info.append(
             f"start={m.start_frequency:.6g} Hz, stop={m.stop_frequency:.6g} Hz"

@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from app.meshing.preview import get_sim_area, is_diagnostic_kind, iter_primitive_infos, primitives_outside_domain
+from app.meshing.polar import axis_labels
 from app.meshing.rules import MeshTargets
 from app.models.project import PortDef
 
@@ -74,25 +75,43 @@ def _value_on_lines(lines: np.ndarray, value: float, atol: float = 1e-9) -> bool
     return bool(np.any(np.isclose(lines, value, atol=atol)))
 
 
-def validate_mesh(csx, targets: MeshTargets, ports: list[PortDef] | None = None, max_grading: float = 2.0) -> MeshReport:
+def validate_mesh(
+    csx,
+    targets: MeshTargets,
+    ports: list[PortDef] | None = None,
+    max_grading: float = 2.0,
+    coord_system: str = "cartesian",
+) -> MeshReport:
     report = MeshReport()
     lines = _get_lines(csx)
+    polar = coord_system == "cylindrical"
+    labels = ("ρ", "φ", "z") if polar else ("x", "y", "z")
     report.stats["lambda_min_units"] = targets.lambda_min_units
     report.stats["max_cell_allowed"] = targets.max_cell_units
     report.stats["f_max_hz"] = targets.f_max_hz
+    report.stats["coord_system"] = coord_system
 
-    for d, arr in lines.items():
+    # Cylindrical: the alpha axis stores RADIAN steps, not lengths — convert
+    # to arc length at the outer radius before comparing against lambda-based
+    # cell limits, otherwise meters-unit projects flag bogus cell_too_large.
+    axis_lines = dict(lines)
+    if polar and lines.get("y", np.asarray([])).size >= 2:
+        r_ref = float(np.max(lines.get("x", np.asarray([1.0])))) or 1.0
+        axis_lines["y"] = np.sort(lines["y"]) * r_ref
+
+    for d, arr in axis_lines.items():
+        name = labels["xyz".index(d)]
         st = _axis_stats(arr)
         report.stats[f"{d}"] = st
         if arr.size < 2:
-            report.issues.append(Issue("error", "empty_mesh", f"Axis {d}: no mesh lines"))
+            report.issues.append(Issue("error", "empty_mesh", f"Axis {name}: no mesh lines"))
             continue
         if st["max_cell"] > targets.max_cell_units * 1.0001:
             report.issues.append(
                 Issue(
                     "error",
                     "cell_too_large",
-                    f"Axis {d}: max cell {st['max_cell']:.4g} > allowed {targets.max_cell_units:.4g} "
+                    f"Axis {name}: max cell {st['max_cell']:.4g} > allowed {targets.max_cell_units:.4g} "
                     f"(lambda_min/10..15)",
                 )
             )
@@ -101,7 +120,7 @@ def validate_mesh(csx, targets: MeshTargets, ports: list[PortDef] | None = None,
                 Issue(
                     "warning",
                     "grading_jump",
-                    f"Axis {d}: worst neighbor grading {st['worst_grading']:.3g} > {max_grading}",
+                    f"Axis {name}: worst neighbor grading {st['worst_grading']:.3g} > {max_grading}",
                 )
             )
         if st["min_cell"] > 0 and st["min_cell"] < targets.max_cell_units / 500:
@@ -109,17 +128,28 @@ def validate_mesh(csx, targets: MeshTargets, ports: list[PortDef] | None = None,
                 Issue(
                     "warning",
                     "very_small_cell",
-                    f"Axis {d}: min cell {st['min_cell']:.4g} is extremely small; check for tiny gaps",
+                    f"Axis {name}: min cell {st['min_cell']:.4g} is extremely small; check for tiny gaps",
+                )
+            )
+        if polar and d == "z" and st["n_lines"] - 1 < 8:
+            report.issues.append(
+                Issue(
+                    "warning",
+                    "pml_cells_low",
+                    "Axis z: fewer than 8 cells — PML-8 boundaries silently reset to PEC",
                 )
             )
 
     for p in ports or []:
-        _check_port(report, lines, p, targets)
+        _check_port(report, lines, p, targets, polar=polar)
 
-    _check_primitive_bounds(report, csx)
+    _check_primitive_bounds(report, csx, coord_system=coord_system)
 
     # drawing unit sanity: geometry should not be thousands of times larger than lambda
-    all_vals = np.concatenate([a for a in lines.values() if a.size]) if any(a.size for a in lines.values()) else np.array([0.0])
+    # (cylindrical: alpha radians are a different unit — exclude them from the span)
+    span_axes = ("x", "z") if polar else tuple(lines.keys())
+    vals = [lines[a] for a in span_axes if a in lines and lines[a].size]
+    all_vals = np.concatenate(vals) if vals else np.array([0.0])
     span = float(np.max(all_vals) - np.min(all_vals))
     report.stats["domain_span_units"] = span
     if span > 0 and targets.lambda_min_units > 0:
@@ -144,7 +174,7 @@ def validate_mesh(csx, targets: MeshTargets, ports: list[PortDef] | None = None,
     return report
 
 
-def _check_primitive_bounds(report: MeshReport, csx) -> None:
+def _check_primitive_bounds(report: MeshReport, csx, coord_system: str = "cartesian") -> None:
     """Every primitive AABB must sit inside the FDTD domain (GetSimArea).
 
     Material outside the domain is silently dropped by openEMS, which would
@@ -152,13 +182,14 @@ def _check_primitive_bounds(report: MeshReport, csx) -> None:
     """
     try:
         area = get_sim_area(csx)
-        infos = iter_primitive_infos(csx)
+        infos = iter_primitive_infos(csx, coord_system=coord_system)
     except Exception:  # noqa: BLE001
         return
     hits = primitives_outside_domain(infos, area)
     report.stats["primitives_outside_domain"] = len(hits)
+    axis_names = axis_labels(coord_system)
     for info, j, amount, side in hits:
-        axis = "xyz"[j]
+        axis = axis_names[j]
         report.issues.append(
             Issue(
                 "warning" if is_diagnostic_kind(info.kind) else "error",
@@ -169,20 +200,36 @@ def _check_primitive_bounds(report: MeshReport, csx) -> None:
         )
 
 
-def _check_port(report: MeshReport, lines: dict[str, np.ndarray], port: PortDef, targets: MeshTargets):
+def _check_port(
+    report: MeshReport,
+    lines: dict[str, np.ndarray],
+    port: PortDef,
+    targets: MeshTargets,
+    polar: bool = False,
+):
     start = np.asarray(port.start, dtype=float)
     stop = np.asarray(port.stop, dtype=float)
     axes = "xyz"
+    names = axis_labels("cylindrical" if polar else "cartesian")
+    # Cylindrical stores lines with the same float32 rounding as phi angles;
+    # allow the same relative epsilon the polar mesher uses for re-asserts.
+    def _atol(v: float) -> float:
+        return 1e-6 * max(1.0, abs(v)) if polar else 1e-9
+
+    def _on(ax: str, v: float) -> bool:
+        return _value_on_lines(lines[ax], v, atol=_atol(v))
+
     nonflat = [axes[i] for i in range(3) if abs(stop[i] - start[i]) > 1e-12]
     flat = [axes[i] for i in range(3) if abs(stop[i] - start[i]) <= 1e-12]
 
     for ax in flat:
-        if not _value_on_lines(lines[ax], start[axes.index(ax)]):
+        if not _on(ax, start[axes.index(ax)]):
             report.issues.append(
                 Issue(
                     "error",
                     "port_alignment",
-                    f"Port '{port.name}': {ax}={start[axes.index(ax)]:.6g} is not on a mesh line",
+                    f"Port '{port.name}': {names[axes.index(ax)]}={start[axes.index(ax)]:.6g} "
+                    f"is not on a mesh line",
                 )
             )
 
@@ -191,12 +238,12 @@ def _check_port(report: MeshReport, lines: dict[str, np.ndarray], port: PortDef,
         ax = nonflat[0]
         i = axes.index(ax)
         for val in (start[i], stop[i]):
-            if not _value_on_lines(lines[ax], val):
+            if not _on(ax, val):
                 report.issues.append(
                     Issue(
                         "error",
                         "port_alignment",
-                        f"Port '{port.name}': {ax}={val:.6g} endpoint not on mesh line",
+                        f"Port '{port.name}': {names[i]}={val:.6g} endpoint not on mesh line",
                     )
                 )
     elif len(nonflat) == 2:
@@ -209,12 +256,12 @@ def _check_port(report: MeshReport, lines: dict[str, np.ndarray], port: PortDef,
             if arr.size == 0:
                 continue
             idx = int(np.argmin(np.abs(arr - val)))
-            if abs(arr[idx] - val) > 1e-9:
+            if abs(arr[idx] - val) > _atol(val):
                 report.issues.append(
                     Issue(
                         "error",
                         "port_alignment",
-                        f"Port '{port.name}': 2D port face not aligned on {ax} mesh line",
+                        f"Port '{port.name}': 2D port face not aligned on {names[i]} mesh line",
                     )
                 )
 

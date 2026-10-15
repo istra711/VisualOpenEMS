@@ -536,22 +536,34 @@ class MeshGeometryViewer(QWidget):
         except Exception:  # noqa: BLE001
             return value
 
+    def _coord_system(self) -> str:
+        """'cylindrical' when the project context says so (else cartesian)."""
+        proj = getattr(self, "_project", None)
+        if proj is not None:
+            return str(getattr(proj.mesh, "coord_system", "cartesian") or "cartesian")
+        return "cartesian"
+
     def _update_info(self) -> None:
         lines: list[str] = []
         lines.append("=== Mesh ===")
         mesh = mesh_lines_from_csx(self._csx)
+        from app.meshing.polar import axis_labels
+
+        _labels = dict(zip("xyz", axis_labels(self._coord_system())))
         for d in "xyz":
             arr = mesh[d]
             if arr.size == 0:
-                lines.append(f"  {d}: (empty)")
+                lines.append(f"  {_labels[d]}: (empty)")
                 continue
             mids, sizes = mesh_cells_from_lines(arr)
             lines.append(
-                f"  {d}: {arr.size} lines, "
+                f"  {_labels[d]}: {arr.size} lines, "
                 f"cells {sizes.size}, "
                 f"min {sizes.min():.4g}, max {sizes.max():.4g}, "
                 f"range [{arr.min():.4g}, {arr.max():.4g}]"
             )
+        if self._coord_system() == "cylindrical":
+            lines.append("  (cylindrical: ρ/φ/z — φ stored in radians 0..2π)")
         area = get_sim_area(self._csx)
         if area is not None:
             lines.append(
@@ -560,7 +572,7 @@ class MeshGeometryViewer(QWidget):
             )
         lines.append("")
         lines.append("=== Primitives (CSX) ===")
-        infos = iter_primitive_infos(self._csx)
+        infos = iter_primitive_infos(self._csx, coord_system=self._coord_system())
         if not infos:
             lines.append("  (none)")
         for info in infos:
@@ -624,7 +636,7 @@ class MeshGeometryViewer(QWidget):
     def _collect_scene(self):
         """Return (mesh_lines, prim_infos, ports, nf2ff, area)."""
         mesh = mesh_lines_from_csx(self._csx)
-        infos = iter_primitive_infos(self._csx)
+        infos = iter_primitive_infos(self._csx, coord_system=self._coord_system())
         area = get_sim_area(self._csx)
         return mesh, infos, self._ports, self._nf2ff, area
 

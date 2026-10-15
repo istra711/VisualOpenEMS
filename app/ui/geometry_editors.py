@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from PySide6.QtWidgets import (
@@ -24,28 +25,65 @@ PORT_TYPES = ["lumped", "msl", "rect_waveguide"]
 DUMP_QTY = ["E", "H", "J", "Jtot", "D", "B", "SAR", "custom"]
 
 
-def _vec3_row(form: QFormLayout, label: str, values: list[float], lo: float = -1e4, hi: float = 1e4):
+def _axis_suffixes(coord_system: str) -> tuple[str, str, str]:
+    if coord_system == "cylindrical":
+        return "ρ", "φ", "z"
+    return "x", "y", "z"
+
+
+def _vec3_row(
+    form: QFormLayout,
+    label: str,
+    values: list[float],
+    lo: float = -1e4,
+    hi: float = 1e4,
+    coord_system: str = "cartesian",
+):
+    """Three stacked spins (one per axis). Cylindrical: suffixes ρ/φ/z and
+    the phi spin shows DEGREES (project values are always radians)."""
     w = QWidget()
     lay = QVBoxLayout(w)
     lay.setContentsMargins(0, 0, 0, 0)
     spins: list[QDoubleSpinBox] = []
-    for i, axis in enumerate("xyz"):
+    polar = coord_system == "cylindrical"
+    for i, axis in enumerate(_axis_suffixes(coord_system)):
         sp = QDoubleSpinBox()
-        sp.setRange(lo, hi)
         sp.setDecimals(4)
-        sp.setSuffix(f" {axis}")
-        sp.setValue(float(values[i]) if i < len(values) else 0.0)
+        raw = float(values[i]) if i < len(values) else 0.0
+        if polar and i == 1:
+            # phi is radians in the project; show degrees (a full turn +-36000 deg)
+            sp.setRange(-36000.0, 36000.0)
+            sp.setSuffix(" °")
+            sp.setValue(math.degrees(raw))
+        else:
+            sp.setRange(lo, hi)
+            sp.setSuffix(f" {axis}")
+            sp.setValue(raw)
         spins.append(sp)
         lay.addWidget(sp)
     form.addRow(label, w)
     return spins
 
 
+def _vec3_read(spins: list[QDoubleSpinBox], coord_system: str = "cartesian") -> list[float]:
+    """Spins -> project values (cylindrical phi: degrees -> radians)."""
+    vals = [float(s.value()) for s in spins]
+    if coord_system == "cylindrical" and len(vals) == 3:
+        vals[1] = math.radians(vals[1])
+    return vals
+
+
 class PortDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, port: PortDef | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        port: PortDef | None = None,
+        coord_system: str = "cartesian",
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Port")
         self.resize(380, 420)
+        self._coord_system = coord_system
         p = port or PortDef(name="in1")
         self.result_port: PortDef | None = None
         form = QFormLayout(self)
@@ -73,8 +111,14 @@ class PortDialog(QDialog):
         form.addRow("Direction", self.cmb_dir)
         form.addRow(self.chk_excite)
         form.addRow("Mesh dirs", self.cmb_mesh)
-        self.spn_start = _vec3_row(form, "Start", p.start)
-        self.spn_stop = _vec3_row(form, "Stop", p.stop)
+        self.spn_start = _vec3_row(form, "Start", p.start, coord_system=coord_system)
+        self.spn_stop = _vec3_row(form, "Stop", p.stop, coord_system=coord_system)
+        if coord_system == "cylindrical":
+            self.cmb_dir.setToolTip(
+                "Excitation/normal axis letter: x=ρ, y=φ, z (openEMS always\n"
+                "uses x/y/z letters, also on a cylindrical mesh)."
+            )
+            self.cmb_mesh.setToolTip("Mesh axis letters: x=ρ, y=φ, z")
 
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -88,8 +132,8 @@ class PortDialog(QDialog):
         self.result_port = PortDef(
             name=name,
             type=self.cmb_type.currentText(),  # type: ignore[arg-type]
-            start=[float(s.value()) for s in self.spn_start],
-            stop=[float(s.value()) for s in self.spn_stop],
+            start=_vec3_read(self.spn_start, self._coord_system),
+            stop=_vec3_read(self.spn_stop, self._coord_system),
             resistance=float(self.spn_r.value()),
             direction=self.cmb_dir.currentText(),
             excite_port=self.chk_excite.isChecked(),
@@ -210,10 +254,19 @@ class MaterialDialog(QDialog):
 class PrimitiveBoxDialog(QDialog):
     """Add/edit a box primitive (any antenna/PCB metal or dielectric volume)."""
 
-    def __init__(self, parent: QWidget | None = None, prim: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        prim: dict[str, Any] | None = None,
+        coord_system: str = "cartesian",
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Box primitive")
         self.resize(380, 360)
+        self._coord_system = coord_system
+        if coord_system == "cylindrical":
+            # In cylindrical mode a "box" is a wedge in (rho, phi, z).
+            self.setWindowTitle("Wedge primitive (cylindrical)")
         p = prim or {"name": "box1", "material": "copper", "start": [0, 0, 0], "stop": [10, 10, 0.5]}
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
@@ -233,8 +286,12 @@ class PrimitiveBoxDialog(QDialog):
         form.addRow("Material", self.cmb_mat)
         form.addRow("Priority", self.spn_pri)
         form.addRow(self.chk_edges)
-        self.spn_start = _vec3_row(form, "Start", list(p.get("start", [0, 0, 0])))
-        self.spn_stop = _vec3_row(form, "Stop", list(p.get("stop", [10, 10, 0.5])))
+        self.spn_start = _vec3_row(
+            form, "Start", list(p.get("start", [0, 0, 0])), coord_system=coord_system
+        )
+        self.spn_stop = _vec3_row(
+            form, "Stop", list(p.get("stop", [10, 10, 0.5])), coord_system=coord_system
+        )
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -249,8 +306,8 @@ class PrimitiveBoxDialog(QDialog):
             "name": name,
             "material": self.cmb_mat.currentText().strip() or "copper",
             "priority": self.spn_pri.value(),
-            "start": [float(s.value()) for s in self.spn_start],
-            "stop": [float(s.value()) for s in self.spn_stop],
+            "start": _vec3_read(self.spn_start, self._coord_system),
+            "stop": _vec3_read(self.spn_stop, self._coord_system),
         }
         if self.chk_edges.isChecked():
             prim["edges2grid"] = "xy"
@@ -263,10 +320,16 @@ class PrimitiveBoxDialog(QDialog):
 
 
 class PrimitiveCylinderDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, prim: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        prim: dict[str, Any] | None = None,
+        coord_system: str = "cartesian",
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Cylinder primitive")
         self.resize(380, 320)
+        self._coord_system = coord_system
         p = prim or {"name": "cyl1", "material": "copper", "start": [0, 0, 0], "stop": [0, 0, 5], "radius": 0.5}
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
@@ -287,8 +350,12 @@ class PrimitiveCylinderDialog(QDialog):
         form.addRow("Material", self.cmb_mat)
         form.addRow("Priority", self.spn_pri)
         form.addRow("Radius", self.spn_radius)
-        self.spn_start = _vec3_row(form, "Start (axis A)", list(p.get("start", [0, 0, 0])))
-        self.spn_stop = _vec3_row(form, "Stop (axis B)", list(p.get("stop", [0, 0, 5])))
+        self.spn_start = _vec3_row(
+            form, "Start (axis A)", list(p.get("start", [0, 0, 0])), coord_system=coord_system
+        )
+        self.spn_stop = _vec3_row(
+            form, "Stop (axis B)", list(p.get("stop", [0, 0, 5])), coord_system=coord_system
+        )
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -302,8 +369,8 @@ class PrimitiveCylinderDialog(QDialog):
             "name": self.ed_name.text().strip() or "cyl1",
             "material": self.cmb_mat.currentText().strip() or "copper",
             "priority": self.spn_pri.value(),
-            "start": [float(s.value()) for s in self.spn_start],
-            "stop": [float(s.value()) for s in self.spn_stop],
+            "start": _vec3_read(self.spn_start, self._coord_system),
+            "stop": _vec3_read(self.spn_stop, self._coord_system),
             "radius": float(self.spn_radius.value()),
         }
         for k, v in (self._keep_extra or {}).items():
@@ -314,10 +381,16 @@ class PrimitiveCylinderDialog(QDialog):
 
 
 class DumpDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, dump: DumpDef | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        dump: DumpDef | None = None,
+        coord_system: str = "cartesian",
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Field dump")
         self.resize(360, 380)
+        self._coord_system = coord_system
         d = dump or DumpDef(name="Et", quantity="E", frequency=2.45e9)
         self.result: DumpDef | None = None
         form = QFormLayout(self)
@@ -345,8 +418,8 @@ class DumpDialog(QDialog):
         form.addRow("Frequency", self.spn_freq)
         form.addRow(self.chk_fd)
         form.addRow(self.chk_en)
-        self.spn_start = _vec3_row(form, "Start", d.start)
-        self.spn_stop = _vec3_row(form, "Stop", d.stop)
+        self.spn_start = _vec3_row(form, "Start", d.start, coord_system=coord_system)
+        self.spn_stop = _vec3_row(form, "Stop", d.stop, coord_system=coord_system)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -373,8 +446,8 @@ class DumpDialog(QDialog):
         self.result = DumpDef(
             name=self.ed_name.text().strip() or "dump",
             quantity=self.cmb_qty.currentText(),  # type: ignore[arg-type]
-            start=[float(s.value()) for s in self.spn_start],
-            stop=[float(s.value()) for s in self.spn_stop],
+            start=_vec3_read(self.spn_start, self._coord_system),
+            stop=_vec3_read(self.spn_stop, self._coord_system),
             frequency_domain=self.chk_fd.isChecked(),
             frequency=spin_hz(self.spn_freq, unit),
             enabled=self.chk_en.isChecked(),

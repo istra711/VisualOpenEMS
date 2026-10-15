@@ -40,9 +40,18 @@ class PrimitiveInfo:
     color: tuple[float, float, float, float] = (0.8, 0.5, 0.2, 0.7)
 
 
-def iter_primitive_infos(csx) -> list[PrimitiveInfo]:
-    """Extract AABB + metadata for every primitive in the CSX."""
+def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[PrimitiveInfo]:
+    """Extract AABB + metadata for every primitive in the CSX.
+
+    ``coord_system="cylindrical"`` derives the extent via
+    ``app.meshing.polar.polar_primitive_bbox`` — CSXCAD's ``GetBoundBox``
+    is only meaningful on a cartesian grid (cylinders report a bogus
+    negative-r box on a cylindrical one).
+    """
     infos: list[PrimitiveInfo] = []
+    polar = coord_system == "cylindrical"
+    if polar:
+        from app.meshing.polar import polar_primitive_bbox
     try:
         qty = csx.GetQtyProperties()
     except Exception:  # noqa: BLE001
@@ -87,8 +96,11 @@ def iter_primitive_infos(csx) -> list[PrimitiveInfo]:
         for j in range(n_prims):
             try:
                 prim = prop.GetPrimitive(j)
-                bbox = np.asarray(prim.GetBoundBox(), dtype=float)
-                if bbox.shape != (2, 3) or not np.all(np.isfinite(bbox)):
+                if polar:
+                    bbox = polar_primitive_bbox(prim)
+                else:
+                    bbox = np.asarray(prim.GetBoundBox(), dtype=float)
+                if bbox is None or bbox.shape != (2, 3) or not np.all(np.isfinite(bbox)):
                     continue
                 start = tuple(float(v) for v in bbox[0])
                 stop = tuple(float(v) for v in bbox[1])
@@ -197,7 +209,12 @@ def export_csx_xml(csx, out_path: Path | str) -> Path:
     return out_path
 
 
-def save_mesh_preview(csx, out_path: Path | str, title: str = "Mesh lines") -> Path:
+def save_mesh_preview(
+    csx,
+    out_path: Path | str,
+    title: str = "Mesh lines",
+    coord_system: str = "cartesian",
+) -> Path:
     """Save mesh line plot to PNG.
 
     Uses Figure + FigureCanvasAgg directly — never calls matplotlib.use()
@@ -207,19 +224,20 @@ def save_mesh_preview(csx, out_path: Path | str, title: str = "Mesh lines") -> P
     from matplotlib.figure import Figure
 
     lines = mesh_lines_from_csx(csx)
+    labels = ("ρ", "φ", "z") if coord_system == "cylindrical" else ("x", "y", "z")
     fig = Figure(figsize=(12, 4))
     FigureCanvasAgg(fig)
     axes = fig.subplots(1, 3)
-    for ax, d in zip(axes, "xyz"):
+    for ax, d, lbl in zip(axes, "xyz", labels):
         arr = lines[d]
         if arr.size == 0:
-            ax.set_title(f"{d}: empty")
+            ax.set_title(f"{lbl}: empty")
             continue
         cells = np.diff(np.sort(arr))
         ax.plot(np.sort(arr)[:-1], cells, ".", ms=3)
-        ax.set_xlabel(f"{d} position")
+        ax.set_xlabel(f"{lbl} position")
         ax.set_ylabel("cell size")
-        ax.set_title(f"{d}: {arr.size} lines")
+        ax.set_title(f"{lbl}: {arr.size} lines")
         ax.grid(True, alpha=0.3)
     fig.suptitle(title)
     fig.tight_layout()

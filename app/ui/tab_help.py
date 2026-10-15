@@ -19,6 +19,7 @@ TAB_ORDER = [
     "S-Params",
     "Antenna",
     "Antenna Simulation",
+    "Cylindrical Mesh",
 ]
 
 TAB_HELP: dict[str, str] = {
@@ -195,6 +196,9 @@ Fields
   • Start / Stop — simulation band for mesh λ and S-params (independent
     overrides; editing these clamps f0 into the band and sets fc).
   • Drawing unit — project length unit for new primitives (default mm).
+  • Coordinate system — cartesian (x/y/z, easyMesh) or cylindrical
+    (openEMS CoordSystem=1, rho/phi/z). See Help → Cylindrical Mesh for
+    the supported primitives, degree-based phi editing and limits.
 
 Readout (live, before Apply)
   • λ_air at f_max, max/target cell size, current preset + frequencies.
@@ -212,6 +216,46 @@ Notes
     Apply first, then Build.
   • Domain size (black dashed frame in the Mesh Viewer) is NOT here — it
     comes from air margin / boundary: Sim Params → Boundary conditions.
+""",
+    "Cylindrical Mesh": """CYLINDRICAL MESH — openEMS CoordSystem=1 (rho/phi/z)
+
+What it is
+  • Mesh Parameters → Coordinate system = cylindrical switches the solver
+    and the mesher to openEMS cylindrical coordinates (rho, phi, z).
+    easyMesh is bypassed entirely — a dedicated polar mesher fills the
+    grid (no easyMesh fork changes); phi always spans the full turn
+    0..2π (closed cylinder) and the rho=0 axis is always a mesh line.
+
+Geometry in cylindrical mode
+  • Allowed primitives: box (= wedge in rho/phi/z) and cylinder.
+    The editors show rho/phi/z suffixes; phi is shown in DEGREES and
+    stored as radians in the project.
+  • NOT supported: STL / FreeCAD imports, polygons, polyhedra — the run
+    aborts with a clear message. Use the Cartesian system for those.
+  • Ports: the x/y/z direction and mesh-dir letters keep their meaning
+    x=rho, y=phi, z (openEMS always uses x/y/z letters, also here).
+
+Boundaries & margins
+  • Boundary rows are relabelled rho-/rho+/phi-/phi+/z-/z+; the phi rows
+    are disabled (they do not exist on a full-turn cylinder).
+  • Air margin: only rho+ and z-/z+ count. rho- is the axis (no margin),
+    phi+/- are unused — explicit values there are ignored (noted in the
+    mesh report).
+
+Results & limits (v1)
+  • Field dumps work; the dump domain check runs on rho/phi/z extents.
+  • Ports / S-params are NOT supported in cylindrical mode with the
+    installed openEMS build: its LumpedPort is not cylindrical-mesh aware
+    (Capacity=NaN poisons the whole field). Add/Edit Port is disabled and
+    a run with ports aborts with a clear message. Free-response runs
+    (no excitation, e.g. cavity analyses with dumps) still work.
+    The cylindrical-aware CoaxialPort exists only in openEMS >= 0.37.
+  • NF2FF far-field is NOT supported in cylindrical mode — checkbox and
+    Fit/Edit stay disabled and the run prints a skip message.
+  • Validation labels the axes rho/phi/z and checks the phi axis against
+    lambda via ARC length at the outer radius.
+  • Best for: cylinders, coax-like feeds and rotationally symmetric
+    structures where a cartesian grid would staircase curved walls.
 """,
     "Ports / Dumps": """PORTS / DUMPS — excitation, field dumps, NF2FF
 

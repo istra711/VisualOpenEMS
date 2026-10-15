@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cylindrical (polar) meshing** (`app/meshing/polar.py`, `app/meshing/easy_wrapper.py`,
+  `app/models/project.py`): new *Coordinate system* option in Mesh Parameters
+  (cartesian / cylindrical). Cylindrical mode drives openEMS's
+  `CoordSystem=1` (rho/alpha/z) with a dedicated polar mesher that bypasses
+  easyMesh (no fork changes): full-turn alpha grid, rho=0 axis always a mesh
+  line, primitive/port faces re-synced after smoothing (nudge or insert,
+  never sliver cells), air margin limited to rho+ and z±. Supported
+  primitives: box (wedge in rho/phi/z) and cylinder; STL/FreeCAD imports,
+  polygons and polyhedra are rejected with a clear message. Box/cylinder and
+  port editors show rho/phi/z suffixes (phi edited in degrees, stored as
+  radians); boundary rows are relabelled rho/phi/z with the phi rows
+  disabled. Mesh validation and the mesh preview are coordinate-system aware
+  (phi axis checked via arc length at the outer radius).
+- **Ports / NF2FF gates in cylindrical mode**: openEMS 0.0.36's LumpedPort is
+  not cylindrical-mesh aware (Capacity=NaN poisons the excitation and the
+  whole field) and NF2FF far-field is unsupported, so *Add/Edit Port* is
+  disabled, a run with ports aborts with a clear message, NF2FF is skipped
+  with a note, and the run stays a valid free-response simulation (dumps).
+  The cylindrical-aware CoaxialPort exists only in openEMS >= 0.37.
+- **Help topic "Cylindrical Mesh"** (`app/ui/tab_help.py`): covers the
+  coordinate system, supported primitives, degree-based phi editing,
+  margins, the ports/NF2FF limits and when to prefer polar over cartesian;
+  reachable from **Help → Cylindrical (polar) mesh…**.
+- **Tests**: `tests/cylindrical_spike.py` (Phase-0 proof: polar grid API,
+  closed PEC cavity at the analytic TM010 frequency, wedge/cylinder
+  coordinate semantics) and `tests/cylindrical_mesh_smoke.py` (end-to-end:
+  polar mesh + validation + NF2FF skip, STL gate, cartesian control, short
+  polar FDTD free-response run, port gate).
+
+### Fixed
+
+- **Polar port face alignment** (`app/meshing/polar.py`): port grid lines are
+  now quantized with the same `f32` rounding the run script uses for the
+  CSXCAD port box; previously the line missed the port by ~2.6e-8 and openEMS
+  reported "Unused primitive … port_excite".
 - **Antenna simulation mode** (`app/ui/sim_params.py`, `app/models/project.py`):
   new *Antenna simulation* group in the Simulation Parameters window
   (Ctrl+Shift+P) implementing the FDTD antenna checklist — mesh density

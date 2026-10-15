@@ -32,8 +32,13 @@ def main() -> int:
     tabs = win.sparam_tabs
     titles = [tabs.tabText(i) for i in range(tabs.count())]
     print("tabs:", titles)
+    # Every main-window tab must have a help topic. TAB_ORDER may also hold
+    # Help-menu-only topics (e.g. "Antenna Simulation") that are not tabs.
+    for title in titles:
+        assert title in TAB_ORDER, title
     for name in TAB_ORDER:
-        assert name in titles, name
+        if name in titles:
+            assert name in TAB_HELP, name
 
     assert hasattr(win, "btn_help") and win.btn_help is not None
     # Help button title follows current tab

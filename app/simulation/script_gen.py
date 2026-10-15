@@ -150,6 +150,7 @@ if _EASY.is_dir() and str(_EASY) not in sys.path:
 
 from app.models.project import Project
 from app.meshing.easy_wrapper import enhance_csx, enhance_fdtd, apply_boundary, generate_mesh
+from app.meshing.polar import ensure_polar_primitive
 from app.meshing.rules import compute_targets
 from app.meshing.validators import validate_mesh, report_to_lines
 from app.postproc import fields as fld
@@ -402,6 +403,20 @@ def main() -> int:
     # FreeCAD STEP/FCStd → triangle meshes (openEMS AddMesh) if needed
     prims = ensure_simulation_meshes(project, WORK_DIR, prims)
 
+    if getattr(project.mesh, "is_cylindrical", False) and project.ports:
+        # openEMS's LumpedPort is not cylindrical-mesh aware: its Capacity
+        # computation returns NaN on a polar grid, which poisons the
+        # excitation and the whole field (Energy ~nan). The cylindrical-aware
+        # CoaxialPort exists only in openEMS >= 0.37; until the user upgrades
+        # we refuse to run instead of producing garbage S-params.
+        raise ValueError(
+            "Ports are not supported in cylindrical (polar) mode with this "
+            "openEMS build: the LumpedPort is not cylindrical-mesh aware and "
+            "produces NaN fields (Capacity=nan). Remove all ports "
+            "(free-response run with dumps) or switch Mesh Parameters -> "
+            "Coordinate system to cartesian."
+        )
+
     from openEMS import openEMS
     from CSXCAD import ContinuousStructure
     from openEMS.nf2ff import nf2ff as NF2FFBox
@@ -410,10 +425,12 @@ def main() -> int:
     fc = max(1e6, 0.5 * abs(project.mesh.stop_frequency - project.mesh.start_frequency))
     nr_ts = int(project.sim.max_timesteps or 100000)
 
-    FDTD = openEMS(NrTS=nr_ts, EndCriteria=project.sim.end_criteria)
+    # CoordSystem=1 => cylindrical (r, alpha, z) operator; 0 = cartesian (default)
+    _cs = 1 if project.mesh.is_cylindrical else 0
+    FDTD = openEMS(NrTS=nr_ts, EndCriteria=project.sim.end_criteria, CoordSystem=_cs)
     FDTD.SetGaussExcite(f0, fc)
 
-    CSX = ContinuousStructure()
+    CSX = ContinuousStructure(CoordSystem=_cs)
     FDTD.SetCSX(CSX)
 
     # Shared dict: easyMesh auto-registers primitives/ports when objects are added
@@ -448,6 +465,8 @@ def main() -> int:
     for pr in prims:
         kind = pr.get("kind", "box")
         name = pr["name"]
+        if project.mesh.is_cylindrical:
+            ensure_polar_primitive(kind, name)
         mat = pr.get("material", "copper")
         pri = int(pr.get("priority", 10))
         if mat not in props:
@@ -580,14 +599,25 @@ def main() -> int:
             targets,
             primitives_mesh_setup=primitives_mesh_setup,
             properties_mesh_setup=properties_mesh_setup,
+            ports=project.ports,
         )
     print("Mesh setup:", json.dumps(setup, indent=2, default=str))
 
     dedupe_grid_lines(CSX)
 
-    report = validate_mesh(CSX, targets, ports=project.ports, max_grading=project.mesh.max_grading_ratio)
+    report = validate_mesh(
+        CSX,
+        targets,
+        ports=project.ports,
+        max_grading=project.mesh.max_grading_ratio,
+        coord_system=project.mesh.coord_system,
+    )
     for line in report_to_lines(report):
-        print(line)
+        try:
+            print(line)
+        except UnicodeEncodeError:
+            # e.g. rho/phi axis labels on a cp1252 Windows console
+            print(line.encode("cp1252", errors="replace").decode("cp1252"))
     if not report.ok:
         print("ERROR: mesh validation failed — aborting simulation")
         return 2
@@ -608,7 +638,14 @@ def main() -> int:
                     f"WARNING: dump '{dump.name}' box {dump.start} -> {dump.stop} is outside "
                     f"the FDTD domain {domain[0]} -> {domain[1]}; openEMS will disable it"
                 )
-    if project.sim.nf2ff_enabled and project.nf2ff.enabled:
+    if project.sim.nf2ff_enabled and project.nf2ff.enabled and project.mesh.is_cylindrical:
+        print("NF2FF skipped: far-field post-processing is not supported in "
+              "cylindrical mode (S-params and field dumps still run)")
+    if (
+        project.sim.nf2ff_enabled
+        and project.nf2ff.enabled
+        and not project.mesh.is_cylindrical
+    ):
         nf_start = [f32(x) for x in project.nf2ff.start]
         nf_stop = [f32(x) for x in project.nf2ff.stop]
         if domain is not None:

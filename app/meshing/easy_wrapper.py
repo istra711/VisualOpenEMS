@@ -38,19 +38,43 @@ def generate_mesh(
     targets: MeshTargets,
     primitives_mesh_setup: dict | None = None,
     properties_mesh_setup: dict | None = None,
+    ports: list | None = None,
 ):
-    """Generate mesh via easyMesh.
+    """Generate mesh via easyMesh (cartesian) or the polar mesher (cylindrical).
 
     IMPORTANT: pass the SAME primitives_mesh_setup dict that was given to
     enhance_csx/enhance_fdtd — easyMesh reads registered primitives/ports from it.
-    """
-    from easyMesh import GenerateMesh
 
+    ``ports`` (list of PortDef) is only used by the cylindrical branch to keep
+    port faces on mesh lines.
+    """
     setup = mesh.global_setup(boundary)
+    setup["coord_system"] = getattr(mesh, "coord_system", "cartesian")
     resolved = air_margin_units(mesh, boundary.air_margin, targets)
     setup["boundary_distance"] = resolved
     # easyMesh tutorials store BC as a dict; meshProcessing also accepts a list
     setup["boundary_conditions"] = {"BoundaryCond": boundary.as_openems_list()}
+
+    if getattr(mesh, "coord_system", "cartesian") == "cylindrical":
+        # easyMesh is cartesian-only (AABB edge extraction on x/y/z); the polar
+        # mesher fills the r/alpha/z grid directly. easyMesh's enhance wrappers
+        # above only REGISTER primitives/ports — they stay active so the polar
+        # mesher can read faces and port coordinates from the shared dict.
+        from app.meshing.polar import generate_polar_mesh
+
+        polar_report = generate_polar_mesh(
+            CSX,
+            mesh,
+            boundary,
+            targets,
+            primitives_mesh_setup=primitives_mesh_setup,
+            ports=ports,
+        )
+        setup.update(polar_report)
+        return setup
+
+    from easyMesh import GenerateMesh
+
     # easyMesh tutorial uses start_frequency 0 or f_min; keep project values
     GenerateMesh(
         CSX,
