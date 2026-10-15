@@ -30,6 +30,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - [Examples](#examples)
 - [Tests](#tests)
 - [Documentation](#documentation)
+- [Changelog](CHANGELOG.md)
 - [External Sources & Dependencies](#external-sources--dependencies)
 - [License](#license)
 
@@ -462,6 +463,7 @@ python tests\yagi_mesh_ends.py    # Yagi cylinder-end densification
 | [docs/FREECAD_WORKFLOW_EN.md](docs/FREECAD_WORKFLOW_EN.md) | Step-by-step workflow checklist (EN) |
 | [docs/FREECAD_PORTS_EN.md](docs/FREECAD_PORTS_EN.md) | Port marking in FreeCAD (EN) |
 | [docs/EASYMESH_CHANGES_EN.md](docs/EASYMESH_CHANGES_EN.md) | Local easyMesh modifications (EN) |
+| [CHANGELOG.md](CHANGELOG.md) | Full change history per release |
 
 ---
 
