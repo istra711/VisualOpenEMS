@@ -38,6 +38,12 @@ def main() -> int:
     assert "λ_air" in win.sim_params.lbl_computed.text()
     assert "200000" in win.sim_params.lbl_effective.text()
 
+    # Min cell size moved out of Sim Params → Mesh Parameters window
+    win._on_open_mesh_params_dialog()
+    win._mesh_params_dlg.panel.spn_min_cell.setValue(0.2)
+    win._apply_mesh_params_dialog()
+    app.processEvents()
+
     # Override parameters via form
     win.sim_params.spn_max_ts.setValue(120_000)
     win.sim_params.spn_end_criteria.setValue(1e-4)
@@ -48,7 +54,6 @@ def main() -> int:
     win.sim_params.cmb_b["xmin"].setCurrentText("PML")
     win.sim_params.spn_air.setValue(30.0)
     win.sim_params.chk_air_auto.setChecked(False)
-    win.sim_params.spn_min_cell.setValue(0.2)
     win._on_sim_params_changed()
     app.processEvents()
 

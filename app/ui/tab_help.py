@@ -18,6 +18,7 @@ TAB_ORDER = [
     "Mesh Viewer",
     "S-Params",
     "Antenna",
+    "Antenna Simulation",
 ]
 
 TAB_HELP: dict[str, str] = {
@@ -106,6 +107,18 @@ Tab Simulation-Parameter
     • Boundary xmin/xmax/ymin/ymax/zmin/zmax (PEC / PML / periodic…).
     • Air margin around geometry + min cell size.
     • Apply Patch Params — feeds / patch size for the patch antenna example.
+
+  Antenna simulation (group below Boundary conditions)
+    • "Antenna simulation mode" — turns on the FDTD antenna checklist
+      (Help → Antenna Simulation): mesh density ≥ 15–20 cells/λ, air margin
+      = PML distance × λ(f_start) on all faces (the auto λ/4-at-f_stop rule
+      is too small for antennas), NF2FF far-field enabled.
+    • Mesh density — low (10) / medium (15) / high (20) / very_high (25)
+      cells per λ; written to the project mesh preset on Apply.
+    • PML distance — multiple of λ at f_start, keep 0.50 … 1.00.
+    • While the mode is on the normal Air-margin controls are disabled and
+      re-derived from the band; turning the mode off hands control back to
+      them (values already applied stay as they are).
 
 Tab NF2FF-Parameter
   • Enable far-field (NF2FF) — creates the recording box + far-field post.
@@ -323,6 +336,92 @@ Tips
   • If Prad ~ 0 or Dmax looks wrong, the NF2FF box is likely clamped outside
     the domain — Fit NF2FF to Geometry, rebuild, and re-run.
   • Summary PNG (nf2ff_summary.png) is written next to nf2ff.json.
+""",
+    "Antenna Simulation": """ANTENNA SIMULATION — settings that keep FDTD results trustworthy
+
+FDTD antenna results are sensitive to the mesh, the boundary placement and
+the material data. The four checks below are the usual causes of a shifted
+resonance frequency or a wrong efficiency / gain. Enable Simulation
+Parameters (Ctrl+Shift+P) → "Antenna simulation mode" to apply the mesh
+density, PML distance and NF2FF defaults of this checklist in one click.
+
+1. Mesh density — numerical dispersion
+   A coarse grid makes waves travel artificially slowly in the solver, which
+   pushes the resonance frequency DOWN.
+   • Rule of thumb: at least 15–20 cells per wavelength (λ) at the HIGHEST
+     frequency you simulate. (Mesh presets: low ≈ 10, medium ≈ 15,
+     high ≈ 20, very_high ≈ 25 cells/λ.)
+   • Use the one-third/two-thirds rule for smooth transitions between cell
+     sizes (Mesh → Smooth metal edge = one_third_two_thirds).
+   • Avoid relying on pure automatic meshing alone — it often under-resolves
+     the critical edges of the radiator. Check the result in the Mesh Viewer.
+   • Where a small feature forces a very small cell (feed gap, thin wire,
+     high-εr layer), the Courant-stable time step shrinks with it and the run
+     needs far more steps — resolve the feature, but do not refine the whole
+     domain to the same size.
+
+2. Edge resolution — sub-pixel effect
+   openEMS snaps geometry to the Yee grid. If the resonant structure is not
+   exactly on mesh lines it is rounded to the nearest cell; if the structure
+   is thereby interpreted as slightly LARGER, the resonance shifts down.
+   • Place explicit mesh lines exactly on the physical edges of the
+     resonant structure (Mesh Overrides → Num lines (edge gaps), and
+     Smooth metal edge / closely-placed-edges handling).
+   • Verify in the Mesh Viewer that grid lines pass through the patch edges,
+     the feed gap and thin substrates — the "Domain overview" and cell-size
+     plots show where you are coarse.
+
+3. Substrate permittivity (εr)
+   εr is normally entered as a constant, but real substrates (FR4, Rogers…)
+   are dispersive — the value depends on frequency.
+   • Check that the εr you assigned is correct for YOUR TARGET FREQUENCY.
+   • Too high an εr shortens the effective wavelength in the material and
+     makes the structure resonate LOWER.
+   • Losses matter too: a missing loss tangent (tand / kappa) inflates Q and
+     efficiency, and a metal modelled as a perfect electric conductor (PEC)
+     reports 100 % radiation efficiency by definition.
+
+4. Boundary distance — PML too close
+   If the absorbing boundaries sit too close to the radiator, its near field
+   interacts with them and adds parasitic capacitance, again pulling the
+     resonance down.
+   • Keep at least λ/2 to λ — measured at the LOWEST frequency of the band —
+     between the structure and the simulation boundary.
+   • Simulation Parameters → "Air margin auto" uses λ/4 at the STOP
+     frequency, which is smaller than λ/2 at f_start. Antenna simulation
+     mode replaces it with the λ/2 rule (configurable as a multiple of λ).
+   • The black dashed frame in the Mesh Viewer is the domain; too close →
+     wrong resonance, too far → far more cells (RAM and runtime).
+   • Prefer PML on the radiation sides; PEC is usually fine on a ground
+     plane / symmetry face.
+
+General FDTD limitations to keep in mind
+   • Cost and memory — the whole 3D volume (antenna + free space) is
+     discretized; electrically large or fine-featured models can run from
+     hours to days. Use threads (Simulation Parameters) and start coarse.
+   • Open-boundary approximation — antennas radiate into infinite space but
+     FDTD needs a finite box; imperfect absorbers reflect energy back into
+     the domain and contaminate low-frequency or high-Q results.
+   • Staircasing — curved or diagonal geometry (circular patches, wire
+     bends) is approximated by rectilinear cells, which shifts resonance and
+     gain unless you refine or use conformal/sub-gridded FDTD.
+   • Fine feature vs. domain size — a tiny feed gap drives Δx down, Δt down
+     (Courant) and the step count up; keep the fine cells local.
+   • Narrowband vs. time domain — for simple, high-Q, narrowband metal
+     antennas a frequency-domain solver (MoM / FEM) is often much faster,
+     because it only solves the frequencies of interest instead of marching
+     through thousands of time steps. FDTD pays off when you need wideband
+     S-parameters, transients or field distributions in one run.
+
+Good antenna workflow in this app
+   1. Mesh → preset "high" or better (≥ 20 cells/λ) and build; review the
+      grid in the Mesh Viewer before running.
+   2. Simulation Parameters → boundary: PML on radiation faces, air margin
+      ≥ λ/2 at f_start (Antenna simulation mode does this for you).
+   3. Assign the real substrate εr (and tand) for your target frequency.
+   4. Run, then check S-Params: the S11 minimum should sit at the design
+      frequency; if it is low, re-check items 1–4 above.
+   5. Antenna tab (NF2FF enabled) → directivity, gain, efficiency, pattern.
 """,
 }
 

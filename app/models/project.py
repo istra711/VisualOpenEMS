@@ -174,6 +174,11 @@ class SimSpec:
     field_dumps_enabled: bool = True
     num_threads: int = 0  # 0 => all
     output_dir: str = ""  # relative to project work dir if empty
+    # Antenna simulation mode (Simulation Parameters → "Antenna simulation"):
+    # enforces >=15-20 cells/lambda (mesh preset), PML distance
+    # antenna_pml_lambda * lambda(f_start) as air margin, and NF2FF on.
+    antenna_mode: bool = False
+    antenna_pml_lambda: float = 0.5  # 0.5 => lambda/2 at f_start (hints: lambda/2..lambda)
 
 
 @dataclass

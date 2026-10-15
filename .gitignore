@@ -36,6 +36,10 @@ build_exe.log.err
 # Test cache
 .pytest_cache/
 
+# Test artifacts (regenerated on every run)
+tests/dipol_stability_out/
+tests/dipol_mesh_lines.json
+
 # easyMesh build artifacts
 third_party/easyMesh4openEMS/build/
 third_party/easyMesh4openEMS/*.o

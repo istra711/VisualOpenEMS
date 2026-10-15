@@ -1,0 +1,33 @@
+Hier sind die typischen Ursachen und wie Sie das Problem lösen:
+
+1. Das Mesh ist zu grob (Numerische Dispersion)
+
+FDTD-Simulatoren neigen zu sogenannter numerischer Dispersion. Wenn das Gitter (Mesh) zu grob gewählt ist, breiten sich die Wellen im Simulationsraum künstlich langsamer aus. Eine geringere Ausbreitungsgeschwindigkeit führt direkt zu einer Verschiebung der Resonanzfrequenz nach unten.
+• Lösung: Verfeinern Sie das Mesh im Bereich der resonanten Struktur. Als Faustregel gilt: Mindestens 15 bis 20 Schritte pro Wellenlänge (λ) bei der höchsten zu simulierenden Frequenz.
+• Nutzen Sie die „Drittelregel“ für sanfte Übergänge im Mesh und vermeiden Sie die rein automatische Vernetzung, da diese oft kritische Kanten ungenau auflöst.
+
+2. Ungenaue Kantenauflösung (Sub-Pixel-Effekt)
+
+Wenn die Abmessungen Ihrer resonanten Struktur (z. B. eine Patch-Antenne oder ein Mikrostreifenleiter) nicht exakt auf den Linien des Mesh-Gitters liegen, rundet openEMS die Geometrie auf das nächstgelegene Gitterquadrat auf oder ab.
+• Wird die Struktur dadurch im Simulator auch nur minimal größer interpretiert als sie eigentlich ist, sinkt die Resonanzfrequenz.
+• Lösung: Platzieren Sie explizite Mesh-Lines (AddMeshLines) genau auf die physischen Kanten Ihrer resonanten Struktur.
+
+3. Substrat-Eigenschaften (Permittivität \(\varepsilon _{r}\))
+
+Häufig wird die relative Permittivität (\(\varepsilon _{r}\)) des Substrats (z. B. FR4 oder Rogers) als Festwert über das gesamte Frequenzband definiert. In der Realität ist die Permittivität jedoch frequenzabhängig (dispersiv).
+• Lösung: Prüfen Sie, ob der für das Material eingetragene Wert für Ihre Zielfrequenz korrekt ist. Ein zu hoch angesetztes \(\varepsilon _{r}\) verkürzt die effektive Wellenlänge im Material und lässt die Struktur bei einer niedrigeren Frequenz resonieren.
+
+4. Ränder und PML-Randbedingungen zu nah
+
+Wenn die absorbierenden Randbedingungen (PML – Perfectly Matched Layer) zu nah an der resonanten Struktur liegen, wechselwirken die elektromagnetischen Felder der Struktur mit den Rändern. Dies kann parasitäre Kapazitäten erzeugen, die die Resonanzfrequenz nach unten drücken.
+
+Lösung: Halten Sie einen Mindestabstand von mindestens einer halben bis einer ganzen Wellenlänge (λ/2 bis λ) der niedrigsten Frequenz zwischen der Struktur und dem Simulationsrand (PML) ein.
+
+
+Limitations of FDTD in Antenna Design
+
+• High Computational Cost and Memory: Because FDTD must discretize the entire 3D volume (including free space surrounding the antenna) into fine cells, memory requirements and runtimes can stretch from hours to weeks for complex or electrically large structures.
+• Open-Boundary Approximations: Antunas radiate into infinite space, but FDTD requires a finite box. Imperfect ABCs can cause non-physical reflections back into the domain, contaminating low-frequency or high-Q resonance results.
+• Staircasing Error: Curved or diagonal antenna geometries (such as circular patches or wire turns) must be approximated with rectilinear Yee cells, introducing staircasing errors that shift resonant frequencies or degrade gain accuracy unless sub-gridding or conformal FDTD is used.
+• Fine Feature vs. Domain Size Trade-off: Small features (like a tiny feed gap, thin wire, or high-permittivity dielectric layer) force a very small spatial cell size (Δ x), which drastically shrinks the stable time step (Δ t) under the Courant stability condition, ballooning step counts.
+• Narrowband vs. Time-Domain Overhead: For simple, high-Q, narrowband metallic antennas (like a basic dipole), frequency-domain methods like the Method of Moments (MoM) or Finite Element Method (FEM) are often much faster because they only solve for the specific frequencies of interest rather than marching through thousands of time steps

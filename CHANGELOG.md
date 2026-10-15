@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Antenna simulation mode** (`app/ui/sim_params.py`, `app/models/project.py`):
+  new *Antenna simulation* group in the Simulation Parameters window
+  (Ctrl+Shift+P) implementing the FDTD antenna checklist — mesh density
+  presets as cells/λ (low 10 / medium 15 / high 20 / very_high 25), PML
+  distance as a multiple of λ at *f_start* (default 0.5×λ, i.e. λ/2 on every
+  face instead of the auto λ/4-at-*f_stop* rule), automatic NF2FF enable and
+  air-margin controls that take over while the mode is on. State persists in
+  `SimSpec` (`antenna_mode`, `antenna_pml_lambda`).
+- **Help topic "Antenna Simulation"** (`app/ui/tab_help.py`): English guide
+  covering numerical dispersion (≥ 15–20 cells/λ), sub-pixel edge placement,
+  frequency-dependent εr, PML distance at *f_start*, general FDTD limits
+  (cost, open boundaries, staircasing, narrowband vs. time domain) and a
+  recommended workflow — reachable from **Help → Antenna Simulation (FDTD
+  hints)…** and from the Simulation Parameters help.
+- **`tests/antenna_mode_smoke.py`**: checks help topic content, checkbox
+  behaviour (NF2FF on, air-margin lockout), preset/PML/air-margin values,
+  project JSON round trip and switch-off behaviour.
+
+### Fixed
+
+- **`tests/sim_params_smoke.py`**: updated for the min-cell-size widget that
+  moved to the Mesh Parameters window (dialog apply flow).
+
 ## [0.1.0] — 2026-10-15
 
 First public pre-alpha release. Standalone Windows GUI (one-file, ~147 MB)

@@ -42,6 +42,7 @@ from app.simulation.script_gen import generate_run_script
 from app.csxcad_builder.primitives import patch_antenna_primitives
 from app.csxcad_builder.quantize import f32 as _f32
 from app.freecad_io.freecad_mesh import tessellate_cad_to_meshes
+from app.ui.tab_help import show_tab_help
 
 # Tree kinds the context menu / geometry menu can duplicate (geom and nf2ff
 # are singleton/read-only entries).
@@ -722,6 +723,11 @@ class MainWindow(QMainWindow):
 
         hmenu = bar.addMenu("&Help")
         add_action(hmenu, "Help for Current Tab", btn=self.btn_help, shortcut="F1")
+        add_action(
+            hmenu,
+            "Antenna Simulation (FDTD hints)…",
+            slot=lambda: show_tab_help(self, "Antenna Simulation"),
+        )
         hmenu.addSeparator()
         add_action(hmenu, "Open ANLEITUNG_DE.md", slot=lambda: self._open_doc("docs/ANLEITUNG_DE.md"))
         add_action(hmenu, "Open FreeCAD Workflow (Geometry → Import)", slot=lambda: self._open_doc("docs/FREECAD_WORKFLOW_DE.md"))
@@ -1181,6 +1187,9 @@ class MainWindow(QMainWindow):
         dlg.panel.write_to_project(self.project)
         # mirror into the hidden Sim Params panel (run/save re-sync from it)
         self.sim_params.sync_from_project(self.project)
+        # antenna mode may have changed the mesh preset — keep the Mesh-tab
+        # combo in step, otherwise Build would write the old preset back.
+        self.cmb_preset.setCurrentText(self.project.mesh.preset or "high")
         # keep the Ports / Dumps NF2FF checkbox in step with the dialog
         self.chk_nf2ff.setChecked(bool(self.project.nf2ff.enabled))
         self.sim_params.set_patch_group_visible(dlg.panel.patch_group_visible)
@@ -1193,6 +1202,12 @@ class MainWindow(QMainWindow):
             f"max_timesteps={self.project.sim.max_timesteps}, "
             f"boundary={self.project.boundary.xmin}/{self.project.boundary.ymin}"
             f"/{self.project.boundary.zmin}"
+            + (
+                f", antenna mode ON (preset={self.project.mesh.preset}, "
+                f"air_margin={self.project.boundary.air_margin[0]:.4g})"
+                if getattr(self.project.sim, "antenna_mode", False)
+                else ""
+            )
         )
         self._refresh_run_script_if_generated()
 
@@ -1229,7 +1244,8 @@ class MainWindow(QMainWindow):
             self._set_spin_hz(self.spn_fc, fc)
         finally:
             self._freq_guard = False
-        self.sim_params.refresh_computed(self.project)
+        # re-sync the hidden panel too: antenna mode mirrors the mesh preset
+        self.sim_params.sync_from_project(self.project)
         self._log(
             "Mesh parameters applied: "
             f"preset={m.preset}, unit={m.drawing_unit}, "
