@@ -60,6 +60,17 @@ _SLICE_AXES = {
 }
 
 
+def _slice_key(view: str) -> str | None:
+    """Combo label ('XY slice') -> _SLICE_AXES key ('XY'), else None.
+
+    Regression guard: the combo items carry a ' slice' suffix, so comparing
+    the raw label against _SLICE_AXES never matched — slices silently drew
+    the cell-sizes plot and the plane slider/spinbox did nothing.
+    """
+    key = str(view).split(" ", 1)[0]
+    return key if key in _SLICE_AXES else None
+
+
 class ResponsiveCanvas(FigureCanvas):
     """FigureCanvas that tracks the Qt widget size (no tiny fixed figsize)."""
 
@@ -175,8 +186,14 @@ class MeshGeometryViewer(QWidget):
         self.spn_plane.setSuffix(" mm")
         self.spn_plane.setValue(0.0)
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 100)
-        self.slider.setValue(50)
+        # handlers map 0..1000 onto the domain (see _on_slider /
+        # _update_plane_range) — keep the same scale at creation
+        self.slider.setRange(0, 1000)
+        self.slider.setValue(500)
+        self.slider.setToolTip(
+            "Slice plane along the view normal — snaps to the nearest mesh line.\n"
+            "Enabled once a mesh is built (Build Mesh)."
+        )
         self.chk_mesh = QCheckBox("Show mesh grid")
         self.chk_mesh.setChecked(True)
         self.chk_geom = QCheckBox("Show geometry")
@@ -321,6 +338,7 @@ class MeshGeometryViewer(QWidget):
         try:
             self._recreate_canvases()
             self._refresh()
+            self._update_controls_enabled()
         except Exception as e:  # noqa: BLE001 — never crash the GUI on redraw
             print(f"mesh viewer set_csx refresh error: {e}")
 
@@ -363,6 +381,7 @@ class MeshGeometryViewer(QWidget):
         self._ports = []
         self._nf2ff = None
         self._info_text = ""
+        self._update_controls_enabled()
 
     @staticmethod
     def _safe_clear_fig(fig, canvas) -> None:
@@ -377,23 +396,28 @@ class MeshGeometryViewer(QWidget):
 
     # ------------------------------------------------------------- actions
     def _on_view_changed(self, _idx: int) -> None:
-        view = self.cmb_view.currentText()
-        if view in _SLICE_AXES:
-            self.spn_plane.setEnabled(True)
-            self.slider.setEnabled(True)
-        else:
-            self.spn_plane.setEnabled(False)
-            self.slider.setEnabled(False)
+        if _slice_key(self.cmb_view.currentText()) and self._csx is not None:
+            # recalibrate plane spinbox + slider for the NEW slice normal
+            # (stale calibration from the previous axis clamps/misplaces
+            # the slider values)
+            self._update_plane_range()
+        self._update_controls_enabled()
         self._redraw()
 
+    def _update_controls_enabled(self) -> None:
+        """Plane spinbox + slider: only meaningful with a CSX and a slice view."""
+        active = _slice_key(self.cmb_view.currentText()) is not None and self._csx is not None
+        self.spn_plane.setEnabled(active)
+        self.slider.setEnabled(active)
+
     def _on_plane_changed(self, value: float) -> None:
-        # keep slider roughly in sync (0..100 maps to plane range)
+        # keep slider roughly in sync (0..1000 maps to plane range)
         if self._csx is None:
             return
-        view = self.cmb_view.currentText()
-        if view not in _SLICE_AXES:
+        key = _slice_key(self.cmb_view.currentText())
+        if key is None:
             return
-        normal = _SLICE_AXES[view][2]
+        normal = _SLICE_AXES[key][2]
         area = get_sim_area(self._csx)
         if area is not None:
             lo, hi = area[0][_AXIS[normal]], area[1][_AXIS[normal]]
@@ -407,10 +431,10 @@ class MeshGeometryViewer(QWidget):
     def _on_slider(self, pos: int) -> None:
         if self._csx is None:
             return
-        view = self.cmb_view.currentText()
-        if view not in _SLICE_AXES:
+        key = _slice_key(self.cmb_view.currentText())
+        if key is None:
             return
-        normal = _SLICE_AXES[view][2]
+        normal = _SLICE_AXES[key][2]
         area = get_sim_area(self._csx)
         if area is None:
             return
@@ -505,10 +529,10 @@ class MeshGeometryViewer(QWidget):
         self._redraw()
 
     def _update_plane_range(self) -> None:
-        view = self.cmb_view.currentText()
-        if view not in _SLICE_AXES:
+        key = _slice_key(self.cmb_view.currentText())
+        if key is None:
             return
-        normal = _SLICE_AXES[view][2]
+        normal = _SLICE_AXES[key][2]
         area = get_sim_area(self._csx)
         if area is None:
             return
@@ -621,9 +645,10 @@ class MeshGeometryViewer(QWidget):
             return
         try:
             view = self.cmb_view.currentText()
-            if view in _SLICE_AXES:
+            key = _slice_key(view)
+            if key is not None:
                 self.plot_tabs.setCurrentIndex(0)
-                self._draw_slice(view)
+                self._draw_slice(key)
             elif view == "Overview":
                 self.plot_tabs.setCurrentIndex(0)
                 self._draw_overview()

@@ -134,6 +134,55 @@ def main() -> int:
             nf2ff=project.nf2ff,
         )
         viewer.set_csx(CSX)
+
+        # --- plane slider calibration (regression: init 0..100 vs handler
+        # scale 0..1000, 'XY slice' label vs 'XY' key mismatch, and view
+        # switches must recalibrate the range) ---
+        from app.ui.mesh_viewer import _AXIS, _SLICE_AXES
+
+        assert (viewer.slider.minimum(), viewer.slider.maximum()) == (0, 1000), (
+            viewer.slider.minimum(),
+            viewer.slider.maximum(),
+        )
+        assert viewer.slider.isEnabled(), "slider must enable after set_csx (slice view)"
+        assert viewer.spn_plane.isEnabled(), "plane spinbox must enable with the slider"
+        viewer.cmb_view.setCurrentText("XY slice")
+        assert viewer.plot_tabs.currentIndex() == 0, (
+            "'XY slice' must draw the slice plot (label/key mismatch regression)"
+        )
+        area0 = get_sim_area(CSX)
+        n0 = _SLICE_AXES["XY"][2]  # normal z
+        lo0, hi0 = float(area0[0][_AXIS[n0]]), float(area0[1][_AXIS[n0]])
+        viewer.slider.setValue(1000)  # full drag must reach the domain end
+        # (spn_plane stores 4 decimals — see setDecimals(4))
+        assert abs(viewer.spn_plane.value() - hi0) < 1e-3, (
+            viewer.spn_plane.value(),
+            hi0,
+        )
+        viewer.slider.setValue(0)
+        assert abs(viewer.spn_plane.value() - lo0) < 1e-3, (
+            viewer.spn_plane.value(),
+            lo0,
+        )
+        # switching the slice axis must recalibrate the plane spinbox range
+        viewer.cmb_view.setCurrentText("XZ slice")  # normal y
+        n1 = _SLICE_AXES["XZ"][2]
+        lo1, hi1 = float(area0[0][_AXIS[n1]]), float(area0[1][_AXIS[n1]])
+        assert abs(viewer.spn_plane.minimum() - lo1) < 1e-3, (
+            viewer.spn_plane.minimum(),
+            lo1,
+        )
+        assert abs(viewer.spn_plane.maximum() - hi1) < 1e-3, (
+            viewer.spn_plane.maximum(),
+            hi1,
+        )
+        # non-slice views disable both controls, slice views re-enable them
+        viewer.cmb_view.setCurrentText("Overview")
+        assert not viewer.slider.isEnabled() and not viewer.spn_plane.isEnabled()
+        viewer.cmb_view.setCurrentText("XY slice")
+        assert viewer.slider.isEnabled() and viewer.spn_plane.isEnabled()
+        print("  plane slider calibration: OK")
+
         for i in range(viewer.cmb_view.count()):
             name = viewer.cmb_view.currentText()
             viewer.cmb_view.setCurrentIndex(i)
@@ -166,6 +215,9 @@ def main() -> int:
         viewer.set_nf2ff(project.nf2ff)
         assert viewer._nf2ff is project.nf2ff
         empty = MeshGeometryViewer()
+        assert not empty.slider.isEnabled() and not empty.spn_plane.isEnabled(), (
+            "plane controls must start disabled without a CSX"
+        )
         empty.set_nf2ff(box)  # no CSX yet -> must not raise
         assert empty._nf2ff is box
         print("  nf2ff in-place update: OK")
