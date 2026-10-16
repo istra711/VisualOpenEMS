@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing pending.
+
+## [0.3.0] - 2026-10-16
+
+### Added
+
+- **FreeCAD analytic import mix** (`app/freecad_io/freecad_mesh.py`,
+  `app/ui/main_window.py`): CAD import (FCStd/STEP) now detects native openEMS
+  primitives per solid instead of tessellating everything to STL — axis-aligned
+  boxes → *box*, full cylinders (any axis) → *cylinder*, spheres → *sphere*,
+  extruded polygons/prisms (incl. 90°-rotated boxes) → *polygon*; only the
+  rest (cones, booleans, odd rotations) is tessellated. One entry per object
+  (prim OR stl, no duplicates), the same run-script/`ensure_simulation_meshes`
+  fallback maps analytic objects for old projects, and the detector is
+  shape-based so it also works on STEP-imported solids.
+- **Sphere and polygon primitive kinds end-to-end** (`app/ui/geometry_editors.py`,
+  `app/ui/main_window.py`, `app/simulation/script_gen.py`): new
+  *Geometry → Add Sphere… / Add Polygon…* dialogs and tree-edit routing;
+  run-script and Build-Mesh emit `AddSphere` / `AddPolygon` / `AddLinPoly`
+  (polygon `length` 0 = flat sheet, > 0 = extruded prism). Both kinds are
+  gated in cylindrical mode (dialog + run) like STL. The Mesh Viewer slice
+  rect works via the prim bbox `start`/`stop`.
+- **Tests**: `tests/freecad_analytic_smoke.py` (FCStd box/rotated
+  cylinder/sphere/triangular prism/cone/rotated box → detection, one prim per
+  object, no auto-assignments, material persistence, assignment precedence)
+  and `tests/sphere_polygon_smoke.py` (dialogs, mesh-only + short FDTD run
+  with `AddSphere`/`AddPolygon`/`AddLinPoly`, polar gates for both the GUI
+  and the run path).
+
+### Changed
+
+- **No auto-assignments on geometry import** (`app/ui/main_window.py`):
+  importing FreeCAD/STL geometry no longer creates copper assignment rows —
+  assignments come from presets or manual dialogs only. Materials live on the
+  primitives and now survive a re-import (existing assignment wins, else the
+  primitive's current material, else copper/10); the assignment→primitive
+  material sync applies to all primitive kinds, not just stl.
+
+### Fixed
+
+- **Mesh Viewer slice plane** (`app/ui/mesh_viewer.py`): the view combo labels
+  ("XY slice") never matched the `_SLICE_AXES` keys ("XY"), so slice views
+  silently drew the cell-sizes plot, *Show mesh grid* had no effect, and the
+  plane slider/spinbox did nothing (and stayed greyed). Added a `_slice_key()`
+  label→key mapping used by all comparisons; the slider scale now matches the
+  handlers (0..1000 from creation, was 0..100), the plane range recalibrates
+  when the slice axis changes, and both controls are disabled until a mesh is
+  built. The slider moves the slice plane and snaps to the nearest mesh line.
+- **Polygon primitive CSXCAD format** (`app/simulation/script_gen.py`,
+  `app/ui/main_window.py`): points were passed as a list of `[x, y]` pairs —
+  CSXCAD 0.6.x expects columnar `[xs, ys]` and raised `points must be a list
+  of length 2` at run time (the kind was never exercised before). Both the
+  run script and the GUI Build-Mesh path now convert correctly and support
+  extruded prisms via `AddLinPoly`.
+
+## [0.2.0] - 2026-10-15
+
 ### Added
 
 - **Cylindrical (polar) meshing** (`app/meshing/polar.py`, `app/meshing/easy_wrapper.py`,
@@ -32,18 +89,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coordinate system, supported primitives, degree-based phi editing,
   margins, the ports/NF2FF limits and when to prefer polar over cartesian;
   reachable from **Help → Cylindrical (polar) mesh…**.
-- **Tests**: `tests/cylindrical_spike.py` (Phase-0 proof: polar grid API,
-  closed PEC cavity at the analytic TM010 frequency, wedge/cylinder
-  coordinate semantics) and `tests/cylindrical_mesh_smoke.py` (end-to-end:
-  polar mesh + validation + NF2FF skip, STL gate, cartesian control, short
-  polar FDTD free-response run, port gate).
-
-### Fixed
-
-- **Polar port face alignment** (`app/meshing/polar.py`): port grid lines are
-  now quantized with the same `f32` rounding the run script uses for the
-  CSXCAD port box; previously the line missed the port by ~2.6e-8 and openEMS
-  reported "Unused primitive … port_excite".
 - **Antenna simulation mode** (`app/ui/sim_params.py`, `app/models/project.py`):
   new *Antenna simulation* group in the Simulation Parameters window
   (Ctrl+Shift+P) implementing the FDTD antenna checklist — mesh density
@@ -58,16 +103,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (cost, open boundaries, staircasing, narrowband vs. time domain) and a
   recommended workflow — reachable from **Help → Antenna Simulation (FDTD
   hints)…** and from the Simulation Parameters help.
-- **`tests/antenna_mode_smoke.py`**: checks help topic content, checkbox
-  behaviour (NF2FF on, air-margin lockout), preset/PML/air-margin values,
-  project JSON round trip and switch-off behaviour.
+- **Application icon**: `assets/logo.svg` → multi-size `assets/app_icon.ico`
+  (generated by `tools_svg_to_ico.py`) used as the EXE icon and the window
+  icon.
+- **Tests**: `tests/cylindrical_spike.py` (Phase-0 proof: polar grid API,
+  closed PEC cavity at the analytic TM010 frequency, wedge/cylinder
+  coordinate semantics), `tests/cylindrical_mesh_smoke.py` (end-to-end:
+  polar mesh + validation + NF2FF skip, STL gate, cartesian control, short
+  polar FDTD free-response run, port gate) and `tests/antenna_mode_smoke.py`
+  (help topic content, checkbox behaviour, preset/PML/air-margin values,
+  project JSON round trip, switch-off behaviour).
 
 ### Fixed
 
+- **Polar port face alignment** (`app/meshing/polar.py`): port grid lines are
+  now quantized with the same `f32` rounding the run script uses for the
+  CSXCAD port box; previously the line missed the port by ~2.6e-8 and openEMS
+  reported "Unused primitive … port_excite".
 - **`tests/sim_params_smoke.py`**: updated for the min-cell-size widget that
   moved to the Mesh Parameters window (dialog apply flow).
 
-## [0.1.0] — 2026-10-15
+## [0.1.0] - 2026-10-15
 
 First public pre-alpha release. Standalone Windows GUI (one-file, ~147 MB)
 bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
@@ -180,11 +236,7 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
   relative results (S-parameters, efficiency) are unaffected, but absolute
   voltage/current values are scaled.
 
----
-
-## [Unreleased]
-
-Nothing pending.
-
 [0.1.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.1.0
+[0.2.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.2.0
+[0.3.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.3.0
 [Unreleased]: https://github.com/istra711/VisualOpenEMS/commits/master
