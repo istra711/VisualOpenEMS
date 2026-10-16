@@ -38,8 +38,16 @@ def main() -> int:
         print(res.warnings)
         return 1
     assert res.objects, "no mesh objects"
-    assert all(o.npy_path and Path(o.npy_path).exists() for o in res.objects)
-    assert all(o.triangle_count > 0 for o in res.objects)
+    for o in res.objects:
+        if o.primitive:
+            # analytic shape — no tessellation needed (see _analytic_prim)
+            assert o.primitive.get("kind") in {"box", "cylinder", "sphere", "polygon"}, (
+                o.name,
+                o.primitive,
+            )
+            continue
+        assert o.npy_path and Path(o.npy_path).exists(), o.name
+        assert o.triangle_count > 0, o.name
 
     # Build project with only geometry_files (no primitives) → generate_run_script must tessellate
     p = Project.new_default("cad_import_smoke")
@@ -73,25 +81,41 @@ def main() -> int:
     work = ROOT / "work" / "freecad_mesh_smoke" / "proj"
     script = generate_run_script(p, work / "cad.fcsim.json", work, primitives=[])
     geom = json.loads((work / "geometry_primitives.json").read_text(encoding="utf-8"))
-    stl_prims = [g for g in geom if g.get("kind") == "stl"]
     print("script:", script)
+    print("geom prims:", [(g["name"], g.get("kind")) for g in geom])
+    # every imported object must be covered by a generated primitive —
+    # analytic (box/cylinder/sphere/polygon) or stl with a real mesh file
+    obj_names = {o.name for o in res.objects}
+    geom_names = {g["name"] for g in geom}
+    assert obj_names <= geom_names, f"missing prims: {obj_names - geom_names}"
+    stl_prims = [g for g in geom if g.get("kind") == "stl"]
+    analytic_prims = [g for g in geom if g.get("kind") != "stl"]
     print("stl prims:", len(stl_prims), [g["name"] for g in stl_prims])
-    assert stl_prims, "generate_run_script should create stl primitives from STEP"
+    print("analytic prims:", len(analytic_prims), [g["name"] for g in analytic_prims])
+    # the yagi elements are cylinders/boxes — detection must not duplicate
+    # them as tessellated STL meshes
+    assert analytic_prims, "expected analytic primitives from STEP detection"
     assert all(Path(g["path"]).exists() for g in stl_prims)
+    assert all(g.get("kind") in {"box", "cylinder", "sphere", "polygon"} for g in analytic_prims)
     script_text = script.read_text(encoding="utf-8")
     assert "ensure_simulation_meshes" in script_text
     assert "AddPolyhedron" in script_text or "add_triangle_mesh" in script_text
     assert "AddMesh" not in script_text or "no ContinuousStructure.AddMesh" in script_text
-    # live CSXCAD path without AddMesh
+    # live CSXCAD path without AddMesh (synthetic triangles — analytic prims
+    # have no npy to load)
     from CSXCAD import ContinuousStructure
     from app.csxcad_builder.triangle_mesh import add_triangle_mesh
 
     assert not hasattr(ContinuousStructure(), "AddMesh")
     csx = ContinuousStructure()
     prop = csx.AddMetal("m")
-    npy = stl_prims[0]["path"]
-    tris = np.load(npy)
-    prim = add_triangle_mesh(prop, name="t", triangles=tris, stl_path=stl_prims[0].get("stl_path"), priority=10)
+    tris = np.array(
+        [
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+            [[0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+        ]
+    )
+    prim = add_triangle_mesh(prop, name="t", triangles=tris, priority=10)
     assert prim is not None
     assert prop.GetQtyPrimitives() >= 1
 

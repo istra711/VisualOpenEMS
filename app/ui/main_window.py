@@ -645,6 +645,8 @@ class MainWindow(QMainWindow):
         gmenu = bar.addMenu("&Geometry")
         add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
         add_action(gmenu, "Add Cylinder…", slot=self._on_add_prim_cyl)
+        add_action(gmenu, "Add Sphere…", slot=self._on_add_prim_sphere)
+        add_action(gmenu, "Add Polygon…", slot=self._on_add_prim_polygon)
         gmenu.addSeparator()
         add_action(gmenu, "Add Assignment…", slot=self._on_add_assignment)
         add_action(gmenu, "Add Material…", slot=self._on_add_material)
@@ -1669,10 +1671,75 @@ class MainWindow(QMainWindow):
             object_names.append(name)
             bmin = m.bounds_min
             bmax = m.bounds_max
-            lines.append(
-                f"{name} [{m.format}] triangles={getattr(m, 'triangle_count', 0)} "
-                f"bounds={bmin}..{bmax}"
+            pd = getattr(m, "primitive", None)
+            if pd is not None:
+                lines.append(
+                    f"{name} [{m.format}] analytic={pd.get('kind', '?')} "
+                    f"bounds={bmin}..{bmax}"
+                )
+            else:
+                lines.append(
+                    f"{name} [{m.format}] triangles={getattr(m, 'triangle_count', 0)} "
+                    f"bounds={bmin}..{bmax}"
+                )
+
+            # Re-import: refresh a primitive that came from this same source
+            # file (legacy entries without source_file match on kind=stl).
+            dup = next(
+                (
+                    i
+                    for i, pr in enumerate(self.primitives)
+                    if pr.get("name") == name
+                    and (
+                        pr.get("source_file") == path
+                        or (not pr.get("source_file") and pr.get("kind") == "stl")
+                    )
+                ),
+                None,
             )
+            # Material/priority: existing assignment (preset/manual) wins, then
+            # the material already on a re-imported primitive (persists across
+            # re-imports), then the copper PEC default.
+            assign = next(
+                (a for a in self.project.assignments if a.object_name == name), None
+            )
+            if assign is not None and assign.role != "ignore":
+                mat = assign.material or (
+                    "copper" if assign.role in ("pec", "conducting_sheet") else ""
+                )
+                pri = int(assign.priority)
+            elif dup is not None:
+                mat = self.primitives[dup].get("material") or "copper"
+                pri = int(self.primitives[dup].get("priority", 10))
+            else:
+                mat, pri = "copper", 10
+
+            if pd is not None:
+                # Native openEMS primitive (box/cylinder/sphere/polygon) —
+                # exact geometry, no STL. No auto-assignment: assignments are
+                # created from presets or manually, so a re-import keeps the
+                # user's material choices instead of re-adding copper rows.
+                prim = {"kind": str(pd.get("kind") or ""), "name": name}
+                for key, val in pd.items():
+                    if key != "kind":
+                        prim[key] = val
+                # bbox start/stop for the viewer slice rect (sphere/polygon
+                # params themselves carry no bbox)
+                prim.setdefault("start", list(bmin) if bmin else [0, 0, 0])
+                prim.setdefault("stop", list(bmax) if bmax else [0, 0, 0])
+                prim["material"] = mat
+                prim["priority"] = pri
+                prim["source_format"] = getattr(m, "format", "") or fmt
+                prim["source_file"] = path
+                if dup is None:
+                    self.primitives.append(prim)
+                else:
+                    # re-import: replace in place (an old stl prim of this
+                    # object gets upgraded to the analytic primitive)
+                    self.primitives[dup] = prim
+                    lines.append(f"updated existing mesh primitive: {name}")
+                continue
+
             mesh_path = ""
             npy = getattr(m, "npy_path", "") or ""
             if npy and Path(npy).exists():
@@ -1701,19 +1768,6 @@ class MainWindow(QMainWindow):
                     stl_candidate = obj_dir / f"{name}.stl"
                     if stl_candidate.exists():
                         stl_out = str(stl_candidate)
-                # Material/priority come from an existing assignment (Yagi preset:
-                # boom -> GFRP dielectric; a copper boom would short the feed gap).
-                assign = next(
-                    (a for a in self.project.assignments if a.object_name == name), None
-                )
-                if assign is not None and assign.role != "ignore":
-                    mat = assign.material or (
-                        "copper" if assign.role in ("pec", "conducting_sheet") else ""
-                    )
-                    pri = int(assign.priority)
-                else:
-                    mat, pri = "copper", 10
-                # Default material: copper PEC (user can change via Assignment)
                 prim = {
                     "kind": "stl",
                     "name": name,
@@ -1727,30 +1781,12 @@ class MainWindow(QMainWindow):
                     "source_format": getattr(m, "format", "") or fmt,
                     "source_file": path,
                 }
-                dup = next(
-                    (
-                        i
-                        for i, pr in enumerate(self.primitives)
-                        if pr.get("kind") == "stl" and pr.get("name") == name
-                    ),
-                    None,
-                )
                 if dup is None:
                     self.primitives.append(prim)
                 else:
                     # re-import: refresh mesh in place
                     self.primitives[dup] = {**self.primitives[dup], **prim}
                     lines.append(f"updated existing mesh primitive: {name}")
-                if name not in [a.object_name for a in self.project.assignments]:
-                    self.project.assignments.append(
-                        GeomAssignment(
-                            object_name=name,
-                            role="pec",
-                            material="copper",
-                            priority=10,
-                            notes=f"imported from {Path(path).name}",
-                        )
-                    )
             else:
                 warnings.append(f"No simulation mesh for {name} (no triangles)")
 
@@ -1844,7 +1880,7 @@ class MainWindow(QMainWindow):
         self._refresh_tree()
 
     def _sync_assignment_materials_to_primitives(self) -> None:
-        """Keep stl primitive materials in sync with Geometry assignment dialogs."""
+        """Keep primitive materials in sync with Geometry assignment dialogs."""
         for a in self.project.assignments:
             if a.role == "ignore":
                 continue
@@ -1852,7 +1888,7 @@ class MainWindow(QMainWindow):
             if not mat:
                 mat = "copper" if a.role == "pec" else a.role
             for pr in self.primitives:
-                if pr.get("name") == a.object_name and pr.get("kind") == "stl":
+                if pr.get("name") == a.object_name:
                     pr["material"] = mat
                     pr["priority"] = int(a.priority)
 
@@ -2065,6 +2101,56 @@ class MainWindow(QMainWindow):
             self._log(
                 f"Cylinder primitive: {pr['name']} r={pr['radius']} "
                 f"{pr['start']}→{pr['stop']}"
+            )
+            self._refresh_tree()
+
+    def _polar_prim_blocked(self, kind: str) -> bool:
+        """Cylindrical mesh: refuse primitives that only exist on a cartesian grid.
+
+        openEMS primitives other than box/cylinder (and STL meshes) cannot be
+        placed on a polar grid — csxcad_builder.meshing.polar rejects them at
+        run time; block the dialogs early with a clear message instead.
+        """
+        if self.project.mesh.coord_system == "cylindrical" and kind not in {
+            "box",
+            "cylinder",
+        }:
+            self._log(
+                f"'{kind}' primitives are not supported in cylindrical mode. "
+                "Switch Mesh Parameters -> Coordinate system to cartesian."
+            )
+            return True
+        return False
+
+    def _on_add_prim_sphere(self) -> None:
+        from app.ui.geometry_editors import PrimitiveSphereDialog
+
+        if self._polar_prim_blocked("sphere"):
+            return
+        dlg = PrimitiveSphereDialog(self, coord_system=self.project.mesh.coord_system)
+        if dlg.exec() and dlg.result:
+            pr = dlg.result
+            self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
+            self.primitives.append(pr)
+            self._log(
+                f"Sphere primitive: {pr['name']} r={pr['radius']} center={pr['center']}"
+            )
+            self._refresh_tree()
+
+    def _on_add_prim_polygon(self) -> None:
+        from app.ui.geometry_editors import PrimitivePolygonDialog
+
+        if self._polar_prim_blocked("polygon"):
+            return
+        dlg = PrimitivePolygonDialog(self, coord_system=self.project.mesh.coord_system)
+        if dlg.exec() and dlg.result:
+            pr = dlg.result
+            self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
+            self.primitives.append(pr)
+            self._log(
+                f"Polygon primitive: {pr['name']} axis={pr['axis']} "
+                f"coord={pr['coord']} length={pr['length']} "
+                f"({len(pr['points'])} points)"
             )
             self._refresh_tree()
 
@@ -2483,20 +2569,25 @@ class MainWindow(QMainWindow):
                 return
             pr = self.primitives[idx]
             ptype = str(pr.get("kind", "box"))
-            if ptype in {"box", "cylinder"}:
+            if ptype in {"box", "cylinder", "sphere", "polygon"}:
+                if ptype in {"sphere", "polygon"} and self._polar_prim_blocked(ptype):
+                    return
                 from app.ui.geometry_editors import (
                     PrimitiveBoxDialog,
                     PrimitiveCylinderDialog,
+                    PrimitivePolygonDialog,
+                    PrimitiveSphereDialog,
                 )
 
-                if ptype == "box":
-                    dlg = PrimitiveBoxDialog(
-                        self, prim=pr, coord_system=self.project.mesh.coord_system
-                    )
-                else:
-                    dlg = PrimitiveCylinderDialog(
-                        self, prim=pr, coord_system=self.project.mesh.coord_system
-                    )
+                dialog_cls = {
+                    "box": PrimitiveBoxDialog,
+                    "cylinder": PrimitiveCylinderDialog,
+                    "sphere": PrimitiveSphereDialog,
+                    "polygon": PrimitivePolygonDialog,
+                }[ptype]
+                dlg = dialog_cls(
+                    self, prim=pr, coord_system=self.project.mesh.coord_system
+                )
                 if dlg.exec() and dlg.result:
                     old_name = pr.get("name")
                     self.primitives[idx] = dlg.result
@@ -2809,12 +2900,33 @@ class MainWindow(QMainWindow):
                     priority=pri,
                 )
             elif kind == "polygon":
-                prop.AddPolygon(
-                    [[_f32(v) for v in pt] for pt in pr["points"]],
-                    pr.get("axis", "z"),
-                    _f32(pr.get("coord", 0)),
-                    priority=pri,
-                )
+                pts = pr.get("points") or []
+                if len(pts) < 3:
+                    raise ValueError(f"Polygon primitive '{name}' needs >= 3 points")
+                # CSXCAD expects columnar [xs, ys], NOT a list of [x, y] pairs
+                xs = [_f32(pt[0]) for pt in pts]
+                ys = [_f32(pt[1]) for pt in pts]
+                length = float(pr.get("length") or 0.0)
+                if length > 0:
+                    prop.AddLinPoly(
+                        [xs, ys],
+                        pr.get("axis", "z"),
+                        _f32(pr.get("coord", 0)),
+                        _f32(length),
+                        priority=pri,
+                    )
+                else:
+                    prop.AddPolygon(
+                        [xs, ys],
+                        pr.get("axis", "z"),
+                        _f32(pr.get("coord", 0)),
+                        priority=pri,
+                    )
+            elif kind == "sphere":
+                center = [_f32(x) for x in pr.get("center", [])]
+                if len(center) != 3:
+                    raise ValueError(f"Sphere primitive '{name}' needs a 3D center")
+                prop.AddSphere(center, float(pr.get("radius", 0.5)), priority=pri)
             elif kind == "stl":
                 from app.csxcad_builder.triangle_mesh import add_triangle_mesh
 

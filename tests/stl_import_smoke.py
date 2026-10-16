@@ -182,8 +182,13 @@ def main() -> int:
         if [g.path for g in win.project.geometry_files] != [str(manifest)]:
             print("FAIL: geometry_files", [g.path for g in win.project.geometry_files])
             ok = False
-        if [a.object_name for a in win.project.assignments] != ["boom", "reflector"]:
-            print("FAIL: assignments", [a.object_name for a in win.project.assignments])
+        # import must NOT create auto assignments — assignments come from
+        # presets or manual dialogs only (material otherwise lives on the prim)
+        if [a.object_name for a in win.project.assignments] != []:
+            print(
+                "FAIL: import created auto assignments:",
+                [a.object_name for a in win.project.assignments],
+            )
             ok = False
         if not all(
             Path(pr.get("path", "")).exists()

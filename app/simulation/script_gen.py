@@ -85,7 +85,21 @@ def generate_run_script(
                 if fmt in {"step", "stp", "fcstd"}:
                     print(f"generate_run_script: tessellating {src}")
                     res = tessellate_cad_to_meshes(src, freecad_cmd, mesh_dir)
+                    from app.freecad_io.freecad_mesh import analytic_prim_dict
+
+                    have = {p.get("name") for p in prims}
                     for obj in res.objects:
+                        if obj.name in have:
+                            continue
+                        if obj.primitive:
+                            # analytic shape (box/cylinder/sphere/polygon) —
+                            # no STL needed
+                            prims.append(
+                                analytic_prim_dict(
+                                    obj, project.assignments, fmt, str(src)
+                                )
+                            )
+                            continue
                         npy = obj.npy_path or ""
                         if not npy or not Path(npy).exists():
                             continue
@@ -211,19 +225,30 @@ def ensure_simulation_meshes(project: Project, work_dir: Path, prims: list) -> l
         fmt = (gf.format or src.suffix.lower().lstrip(".")).lower()
         if fmt in {"step", "stp", "fcstd"}:
             try:
-                from app.freecad_io.freecad_mesh import tessellate_cad_to_meshes
+                from app.freecad_io.freecad_mesh import analytic_prim_dict, tessellate_cad_to_meshes
 
                 print(f"Tessellating FreeCAD CAD for simulation: {src}")
                 res = tessellate_cad_to_meshes(src, freecad_cmd, mesh_dir)
                 for w in res.warnings:
                     print("WARNING:", w)
                 for obj in res.objects:
+                    if obj.name in existing:
+                        print(f"  primitive already present: {obj.name}")
+                        continue
+                    if obj.primitive:
+                        # analytic shape (box/cylinder/sphere/polygon) — no STL
+                        existing.add(obj.name)
+                        prims.append(
+                            analytic_prim_dict(obj, project.assignments, fmt, str(src))
+                        )
+                        print(
+                            f"  analytic primitive: {obj.name} "
+                            f"({obj.primitive.get('kind')})"
+                        )
+                        continue
                     npy = obj.npy_path or ""
                     if not npy or not Path(npy).exists():
                         print(f"WARNING: no mesh for {obj.name}")
-                        continue
-                    if obj.name in existing:
-                        print(f"  mesh primitive already present: {obj.name}")
                         continue
                     existing.add(obj.name)
                     # material from assignment if present
@@ -487,9 +512,23 @@ def main() -> int:
         elif kind == "polygon":
             axis = pr.get("axis", "z")
             coord = f32(pr.get("coord", 0.0))
-            prop.AddPolygon(
-                [[f32(v) for v in pt] for pt in pr["points"]], axis, coord, priority=pri
-            )
+            pts = pr.get("points") or []
+            if len(pts) < 3:
+                raise ValueError(f"Polygon primitive '{name}' needs >= 3 points")
+            # CSXCAD expects columnar [xs, ys], NOT a list of [x, y] pairs
+            xs = [f32(pt[0]) for pt in pts]
+            ys = [f32(pt[1]) for pt in pts]
+            length = float(pr.get("length") or 0.0)
+            if length > 0:
+                # extruded solid prism (thickness = length)
+                prop.AddLinPoly([xs, ys], axis, coord, f32(length), priority=pri)
+            else:
+                prop.AddPolygon([xs, ys], axis, coord, priority=pri)
+        elif kind == "sphere":
+            center = [f32(x) for x in pr.get("center", [])]
+            if len(center) != 3:
+                raise ValueError(f"Sphere primitive '{name}' needs a 3D center")
+            prop.AddSphere(center, float(pr.get("radius", 0.5)), priority=pri)
         elif kind == "cylinder":
             prop.AddCylinder(
                 [f32(x) for x in pr["start"]],

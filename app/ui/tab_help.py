@@ -27,7 +27,8 @@ TAB_HELP: dict[str, str] = {
 
 Left panel (always visible)
   • Project / Geometry list — primitives, materials, ports, dumps, assignments.
-  • Add Box / Cylinder Primitive — openEMS primitives in mm (project units).
+  • Add Box / Cylinder / Sphere / Polygon Primitive — openEMS primitives in
+    mm (project units). Polygon/sphere need the cartesian coordinate system.
   • Add Assignment — bind FreeCAD mesh names to materials / boundary roles.
   • Add Material — PEC, dielectric, conducting sheet, lumped RLC, or ignore.
   • Add Port — lumped / MSL / waveguide port (also in the Ports / Dumps window).

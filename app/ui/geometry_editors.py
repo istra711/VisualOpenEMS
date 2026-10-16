@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from PySide6.QtWidgets import (
@@ -13,6 +14,8 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -372,6 +375,212 @@ class PrimitiveCylinderDialog(QDialog):
             "start": _vec3_read(self.spn_start, self._coord_system),
             "stop": _vec3_read(self.spn_stop, self._coord_system),
             "radius": float(self.spn_radius.value()),
+        }
+        for k, v in (self._keep_extra or {}).items():
+            if k not in prim:
+                prim[k] = v
+        self.result = prim
+        self.accept()
+
+
+class PrimitiveSphereDialog(QDialog):
+    """Add/edit a sphere primitive (exact openEMS AddSphere)."""
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        prim: dict[str, Any] | None = None,
+        coord_system: str = "cartesian",
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Sphere primitive")
+        self.resize(380, 340)
+        self._coord_system = coord_system
+        p = prim or {
+            "name": "sphere1",
+            "material": "copper",
+            "center": [0, 0, 0],
+            "radius": 5.0,
+        }
+        self._keep_extra = dict(p) if prim else {}
+        self.result: dict[str, Any] | None = None
+        form = QFormLayout(self)
+        self.ed_name = QLineEdit(str(p.get("name", "sphere1")))
+        self.cmb_mat = QComboBox()
+        self.cmb_mat.setEditable(True)
+        self.cmb_mat.addItems(["copper", "substrate", "vacuum"])
+        self.cmb_mat.setCurrentText(str(p.get("material", "copper")))
+        self.spn_pri = QSpinBox()
+        self.spn_pri.setRange(0, 200)
+        self.spn_pri.setValue(int(p.get("priority", 10)))
+        self.spn_radius = QDoubleSpinBox()
+        self.spn_radius.setRange(1e-4, 1e3)
+        self.spn_radius.setDecimals(4)
+        self.spn_radius.setValue(float(p.get("radius", 5.0)))
+        form.addRow("Name", self.ed_name)
+        form.addRow("Material", self.cmb_mat)
+        form.addRow("Priority", self.spn_pri)
+        form.addRow("Radius", self.spn_radius)
+        self.spn_center = _vec3_row(
+            form, "Center", list(p.get("center", [0, 0, 0])), coord_system=coord_system
+        )
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        form.addRow(bb)
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+
+    def _accept(self) -> None:
+        center = _vec3_read(self.spn_center, self._coord_system)
+        radius = float(self.spn_radius.value())
+        prim: dict[str, Any] = {
+            "kind": "sphere",
+            "name": self.ed_name.text().strip() or "sphere1",
+            "material": self.cmb_mat.currentText().strip() or "copper",
+            "priority": self.spn_pri.value(),
+            "center": center,
+            "radius": radius,
+            # bbox (used by the viewer slice rect)
+            "start": [center[0] - radius, center[1] - radius, center[2] - radius],
+            "stop": [center[0] + radius, center[1] + radius, center[2] + radius],
+        }
+        for k, v in (self._keep_extra or {}).items():
+            if k not in prim:
+                prim[k] = v
+        self.result = prim
+        self.accept()
+
+
+class PrimitivePolygonDialog(QDialog):
+    """Add/edit a polygon primitive (flat sheet or extruded prism).
+
+    Points are given in the plane perpendicular to the axis: axis z ->
+    (x, y), axis x -> (y, z), axis y -> (z, x) — the same cyclic mapping
+    CSXCAD uses for AddPolygon/AddLinPoly.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        prim: dict[str, Any] | None = None,
+        coord_system: str = "cartesian",
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Polygon primitive")
+        self.resize(420, 460)
+        self._coord_system = coord_system
+        p = prim or {
+            "name": "poly1",
+            "material": "copper",
+            "axis": "z",
+            "coord": 0.0,
+            "length": 0.0,
+            "points": [[0, 0], [20, 0], [20, 10], [0, 10]],
+        }
+        self._keep_extra = dict(p) if prim else {}
+        self.result: dict[str, Any] | None = None
+        form = QFormLayout(self)
+        self.ed_name = QLineEdit(str(p.get("name", "poly1")))
+        self.cmb_mat = QComboBox()
+        self.cmb_mat.setEditable(True)
+        self.cmb_mat.addItems(["copper", "substrate", "vacuum"])
+        self.cmb_mat.setCurrentText(str(p.get("material", "copper")))
+        self.spn_pri = QSpinBox()
+        self.spn_pri.setRange(0, 200)
+        self.spn_pri.setValue(int(p.get("priority", 10)))
+        self.cmb_axis = QComboBox()
+        self.cmb_axis.addItems(["x", "y", "z"])
+        self.cmb_axis.setCurrentText(str(p.get("axis", "z")))
+        self.spn_coord = QDoubleSpinBox()
+        self.spn_coord.setRange(-1e4, 1e4)
+        self.spn_coord.setDecimals(4)
+        self.spn_coord.setValue(float(p.get("coord", 0.0)))
+        self.spn_length = QDoubleSpinBox()
+        self.spn_length.setRange(0.0, 1e4)
+        self.spn_length.setDecimals(4)
+        self.spn_length.setValue(float(p.get("length") or 0.0))
+        self.spn_length.setToolTip(
+            "0 = flat surface (AddPolygon); > 0 = extruded solid prism\n"
+            "(AddLinPoly) with this thickness along the axis."
+        )
+        form.addRow("Name", self.ed_name)
+        form.addRow("Material", self.cmb_mat)
+        form.addRow("Priority", self.spn_pri)
+        form.addRow("Axis (normal)", self.cmb_axis)
+        form.addRow("Coordinate (plane)", self.spn_coord)
+        form.addRow("Length (0 = sheet)", self.spn_length)
+        self.ed_points = QPlainTextEdit()
+        pts = p.get("points") or []
+        self.ed_points.setPlainText(
+            "\n".join(
+                f"{float(pt[0]):g}, {float(pt[1]):g}"
+                for pt in pts
+                if len(pt) >= 2
+            )
+        )
+        self.ed_points.setPlaceholderText("x, y  (one point per line, >= 3 points)")
+        form.addRow("Points", self.ed_points)
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        form.addRow(bb)
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+
+    @staticmethod
+    def _parse_points(text: str) -> list[list[float]]:
+        pts: list[list[float]] = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [s for s in re.split(r"[,;\s]+", line) if s]
+            if len(parts) < 2:
+                continue
+            try:
+                pts.append([float(parts[0]), float(parts[1])])
+            except ValueError:
+                continue
+        return pts
+
+    def _accept(self) -> None:
+        pts = self._parse_points(self.ed_points.toPlainText())
+        if len(pts) < 3:
+            QMessageBox.warning(
+                self,
+                "Polygon primitive",
+                "A polygon needs at least 3 points (one \"x, y\" per line).",
+            )
+            return
+        axis = self.cmb_axis.currentText()
+        axis_idx = "xyz".index(axis) if axis in "xyz" else 2
+        coord = float(self.spn_coord.value())
+        length = max(0.0, float(self.spn_length.value()))
+        # bbox for the viewer slice rect (cyclic point mapping, see class doc)
+        c0 = (axis_idx + 1) % 3
+        c1 = (axis_idx + 2) % 3
+        xs = [pt[0] for pt in pts]
+        ys = [pt[1] for pt in pts]
+        start = [0.0, 0.0, 0.0]
+        stop = [0.0, 0.0, 0.0]
+        start[axis_idx] = coord
+        stop[axis_idx] = coord + length
+        start[c0] = min(xs)
+        stop[c0] = max(xs)
+        start[c1] = min(ys)
+        stop[c1] = max(ys)
+        prim: dict[str, Any] = {
+            "kind": "polygon",
+            "name": self.ed_name.text().strip() or "poly1",
+            "material": self.cmb_mat.currentText().strip() or "copper",
+            "priority": self.spn_pri.value(),
+            "axis": axis,
+            "coord": coord,
+            "length": length,
+            "points": pts,
+            "start": start,
+            "stop": stop,
         }
         for k, v in (self._keep_extra or {}).items():
             if k not in prim:
