@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Antenna simulation mode now OVERRIDES the mesh resolution at f_max**
+  (`app/models/project.py:Project.effective_mesh`, `SimSpec.antenna_cells_per_wavelength`,
+  `app/ui/sim_params.py`, `app/meshing/build_task.py`, `app/simulation/script_gen.py`):
+  while the mode is on, the density chosen in the antenna group (low/medium/high/
+  very_high/**extreme** = 10/15/20/25/40 cells per λ) is enforced with the reference
+  wavelength taken at **f_max** (highest band frequency) instead of the design
+  frequency. easyMesh derives its air cell size from `target_frequency`
+  (`easyMesh/meshingUtils.py`), so the old setup sized the grid at 2.45 GHz and
+  under-resolved the top of a 1.95–2.95 GHz band. `effective_mesh()` returns a
+  meshing copy (`self.mesh` untouched) that points `target_frequency` at f_max and
+  caps `max_cellsize`/`refined_cellsize` at `wavelength(f_max)/density` (a finer
+  per-feature refinement is never coarsened). Both the GUI preview and the
+  generated run script use it. `app/meshing/rules.py` preset factors now match
+  easyMesh's own mapping (medium 15, high 20). For the 26 mm dipole
+  (`Dipol_CST_openems_Test_cyl_z_V3`) the max z-cell drops 4.19 → 3.52 mm
+  (very_high) and "extreme" reaches ~2.5 mm. Cross-checked against CST
+  (`CST/Test_dipole_openems_cst_cyl_2mm_dp`): the CST STL is identical to our
+  model (arms z = ±1…±27, Ø 2 mm); at the `.s1p` R 50 reference CST dips at
+  2.358 GHz / −18.7 dB vs our 2.320 GHz / −20.1 dB (mean Δ −0.03 dB, RMS 1.31 dB
+  over 1.9–2.9 GHz). Tests in `tests/antenna_mode_smoke.py`.
+
+- **Antenna simulation mode: configurable NF2FF box distance**
+  (`app/models/project.py` `SimSpec.antenna_nf2ff_lambda`, `app/ui/sim_params.py`,
+  `app/meshing/bounds.py`): the far-field integration box only needs to be large
+  for antennas, not for PCB-style runs, so the "Antenna simulation" group now
+  has an **NF2FF box** spin (distance in λ at f_start). While antenna mode is on,
+  *Fit NF2FF to Geometry* places the box at `antenna_nf2ff_lambda × λ(f_start)`
+  (λ at the **lowest** band frequency → far field across the whole band), clamped
+  to 0.8× the domain air margin so it stays inside the PML. PCB / non-antenna
+  runs keep the small `0.7·λ(f_stop)/4` box. Pure helper
+  `app.meshing.bounds.nf2ff_fit_margin_units` (+ `domain_air_margin_units`),
+  tests in `tests/test_nf2ff_fit_margin.py`; help + antenna tooltip updated. For
+  the 58 mm dipole (f 1.95–2.95 GHz, PML 0.5 λ) the box grows from 17.8 mm to
+  61.5 mm (≈ λ/2 at f_start) at the default 0.5.
+
+- **Antenna viewer pop-out: frequency is selectable there too**
+  (`app/ui/antenna_viewer.py`): the standalone graph window mirrored only the
+  plot-type and cmap combos, so the evaluation frequency could not be changed
+  while the graph was popped out. The window's top row now also carries a
+  *Freq* combo that mirrors the tab combo both ways (selection in the pop-out
+  updates the tab and redraws; reloading a file re-syncs the list). Regression
+  check in `tests/antenna_viewer_smoke.py`.
+
+### Fixed
+
+- **NF2FF far-field box was asymmetric in z → tilted ("egg") antenna pattern**
+  (`app/ui/main_window.py:_on_fit_nf2ff`, new `app.meshing.bounds.nf2ff_fit_box`):
+  *Fit NF2FF to Geometry* applied the full margin on ±x/±y but squeezed z to
+  `0.3×`/`0.5×` of it, so the integration surface sat only ~0.15 λ from the
+  source on the near z face and at a different distance on every face. Even for a
+  symmetric z-directed dipole that produced a **tilted** pattern — Dmax 3.46 dBi
+  at θ=108° with D(0°)=−71 dB vs D(180°)=−83 dB (12 dB mis-match) instead of a
+  rotationally-symmetric donut. The fit now places an **equal** margin on all six
+  faces (symmetric about the source), which restores Dmax 2.07 dBi at θ=90°,
+  D(0°)≈D(180°) (−123 dB, 0.5 dB), φ-spread 0.03 dB and efficiency 0.99. Unit
+  tests in `tests/test_nf2ff_fit_margin.py`.
+
+- **S11 was always 50 Ω-referenced, ignoring the port resistance**
+  (`app/postproc/sparams.py`, `app/simulation/script_gen.py`): the lumped port's
+  `resistance` was passed to `AddLumpedPort` but `CalcPort` was always called
+  with `ref_impedance=50`, so a run with a 73 Ω port still produced a 50 Ω
+  S11 (and a `.s1p` labelled `z0=50`). `compute_sparams_from_ports` now defaults
+  to `ref_impedance=None` — openEMS then uses each port's own R — and
+  `export_sparams`/`write_touchstone` record the port resistance in the header.
+  For the dipole a 73 Ω port now yields |S11|min −23.3 dB @ 2.375 GHz instead of
+  −19.8 dB @ 2.335 GHz (port 50 Ω projects are unchanged). Tests in
+  `tests/test_sparam_ref_impedance.py`.
+
+- **Run aborted with `cell_too_large` after easyMesh stretched the PML cells**
+  (`app/meshing/easy_wrapper.py` `cap_max_cell_size`): easyMesh sizes the air
+  cells from `target_frequency` (e.g. 2.45 GHz → λ/15 = 8.16 mm at the *medium*
+  preset) and then expands the PML region (PML_8) by ~1.27×, so the
+  absorbing-region cells came out at ~10.32 mm — 1.6 % over the openEMS hard
+  limit λ(f_max)/10 = 10.16 mm (f_max = 2.95 GHz). The mesh validator flags that
+  as an error, so `project_run.py` aborted with exit code 2 before FDTD. The
+  cartesian mesher now runs `SmoothMeshLines(axis, λ(f_max)/10, max_grading)`
+  after easyMesh (and the metal-interface refinement), splitting any oversized
+  cell — including in the PML — so the validator passes without changing the
+  preset's characteristic cellsize. Pure check in `tests/test_cap_max_cell.py`.
+
+- **NF2FF "Fit to geometry" ignored cylinder radii (and spheres/polygons)**
+  (`app/ui/main_window.py:_on_fit_nf2ff`, new `app/meshing/bounds.py`): the
+  cartesian geometry envelope was built by reading each primitive's `start`/
+  `stop` only. For a cylinder those are the **axis** endpoints, so the radius
+  never entered the two perpendicular axes — a 58 mm dipole of radius 1 mm fit
+  a box of zero transverse width, leaving the NF2FF integration surface only
+  ~17.8 mm (~0.15 λ) from the wire, inside the reactive near field. Spheres and
+  polygons were skipped entirely. New pure helper
+  `app.meshing.bounds.cartesian_primitive_bbox` derives the true AABB (cylinder
+  axis ± radius on the perpendicular axes, sphere from centre/radius, polygons
+  from their stored bbox), mirroring the existing cylindrical
+  `polar_primitive_bbox`. Unit tests in `tests/test_primitive_bounds.py`.
+  (Antenna-mode runs now also size the box via the configurable
+  `antenna_nf2ff_lambda` — see Added.)
+
+- **Antenna viewer: *Gain / Directivity vs frequency* axes and legend**
+  (`app/ui/antenna_viewer.py`): the plot crammed Prad (`W*s^2`, pulse
+  spectrum ≈ 1e-27) and the unitless efficiency η onto one right axis fixed to
+  `0..1.05`, so Prad was flattened invisibly onto 0 while the axis was
+  mislabeled "Prad [W]"; and the legend was built before the twin axis was
+  filled, so the η and Prad curves had no entry. Prad now gets its own right
+  axis (own scale + `W*s^2` label), η keeps the `0..1` axis (`eta = Prad / Pin`),
+  and the combined legend lists all four series. Regression checks in
+  `tests/antenna_viewer_smoke.py`.
+
+- **Antenna viewer: analysis menu (right-click) now opens on every plot**
+  (`app/ui/antenna_viewer.py`): the `_on_click` right-click branch was gated by
+  `_polar_active`, so the menu (r min/max/step, label offset, HPBW, VRV, Clear
+  markers, Pop out graph) only appeared on the three polar cuts and did nothing
+  on the **3D pattern** / gain- / efficiency-vs-frequency plots. It now opens on
+  any antenna plot; the polar-only controls are greyed out on the non-polar
+  plots (title "Antenna analysis" vs "Polar analysis"). Tooltip + Antenna help
+  updated. Regression checks in `tests/antenna_viewer_smoke.py`.
+
 ## [0.4.0] - 2026-10-17
 
 ### Added
