@@ -63,7 +63,11 @@ def build_mesh_and_validate(
     work_dir = Path(work_dir)
     lines: list[str] = []
 
-    _cs = 1 if project.mesh.is_cylindrical else 0
+    # Mesh spec with the antenna-mode overrides applied (no-op when the mode is
+    # off). The excitation centre frequency still comes from the project's
+    # design frequency, NOT from the meshing reference f_max.
+    mesh = project.effective_mesh()
+    _cs = 1 if mesh.is_cylindrical else 0
     FDTD = openEMS(NrTS=1000, EndCriteria=1e-3, CoordSystem=_cs)
     f0 = project.mesh.target_frequency or 2.45e9
     fc = 0.5 * abs(project.mesh.stop_frequency - project.mesh.start_frequency) or 1e6
@@ -73,9 +77,9 @@ def build_mesh_and_validate(
     primitives_mesh_setup: dict = {}
     CSX = enhance_csx(CSX, primitives_mesh_setup)
     FDTD = enhance_fdtd(FDTD, primitives_mesh_setup)
-    targets = compute_targets(project.mesh, eps_max=1.0)
-    apply_boundary(FDTD, project.boundary, project.mesh, targets)
-    CSX.GetGrid().SetDeltaUnit(project.mesh.unit_to_meters())
+    targets = compute_targets(mesh, eps_max=1.0)
+    apply_boundary(FDTD, project.boundary, mesh, targets)
+    CSX.GetGrid().SetDeltaUnit(mesh.unit_to_meters())
 
     mat_by_name = {m.name: m for m in project.materials}
     props: dict = {}
@@ -114,7 +118,7 @@ def build_mesh_and_validate(
     for pr in primitives:
         kind = pr.get("kind", "box")
         name = str(pr.get("name", "prim"))
-        if project.mesh.is_cylindrical:
+        if mesh.is_cylindrical:
             from app.meshing.polar import ensure_polar_primitive
 
             ensure_polar_primitive(kind, name)
@@ -239,7 +243,7 @@ def build_mesh_and_validate(
         warnings.simplefilter("ignore", category=RuntimeWarning)
         setup = generate_mesh(
             CSX,
-            project.mesh,
+            mesh,
             project.boundary,
             targets,
             primitives_mesh_setup=primitives_mesh_setup,
@@ -270,8 +274,8 @@ def build_mesh_and_validate(
         CSX,
         targets,
         ports=project.ports,
-        max_grading=project.mesh.max_grading_ratio,
-        coord_system=project.mesh.coord_system,
+        max_grading=mesh.max_grading_ratio,
+        coord_system=mesh.coord_system,
     )
     lines.extend(report_to_lines(report))
     lines.append("")

@@ -20,6 +20,25 @@ def enhance_fdtd(FDTD, primitives_mesh_setup: dict | None = None):
     return enhance_FDTD_for_auto_mesh(FDTD, primitives_mesh_setup if primitives_mesh_setup is not None else {})
 
 
+def cap_max_cell_size(CSX, mesh: MeshSpec, targets: MeshTargets) -> None:
+    """Guarantee no grid cell exceeds the openEMS hard limit (lambda_air/10).
+
+    easyMesh sizes the AIR cells from ``target_frequency`` and then expands the
+    PML region (``PML_8``) by ~1.27x, which can push the absorbing-region cells
+    just past ``lambda(f_max)/10``; the mesh validator then aborts the whole run.
+    Splitting the oversized cells (``SmoothMeshLines``) keeps the mesh valid
+    without touching the preset's characteristic air cellsize.
+    """
+    grid = CSX.GetGrid()
+    max_cell = float(targets.max_cell_units)
+    ratio = float(getattr(mesh, "max_grading_ratio", 2.0) or 2.0)
+    for axis in "xyz":
+        try:
+            grid.SmoothMeshLines(axis, max_cell, ratio)
+        except Exception as e:  # noqa: BLE001 — never fail a run on the cap
+            print(f"  max-cell cap ({max_cell:.4g}) skipped on {axis}: {e}")
+
+
 def apply_boundary(FDTD, boundary: BoundarySpec, mesh: MeshSpec, targets: MeshTargets):
     """Set boundary conditions AFTER enhance_fdtd so easyMesh can track PML."""
     margin = air_margin_units(mesh, boundary.air_margin, targets)
@@ -100,4 +119,7 @@ def generate_mesh(
                 )
         except Exception as e:  # noqa: BLE001 — never fail a run on refinement
             print(f"  metal-interface graded refinement skipped: {e}")
+    # Finally clamp EVERY cell (incl. the PML/absorbing region easyMesh may have
+    # stretched) to the hard lambda/10 limit the validator enforces.
+    cap_max_cell_size(CSX, mesh, targets)
     return setup
