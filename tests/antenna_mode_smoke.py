@@ -123,6 +123,59 @@ def main() -> int:
     # preset is left alone while the mode is off
     assert q.mesh.preset == "very_high"
 
+    # --- effective_mesh(): antenna mode OVERRIDES the Mesh-tab resolution ----
+    from app.meshing.rules import wavelength_m
+
+    em_proj = Project.new_default("antenna_override")
+    em_proj.mesh.start_frequency = 1.95e9
+    em_proj.mesh.stop_frequency = 2.95e9
+    em_proj.mesh.preset = "very_high"
+    em_proj.mesh.target_frequency = 2.45e9  # design frequency (coarser!)
+    em_proj.mesh.refined_cellsize = 1.0  # deliberately finer -> must survive
+    em_proj.mesh.max_cellsize = None
+    em_proj.sim.antenna_mode = False
+
+    # mode OFF: identical object, nothing touched
+    assert em_proj.effective_mesh() is em_proj.mesh
+
+    em_proj.sim.antenna_mode = True
+    em_proj.sim.antenna_cells_per_wavelength = 25.0
+    em = em_proj.effective_mesh()
+    assert em is not em_proj.mesh, "override must return a copy"
+    # reference wavelength at f_max (2.95 GHz), NOT the design frequency
+    assert math.isclose(em.target_frequency, 2.95e9), em.target_frequency
+    cell_units = wavelength_m(2.95e9) / em.unit_to_meters() / 25.0
+    assert em.max_cellsize is not None
+    assert math.isclose(em.max_cellsize, cell_units, rel_tol=1e-9), em.max_cellsize
+    # a finer per-feature refinement is never coarsened
+    assert math.isclose(em.refined_cellsize, 1.0), em.refined_cellsize
+    # original spec is untouched
+    assert math.isclose(em_proj.mesh.target_frequency, 2.45e9)
+    assert em_proj.mesh.max_cellsize is None
+
+    # the validator target now caps cells at the antenna density ...
+    t_em = compute_targets(em)
+    t_off = compute_targets(em_proj.mesh)
+    assert math.isclose(t_em.max_cell_units, cell_units, rel_tol=1e-9)
+    # ... whereas the un-overridden spec keeps the loose lambda/10 cap
+    assert math.isclose(
+        t_off.max_cell_units, wavelength_m(2.95e9) / t_off.unit_m / 10.0, rel_tol=1e-9
+    )
+
+    # a coarser explicit refined_cellsize / max_cellsize is tightened
+    em_proj.mesh.refined_cellsize = 10.0
+    em_proj.mesh.max_cellsize = 50.0
+    em2 = em_proj.effective_mesh()
+    assert math.isclose(em2.refined_cellsize, cell_units, rel_tol=1e-9)
+    assert math.isclose(em2.max_cellsize, cell_units, rel_tol=1e-9)
+
+    # density falls back to the preset mapping when the field is unset
+    em_proj.sim.antenna_cells_per_wavelength = None
+    em3 = em_proj.effective_mesh()
+    assert math.isclose(
+        em3.max_cellsize, wavelength_m(2.95e9) / em3.unit_to_meters() / 25.0, rel_tol=1e-9
+    )
+
     print("ANTENNA MODE: OK")
     return 0
 

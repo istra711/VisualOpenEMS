@@ -425,11 +425,15 @@ def clamp_box_into_domain(start, stop, dom_lo, dom_hi, pad=1.0):
 
 def main() -> int:
     project = load_project()
+    # Mesh spec with the antenna-mode overrides applied (no-op when off): while
+    # antenna_mode is on the reference wavelength is taken at f_max and the air
+    # cell size is capped at wavelength(f_max)/density.
+    mesh = project.effective_mesh()
     prims = load_primitives()
     # FreeCAD STEP/FCStd → triangle meshes (openEMS AddMesh) if needed
     prims = ensure_simulation_meshes(project, WORK_DIR, prims)
 
-    if getattr(project.mesh, "is_cylindrical", False) and project.ports:
+    if getattr(mesh, "is_cylindrical", False) and project.ports:
         # openEMS's LumpedPort is not cylindrical-mesh aware: its Capacity
         # computation returns NaN on a polar grid, which poisons the
         # excitation and the whole field (Energy ~nan). The cylindrical-aware
@@ -452,7 +456,7 @@ def main() -> int:
     nr_ts = int(project.sim.max_timesteps or 100000)
 
     # CoordSystem=1 => cylindrical (r, alpha, z) operator; 0 = cartesian (default)
-    _cs = 1 if project.mesh.is_cylindrical else 0
+    _cs = 1 if mesh.is_cylindrical else 0
     FDTD = openEMS(NrTS=nr_ts, EndCriteria=project.sim.end_criteria, CoordSystem=_cs)
     FDTD.SetGaussExcite(f0, fc)
 
@@ -467,10 +471,10 @@ def main() -> int:
     CSX = enhance_csx(CSX, primitives_mesh_setup)
     FDTD = enhance_fdtd(FDTD, primitives_mesh_setup)
 
-    targets = compute_targets(project.mesh, eps_max=1.0)
-    apply_boundary(FDTD, project.boundary, project.mesh, targets)
+    targets = compute_targets(mesh, eps_max=1.0)
+    apply_boundary(FDTD, project.boundary, mesh, targets)
 
-    CSX.GetGrid().SetDeltaUnit(project.mesh.unit_to_meters())
+    CSX.GetGrid().SetDeltaUnit(mesh.unit_to_meters())
 
     # Create materials ONCE and reuse the same CSX properties for primitives.
     # (Creating twice left empty Property #0..#2 placeholders in openEMS dumps.)
@@ -629,7 +633,7 @@ def main() -> int:
         warnings.simplefilter("ignore", category=RuntimeWarning)
         setup = generate_mesh(
             CSX,
-            project.mesh,
+            mesh,
             project.boundary,
             targets,
             primitives_mesh_setup=primitives_mesh_setup,
@@ -669,8 +673,8 @@ def main() -> int:
         CSX,
         targets,
         ports=project.ports,
-        max_grading=project.mesh.max_grading_ratio,
-        coord_system=project.mesh.coord_system,
+        max_grading=mesh.max_grading_ratio,
+        coord_system=mesh.coord_system,
     )
     for line in report_to_lines(report):
         try:
@@ -800,8 +804,17 @@ def main() -> int:
     freqs = np.linspace(project.mesh.start_frequency, project.mesh.stop_frequency, 201)
     s_table = {}
     written = {}
+    # S-params are referenced to the port's own resistance (openEMS default when
+    # CalcPort gets no ref_impedance): a 73 Ω port then yields a 73 Ω-referenced
+    # S11. Use the excited port's R for the Touchstone header.
+    _exc = next(
+        (po for po in port_objects if getattr(po[0], "excite_port", False)),
+        port_objects[0] if port_objects else None,
+    )
+    ref_z = float(getattr(_exc[0], "resistance", 50.0)) if _exc else 50.0
     try:
         s_table = sp.compute_sparams_from_ports(out_dir, port_objects, freqs)
+        print(f"S-param reference impedance: {ref_z:g} ohm")
         print("S-param keys:", list(s_table.keys()))
         finite_ok = False
         for k, v in s_table.items():
@@ -813,7 +826,7 @@ def main() -> int:
                 break
         if not finite_ok:
             print("ERROR: S-param table has no finite values (CalcPort failed?)")
-        written = sp.export_sparams(s_table, WORK_DIR / "sparams", basename="sparams")
+        written = sp.export_sparams(s_table, WORK_DIR / "sparams", basename="sparams", z0=ref_z)
         print("S-param outputs:", {k: str(v) for k, v in written.items()})
         touch = written.get("touchstone")
         if touch and Path(touch).exists():

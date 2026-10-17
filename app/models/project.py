@@ -12,8 +12,20 @@ from app import PROJECT_EXT
 MaterialKind = Literal["pec", "dielectric", "conducting_sheet", "lumped_rlc", "ignore"]
 PortType = Literal["lumped", "msl", "rect_waveguide", "waveguide", "probe"]
 DumpType = Literal["E", "H", "J", "Jtot", "D", "B", "SAR", "custom"]
-MeshPreset = Literal["low", "medium", "high", "very_high", "custom"]
+MeshPreset = Literal["low", "medium", "high", "very_high", "extreme", "custom"]
 BoundaryKind = Literal["PEC", "PMC", "MUR", "PML"]
+
+#: Mesh density (cells per free-space wavelength) per mesh preset.
+#: Mirrors easyMesh's mesh_resolution -> max_cellsize_air mapping
+#: (easyMesh/meshingUtils.py) so the GUI dropdown, the antenna override and
+#: the mesher (cartesian + polar) all agree.
+CELLS_PER_WAVELENGTH_BY_PRESET: dict[str, float] = {
+    "low": 10.0,
+    "medium": 15.0,
+    "high": 20.0,
+    "very_high": 25.0,
+    "extreme": 40.0,
+}
 
 
 @dataclass
@@ -202,6 +214,13 @@ class SimSpec:
     # antenna_pml_lambda * lambda(f_start) as air margin, and NF2FF on.
     antenna_mode: bool = False
     antenna_pml_lambda: float = 0.5  # 0.5 => lambda/2 at f_start (hints: lambda/2..lambda)
+    # NF2FF integration box distance from the structure, in wavelengths at
+    # f_start (lowest band frequency). Only used by "Fit NF2FF to Geometry"
+    # while antenna_mode is on; PCB runs keep the small lambda/4-at-f_stop box.
+    antenna_nf2ff_lambda: float = 0.5  # 0.5 => lambda/2 (far-field), capped by the PML
+    # Mesh density (cells per free-space wavelength at f_max) enforced while
+    # antenna_mode is on. None => fall back to ANTENNA_DENSITY_BY_PRESET[mesh.preset].
+    antenna_cells_per_wavelength: float | None = None
 
 
 @dataclass
@@ -243,6 +262,42 @@ class Project:
             if m.name == name:
                 return m
         return None
+
+    def effective_mesh(self) -> MeshSpec:
+        """MeshSpec that is actually meshed/simulated with.
+
+        While ``sim.antenna_mode`` is on, the antenna checklist owns the mesh
+        resolution and overrides the per-project mesh settings: the reference
+        wavelength is taken at ``f_max`` (highest band frequency, not the design
+        frequency) so the whole band is resolved, and the air cell size is
+        capped at ``wavelength(f_max) / density``. ``refined_cellsize`` is only
+        tightened, never coarsened, so a finer per-feature refinement survives.
+        Returns ``self.mesh`` unchanged when the mode is off.
+        """
+        import copy
+
+        m = self.mesh
+        if not getattr(self.sim, "antenna_mode", False):
+            return m
+        out = copy.deepcopy(m)
+        density = getattr(self.sim, "antenna_cells_per_wavelength", None)
+        if not density or density <= 0.0:
+            density = CELLS_PER_WAVELENGTH_BY_PRESET.get(getattr(m, "preset", "medium"), 15.0)
+        f_max = max(float(m.start_frequency or 0.0), float(m.stop_frequency or 0.0))
+        if f_max > 0.0:
+            from app.meshing.rules import wavelength_m
+
+            # easyMesh derives its AIR cell size from ``target_frequency``
+            # (easyMesh/meshingUtils.py) — point that meshing reference at f_max
+            # so the antenna density applies to the TOP of the band, not just to
+            # the design frequency (which made the mesh coarser than intended).
+            out.target_frequency = f_max
+            cell = wavelength_m(f_max, eps_r=1.0) / m.unit_to_meters() / density
+            if out.max_cellsize is None or out.max_cellsize > cell:
+                out.max_cellsize = cell
+            if out.refined_cellsize is None or out.refined_cellsize > cell:
+                out.refined_cellsize = cell
+        return out
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
