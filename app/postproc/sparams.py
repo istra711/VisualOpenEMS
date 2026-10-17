@@ -7,7 +7,12 @@ from pathlib import Path
 import numpy as np
 
 
-def compute_sparams_from_ports(sim_dir: Path | str, port_objects: list, freqs: np.ndarray, ref_impedance: float = 50.0) -> dict[str, np.ndarray]:
+def compute_sparams_from_ports(
+    sim_dir: Path | str,
+    port_objects: list,
+    freqs: np.ndarray,
+    ref_impedance: float | None = None,
+) -> dict[str, np.ndarray]:
     """Use openEMS port objects (from FDTD.AddLumpedPort / AddMSLPort).
 
     port_objects: list of (Project.PortDef, port_obj)
@@ -21,6 +26,12 @@ def compute_sparams_from_ports(sim_dir: Path | str, port_objects: list, freqs: n
     also yields the diagonal entry (S11 for an excitation at port 1). The
     remaining entries need a second run with another port excited — merge the
     runs with :func:`merge_sparam_tables`.
+
+    ``ref_impedance`` is the S-parameter reference (normalisation) impedance.
+    When ``None`` (default), openEMS uses each port's own resistance — the R
+    passed to ``AddLumpedPort`` — so a 73 Ω port yields a 73 Ω-referenced S11
+    (matching CST's port impedance). Passing an explicit value renormalises
+    every port to it.
     """
     sim_dir = Path(sim_dir)
     freqs = np.asarray(freqs, dtype=float)
@@ -33,7 +44,11 @@ def compute_sparams_from_ports(sim_dir: Path | str, port_objects: list, freqs: n
         name = getattr(port_def, "name", None) or f"port_{getattr(pobj, 'number', idx)}"
         try:
             try:
-                pobj.CalcPort(str(sim_dir), freqs, ref_impedance=ref_impedance)
+                if ref_impedance is None:
+                    # let openEMS use the port's own R (the AddLumpedPort value)
+                    pobj.CalcPort(str(sim_dir), freqs)
+                else:
+                    pobj.CalcPort(str(sim_dir), freqs, ref_impedance=ref_impedance)
             except TypeError:
                 pobj.CalcPort(str(sim_dir), freqs)
             uf_ref = np.asarray(pobj.uf_ref, dtype=complex)
@@ -276,8 +291,12 @@ def write_touchstone(
     return out_path
 
 
-def export_sparams(sparams: dict[str, np.ndarray], out_dir: Path | str, basename: str = "sparams") -> dict[str, Path]:
-    """Write JSON + Touchstone + PNG for a completed S-param table."""
+def export_sparams(sparams: dict[str, np.ndarray], out_dir: Path | str, basename: str = "sparams", z0: float = 50.0) -> dict[str, Path]:
+    """Write JSON + Touchstone + PNG for a completed S-param table.
+
+    ``z0`` is the reference impedance recorded in the Touchstone header (use the
+    port resistance so a 73 Ω port is not mislabelled as a 50 Ω file).
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
@@ -314,7 +333,7 @@ def export_sparams(sparams: dict[str, np.ndarray], out_dir: Path | str, basename
                 "run one excitation per port and merge (see merge_sparam_tables)"
             )
         else:
-            touch = write_touchstone(sparams, out_dir / basename, comments=[f"source={out_dir}"])
+            touch = write_touchstone(sparams, out_dir / basename, z0=z0, comments=[f"source={out_dir}"])
             written["touchstone"] = touch
             print("Wrote Touchstone:", touch)
     except Exception as e:  # noqa: BLE001
