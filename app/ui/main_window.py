@@ -2758,32 +2758,32 @@ class MainWindow(QMainWindow):
         xs: list[float] = []
         ys: list[float] = []
         zs: list[float] = []
+        from app.meshing.bounds import cartesian_primitive_bbox
+
         for pr in self.primitives:
-            if pr.get("kind") in ("box", "stl", "cylinder"):
-                for key in ("start", "stop"):
-                    p = pr.get(key)
-                    if not p:
-                        continue
-                    xs.append(float(p[0]))
-                    ys.append(float(p[1]))
-                    zs.append(float(p[2]))
+            bb = cartesian_primitive_bbox(pr)
+            if bb is None:
+                continue
+            lo, hi = bb
+            xs += [lo[0], hi[0]]
+            ys += [lo[1], hi[1]]
+            zs += [lo[2], hi[2]]
         for gf in self.project.geometry_files:
             # bounds not always stored on GeometryFile; skip
             del gf
         if not xs:
             self._log("Fit NF2FF: no primitives/geometry bounds found")
             return
-        # air margin ~ λ/4 free-space at stop frequency; the FDTD domain delivers a
-        # bit less than that (graded air region), so the NF2FF box uses 70% of it to
-        # stay strictly inside the domain (openEMS drops boxes outside the domain).
-        from app.meshing.rules import air_margin_units, compute_targets, wavelength_m
+        from app.meshing.bounds import nf2ff_fit_box, nf2ff_fit_margin_units
+        from app.meshing.rules import compute_targets
 
         t = compute_targets(self.project.mesh)
-        unit = t.unit_m
-        lam = wavelength_m(max(self.project.mesh.start_frequency, self.project.mesh.stop_frequency), 1.0)
-        margin = 0.7 * (lam / 4.0) / unit
-        start = [min(xs) - margin, min(ys) - margin, min(zs) - margin * 0.3]
-        stop = [max(xs) + margin, max(ys) + margin, max(zs) + margin * 0.5]
+        margin = nf2ff_fit_margin_units(
+            self.project.mesh, self.project.sim, self.project.boundary, t
+        )
+        start, stop = nf2ff_fit_box(
+            [min(xs), min(ys), min(zs)], [max(xs), max(ys), max(zs)], margin
+        )
         n = self.project.nf2ff
         n.start = [float(v) for v in start]
         n.stop = [float(v) for v in stop]
