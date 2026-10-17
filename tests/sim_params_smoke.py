@@ -175,6 +175,20 @@ def main() -> int:
         win.settings.work_dir = old_work_dir
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # --- Antenna simulation mode: NF2FF box parameter round-trips ---
+    win.sim_params.chk_antenna.setChecked(True)
+    win.sim_params.spn_ant_nf2ff.setValue(0.75)
+    win.sim_params.spn_ant_pml.setValue(0.75)
+    win._sync_project_from_form()
+    assert win.project.sim.antenna_mode is True
+    assert abs(win.project.sim.antenna_nf2ff_lambda - 0.75) < 1e-9
+    assert win.sim_params.spn_ant_nf2ff.isEnabled()
+    win.sim_params.chk_antenna.setChecked(False)
+    assert not win.sim_params.spn_ant_nf2ff.isEnabled()
+    win._sync_project_from_form()
+    assert win.project.sim.antenna_mode is False
+    app.processEvents()
+
     win.close()
     print("SIM PARAMS OK", tabs, tab_labels)
     return 0

@@ -26,7 +26,13 @@ from PySide6.QtWidgets import (
 )
 
 from app.meshing.rules import air_margin_units, compute_targets
-from app.models.project import BoundaryKind, BoundarySpec, MeshSpec, Project
+from app.models.project import (
+    CELLS_PER_WAVELENGTH_BY_PRESET,
+    BoundaryKind,
+    BoundarySpec,
+    MeshSpec,
+    Project,
+)
 from app.postproc.nf2ff import parse_freq_list
 from app.ui.freq_units import fmt_hz
 from app.ui.tab_help import show_tab_help
@@ -216,15 +222,23 @@ class SimParamsPanel(QWidget):
         self.chk_antenna = QCheckBox("Antenna simulation mode")
         self.chk_antenna.setToolTip(
             "Activates the antenna-oriented defaults of the FDTD checklist:\n"
-            "• mesh density = the preset chosen below (>= 15-20 cells/λ)\n"
+            "• mesh density = the selection below, enforced at f_max (the highest\n"
+            "  band frequency) and OVERRIDING the Mesh tab resolution while on\n"
             "• air margin = PML distance x λ(f_start) on all six faces\n"
             "  (overrides 'Air margin auto' while the mode is on)\n"
-            "• NF2FF far-field enabled\n"
+            "• NF2FF far-field enabled, box distance = NF2FF box x λ(f_start)\n"
+            "  (only 'Fit to geometry' uses it; PCB runs keep the small box)\n"
             "See Help → Antenna Simulation for the full checklist."
         )
         fant.addRow(self.chk_antenna)
         self.cmb_ant_density = QComboBox()
-        for _preset, _cells in (("low", 10), ("medium", 15), ("high", 20), ("very_high", 25)):
+        for _preset, _cells in (
+            ("low", 10),
+            ("medium", 15),
+            ("high", 20),
+            ("very_high", 25),
+            ("extreme", 40),
+        ):
             self.cmb_ant_density.addItem(f"{_preset} ({_cells} cells/λ)", _preset)
         self.cmb_ant_density.setCurrentIndex(2)  # high = 20 cells/λ
         self.cmb_ant_density.setToolTip(
@@ -244,9 +258,25 @@ class SimParamsPanel(QWidget):
             "parasitic capacitance and pulls the resonance down."
         )
         fant.addRow("PML distance", self.spn_ant_pml)
+        self.spn_ant_nf2ff = QDoubleSpinBox()
+        self.spn_ant_nf2ff.setRange(0.25, 2.0)
+        self.spn_ant_nf2ff.setSingleStep(0.25)
+        self.spn_ant_nf2ff.setDecimals(2)
+        self.spn_ant_nf2ff.setValue(0.5)
+        self.spn_ant_nf2ff.setSuffix(" × λ")
+        self.spn_ant_nf2ff.setToolTip(
+            "Distance from the structure to the NF2FF far-field integration box,\n"
+            "in wavelengths at f_start. Use ≥ 0.50 (λ/2) so the surface sits in\n"
+            "the far field; it is clamped to stay inside the PML. Applied by\n"
+            "'Fit to geometry + air margin' while antenna mode is on. PCB runs\n"
+            "keep the small λ/4-at-f_stop box."
+        )
+        fant.addRow("NF2FF box", self.spn_ant_nf2ff)
         self.lbl_antenna_hint = QLabel(
             "ON: mesh preset ← selection above, air margin ← PML distance × λ(f_start) "
-            "(all faces), NF2FF on. OFF: the normal air-margin controls above apply. "
+            "(all faces), NF2FF on with the box distance above. OFF: the normal "
+            "air-margin controls above apply and the NF2FF box stays small "
+            "(λ/4 at f_stop) for PCB-style runs. "
             "Also check substrate εr/tand for your target frequency — Help → Antenna Simulation."
         )
         self.lbl_antenna_hint.setWordWrap(True)
@@ -399,6 +429,7 @@ class SimParamsPanel(QWidget):
         """Antenna mode drives mesh preset, air margin and NF2FF."""
         self.cmb_ant_density.setEnabled(checked)
         self.spn_ant_pml.setEnabled(checked)
+        self.spn_ant_nf2ff.setEnabled(checked)
         self.chk_air_auto.setEnabled(not checked)
         self.spn_air.setEnabled(not checked and not self.chk_air_auto.isChecked())
         if checked and not getattr(self, "_syncing", False):
@@ -407,10 +438,16 @@ class SimParamsPanel(QWidget):
             self.chk_nf2ff_enabled.setChecked(True)
         self.computed_changed.emit()
 
-    def _sync_antenna_density(self, preset: str) -> None:
-        """Mirror a mesh preset into the antenna density combo (by user data)."""
+    def _sync_antenna_density(self, preset: str, density: float | None = None) -> None:
+        """Mirror a mesh preset (or explicit density) into the density combo."""
+        target = str(preset)
+        if density:
+            for name, cells in CELLS_PER_WAVELENGTH_BY_PRESET.items():
+                if cells == float(density):
+                    target = name
+                    break
         for i in range(self.cmb_ant_density.count()):
-            if str(self.cmb_ant_density.itemData(i) or "") == str(preset):
+            if str(self.cmb_ant_density.itemData(i) or "") == target:
                 if self.cmb_ant_density.currentIndex() != i:
                     self.cmb_ant_density.blockSignals(True)
                     self.cmb_ant_density.setCurrentIndex(i)
@@ -465,10 +502,16 @@ class SimParamsPanel(QWidget):
         # Antenna simulation mode: persist the flag + its two knobs.
         project.sim.antenna_mode = bool(self.chk_antenna.isChecked())
         project.sim.antenna_pml_lambda = float(self.spn_ant_pml.value())
+        project.sim.antenna_nf2ff_lambda = float(self.spn_ant_nf2ff.value())
         if project.sim.antenna_mode:
             preset = self.cmb_ant_density.currentData()
             if preset:
                 m.preset = preset  # type: ignore[assignment]
+                # Persist the density too: Project.effective_mesh() uses it to
+                # override the mesh resolution (reference wavelength = f_max).
+                project.sim.antenna_cells_per_wavelength = float(
+                    CELLS_PER_WAVELENGTH_BY_PRESET.get(str(preset), 15.0)
+                )
         project.nf2ff.theta_steps = int(self.spn_nf2ff_theta.value())
         project.nf2ff.phi_steps = int(self.spn_nf2ff_phi.value())
         nf_on = self.chk_nf2ff_enabled.isChecked()
@@ -588,7 +631,12 @@ class SimParamsPanel(QWidget):
         self._refresh_patch_label()
         # --- antenna simulation mode (last: it gates the air-margin controls) ---
         self.spn_ant_pml.setValue(float(getattr(project.sim, "antenna_pml_lambda", 0.5) or 0.5))
-        self._sync_antenna_density(m.preset)
+        self.spn_ant_nf2ff.setValue(
+            float(getattr(project.sim, "antenna_nf2ff_lambda", 0.5) or 0.5)
+        )
+        self._sync_antenna_density(
+            m.preset, getattr(project.sim, "antenna_cells_per_wavelength", None)
+        )
         self.chk_antenna.setChecked(bool(getattr(project.sim, "antenna_mode", False)))
         self._on_antenna_toggled(self.chk_antenna.isChecked())
         self._apply_coord_system_ui(

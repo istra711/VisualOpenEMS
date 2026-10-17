@@ -230,6 +230,11 @@ Notes
     panel shows progress.
   • Domain size (black dashed frame in the Mesh Viewer) is NOT here — it
     comes from air margin / boundary: Sim Params → Boundary conditions.
+  • Hard cell limit — after meshing, every cell (including the PML region
+    easyMesh stretches) is capped at λ_air(f_max)/10. Cells slightly larger
+    than that used to abort the run with "cell_too_large"; they are now split
+    automatically, so any preset builds a valid grid (the preset still sets the
+    characteristic air cellsize).
 """,
     "Cylindrical Mesh": """CYLINDRICAL MESH — openEMS CoordSystem=1 (rho/phi/z)
 
@@ -279,6 +284,10 @@ with live editors: changes apply immediately (no Apply/Close round-trip).
 Ports
   • Double-click a port (or Edit Port…) — name, type (lumped / MSL / rect waveguide),
     resistance, direction, start/stop, mesh dirs, excite flag.
+  • The port's resistance is also the S11 reference (normalisation) impedance:
+    a 73 Ω lumped port yields a 73 Ω-referenced S11 and the .s1p header records
+    z0=73 (a 50 Ω port keeps the old 50 Ω result). Match it to the reference
+    impedance of the tool you compare against (e.g. a CST "Discrete Port").
   • MSL (microstrip) ports also expose Propagation dir / Excitation dir: leave them on
     (auto) to derive both axes from the port box (propagation = longest edge, excitation
     = shortest); set them explicitly for unusual orientations. MSL ports are built after
@@ -298,7 +307,10 @@ Dumps
 
 NF2FF
   • Enable NF2FF box — far-field box for pattern results.
-  • Edit / Fit NF2FF to Geometry — box around the antenna.
+  • Edit / Fit NF2FF to Geometry — box around the antenna. Fit keeps an equal
+    margin on all six faces (symmetric about the geometry) so the far-field
+    pattern is not tilted/egg-shaped; in antenna mode the margin is
+    NF2FF box × λ(f_start).
 
 Tips
   • Port vector direction must cross the intended gap (feed) and be meshed.
@@ -368,7 +380,12 @@ After a successful Run (with NF2FF enabled)
   • VRV (F/B) — front-to-back ratio (Vorwärts-Rückwärts-Verhältnis) of the
     current polar cut: Gmax − gain at Gmax+180°, in dB and as linear ratio.
     Orange diamond marks the back lobe. Pattern-only, no S-parameters.
-  • Pop out graph — separate window for a large plot.
+  • Pop out graph — separate window for a large plot; its top row mirrors the
+    tab (Plot, Freq, cmap), so plot type and frequency stay selectable there.
+  • Analysis menu (right-click any plot) — r min / r max / r step / label
+    offset / Opening angle (HPBW) / VRV apply to the polar cuts; Clear markers
+    and Pop out graph work on every plot. On the 3D and vs-frequency plots the
+    polar-only controls are greyed out.
 
 Enabling NF2FF (far-field)
   • Simulation Parameters (Ctrl+Shift+P) → NF2FF-Parameter tab → Enable
@@ -403,17 +420,22 @@ Tips
     "Antenna Simulation": """ANTENNA SIMULATION — settings that keep FDTD results trustworthy
 
 FDTD antenna results are sensitive to the mesh, the boundary placement and
-the material data. The four checks below are the usual causes of a shifted
+the material data. The checks below are the usual causes of a shifted
 resonance frequency or a wrong efficiency / gain. Enable Simulation
 Parameters (Ctrl+Shift+P) → "Antenna simulation mode" to apply the mesh
 density, PML distance and NF2FF defaults of this checklist in one click.
+While it is ON it OVERRIDES the Mesh-tab resolution: the density selected in
+the antenna group is enforced with the reference wavelength taken at f_max
+(the highest band frequency), so the whole band is resolved — not just the
+design frequency.
 
 1. Mesh density — numerical dispersion
    A coarse grid makes waves travel artificially slowly in the solver, which
    pushes the resonance frequency DOWN.
    • Rule of thumb: at least 15–20 cells per wavelength (λ) at the HIGHEST
      frequency you simulate. (Mesh presets: low ≈ 10, medium ≈ 15,
-     high ≈ 20, very_high ≈ 25 cells/λ.)
+     high ≈ 20, very_high ≈ 25, extreme ≈ 40 cells/λ — pick "extreme" in the
+     antenna group for a CST-grade convergence check.)
    • Use the one-third/two-thirds rule for smooth transitions between cell
      sizes (Mesh → Smooth metal edge = one_third_two_thirds).
    • "Refine mesh at metal interfaces (graded)" (Mesh Parameters, on for new
@@ -460,8 +482,21 @@ density, PML distance and NF2FF defaults of this checklist in one click.
      mode replaces it with the λ/2 rule (configurable as a multiple of λ).
    • The black dashed frame in the Mesh Viewer is the domain; too close →
      wrong resonance, too far → far more cells (RAM and runtime).
-   • Prefer PML on the radiation sides; PEC is usually fine on a ground
-     plane / symmetry face.
+    • Prefer PML on the radiation sides; PEC is usually fine on a ground
+      plane / symmetry face.
+
+5. NF2FF box — far-field integration surface
+   The NF2FF post-processing integrates the tangential fields over a closed
+   box around the radiator. That surface must sit in the FAR FIELD — roughly
+   λ/2 or more from the structure. Inside the reactive near field (~λ/2π) the
+   Prad / Dmax / gain come out wrong even though the plot looks plausible.
+   • Simulation Parameters → "Antenna simulation mode" → "NF2FF box" sets the
+     distance in λ at f_start; "Fit to geometry + air margin" applies it and
+     clamps the box so it stays strictly inside the PML.
+   • PCB / non-antenna runs keep the small λ/4-at-f_stop box: there the box is
+     just an energy/field probe, not a far-field surface, so tight is fine.
+   • The box must enclose ALL sources and keep all six faces; a box that is
+     too small (or clamped to a PEC domain face) yields Prad≈0 or a wrong Dmax.
 
 General FDTD limitations to keep in mind
    • Cost and memory — the whole 3D volume (antenna + free space) is
