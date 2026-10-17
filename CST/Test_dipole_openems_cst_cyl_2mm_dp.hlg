@@ -1,0 +1,102 @@
+--------------------------------------------------------------------------------
+Translator Name    : Spatial InterOp Connect ( Version : 2021 1.0.0 )
+System Name        : Windows_NT
+Machine Name       : POWERPC
+User Name          : michel
+Source System      : ACIS
+Destination System : STEP
+Input File         : C:\Users\istra\Documents\Test_dipole_openems_cst_cyl_2mm_dp.sat
+Output File        : C:\Users\istra\Documents\Test_dipole_openems_cst_cyl_2mm_dp.stp
+Start Time         : Sat Oct 17 22:57:52 2026
+
+--------------------------------------------------------------------------------
+Message : === Translation Options ===
+Message : IGES.Writer.TranslateSolidSheets : true
+Message : IGES.TrimCurveWritePreference  : 3
+Message : IGES.Writer.ConvertAnalyticalSurfacesAndCurvesToSpline : false
+Message : ProgramName : CST ACIS InterOp Converter 2021
+Message : AuthorName : michel
+Message : ===========================
+-------------------------Source File Header Information-------------------------
+Modification Date        : 17 Oct 2026
+File Name                : Test_dipole_openems_cst_cyl_2mm_dp.sat
+Organization             : CST MICROWAVE STUDIO
+Version                  : 3000
+Units                    : MILLIMETER
+Tolerance                : 0,000001
+Document Type            : Part
+Format Type              : ACIS
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+Source Document Preprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+Target Document Preprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+Start BRep
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+BRep Source Representation Preprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+BRep Target Representation Preprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+BRep Source Representation Postprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+BRep Target Representation Postprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+End BRep
+------------------------Representation Conversion Summary-----------------------
+No. of Solid Bodies                       :    2
+No. of Wire Bodies                        :    0
+No. of Curve Sets                         :    0
+No. of Geometric Sets                     :    0
+No. of Sheet Bodies                       :    1
+--------------------------------------------------------------------------------
+BRep Conversion Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+Start DocumentFeature
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+DocumentFeature Source Representation Preprocessing Result : No Entity to Translate
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+DocumentFeature Target Representation Preprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+DocumentFeature Source Representation Postprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+DocumentFeature Target Representation Postprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+End DocumentFeature
+------------------------Representation Conversion Summary-----------------------
+No. of Selection Sets                     :    0
+--------------------------------------------------------------------------------
+DocumentFeature Conversion Result : No Entity to Translate
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+Target Document Postprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+Target Document Postprocessing Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+---------------------------Document Conversion Summary--------------------------
+No. of Items of DocumentFeature Representation :    0
+No. of Items of BRep Representation            :    3
+--------------------------------------------------------------------------------
+Output File "C:\Users\istra\Documents\Test_dipole_openems_cst_cyl_2mm_dp.stp" is Successfully Written
+--------------------------------------------------------------------------------
+Finish Time : Sat Oct 17 22:57:52 2026
+
+--------------------------------------------------------------------------------
+Translation Result : Success
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
