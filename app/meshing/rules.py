@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from app.models.project import MeshSpec
+from app.models.project import CELLS_PER_WAVELENGTH_BY_PRESET, MeshSpec
 
 C0 = 299792458.0  # m/s
 
@@ -40,14 +40,12 @@ def compute_targets(mesh: MeshSpec, eps_max: float = 1.0) -> MeshTargets:
     max_cell = lam_units / 10.0
     if mesh.max_cellsize is not None:
         max_cell = min(max_cell, mesh.max_cellsize)
-    # Generation target from preset (medium ~ lambda/12 etc.) — also free-space
-    preset_factor = {
-        "low": 10.0,
-        "medium": 12.0,
-        "high": 16.0,
-        "very_high": 25.0,
-        "custom": 12.0,
-    }.get(mesh.preset, 12.0)
+    # Generation target from preset — must match easyMesh's own mapping
+    # (meshingUtils.py: low/medium/high/very_high/extreme => 10/15/20/25/40
+    # cells per wavelength). "custom" falls back to the medium density.
+    preset_factor = CELLS_PER_WAVELENGTH_BY_PRESET.get(
+        "medium" if mesh.preset == "custom" else mesh.preset, 15.0
+    )
     target_cell = lam_units / preset_factor
     if mesh.refined_cellsize is not None:
         target_cell = mesh.refined_cellsize
