@@ -230,6 +230,10 @@ class AntennaGraphWindow(QMainWindow):
         self.cmb_plot = QComboBox()
         self.cmb_plot.addItems(AntennaPatternViewer.PLOT_TYPES)
         bar.addWidget(self.cmb_plot)
+        bar.addWidget(QLabel("Freq"))
+        self.cmb_freq = QComboBox()
+        self.cmb_freq.setToolTip("Evaluation frequency (mirrors the tab combo)")
+        bar.addWidget(self.cmb_freq)
         self.lbl_cmap = QLabel("cmap")
         self.cmb_cmap = QComboBox()
         self.cmb_cmap.addItems(list(AntennaPatternViewer.CMAP_CHOICES))
@@ -257,10 +261,12 @@ class AntennaGraphWindow(QMainWindow):
             self.cmb_cmap.setVisible(is_3d)
             self.lbl_info.setText(viewer.lbl_info.text())
             viewer.btn_popout.setText("Graph popped out")
+            self.sync_freq()
 
         self.setCentralWidget(container)
 
         self.cmb_plot.currentTextChanged.connect(self._on_plot_changed)
+        self.cmb_freq.currentIndexChanged.connect(self._on_freq_changed)
         self.cmb_cmap.currentTextChanged.connect(self._on_cmap_changed)
 
     def _on_plot_changed(self, text: str) -> None:
@@ -279,6 +285,28 @@ class AntennaGraphWindow(QMainWindow):
         v.cmb_cmap.blockSignals(True)
         v.cmb_cmap.setCurrentText(text)
         v.cmb_cmap.blockSignals(False)
+        v._redraw()
+
+    def sync_freq(self) -> None:
+        """Mirror the tab's frequency list + selection into the pop-out combo."""
+        v = self.viewer
+        if v is None:
+            return
+        self.cmb_freq.blockSignals(True)
+        self.cmb_freq.clear()
+        for i in range(v.cmb_freq.count()):
+            self.cmb_freq.addItem(v.cmb_freq.itemText(i))
+        self.cmb_freq.setCurrentIndex(v.cmb_freq.currentIndex())
+        self.cmb_freq.blockSignals(False)
+
+    def _on_freq_changed(self, index: int) -> None:
+        v = self.viewer
+        if v is None or index < 0:
+            return
+        v.cmb_freq.blockSignals(True)
+        v.cmb_freq.setCurrentIndex(index)
+        v.cmb_freq.blockSignals(False)
+        v._update_details()
         v._redraw()
 
     def closeEvent(self, event) -> None:  # noqa: N802
@@ -330,7 +358,7 @@ class AntennaPatternViewer(QWidget):
         self.cmb_plot = QComboBox()
         self.cmb_plot.addItems(self.PLOT_TYPES)
         self.cmb_freq = QComboBox()
-        # polar analysis dialog (right-click on polar plot)
+        # analysis dialog (right-click any plot)
         self._radial_dlg = self._build_radial_dialog()
         self.lbl_cmap = QLabel("cmap")
         self.cmb_cmap = QComboBox()
@@ -442,8 +470,9 @@ class AntennaPatternViewer(QWidget):
         self.file_list.currentItemChanged.connect(self._on_file_selected)
         self.canvas.mpl_connect("button_press_event", self._on_click)
         self.canvas.setToolTip(
-            "Right-click on a polar plot to open the analysis menu\n"
-            "(r min / r max / r step / label offset / HPBW / VRV)."
+            "Right-click any plot to open the analysis menu\n"
+            "(polar: r min / r max / r step / label offset / HPBW / VRV;\n"
+            "all plots: Clear markers / Pop out graph)."
         )
         self._dbi_data_min = -1.0
         self._dbi_data_max = 1.0
@@ -452,7 +481,7 @@ class AntennaPatternViewer(QWidget):
         if self.work_dir:
             self._on_scan()
 
-    # ----- polar analysis dialog (right-click) ------------------------------
+    # ----- analysis dialog (right-click any plot) --------------------------
     def _build_radial_dialog(self) -> QDialog:
         # parent=None: floats above both the tab and the pop-out window
         dlg = QDialog(None)
@@ -535,6 +564,30 @@ class AntennaPatternViewer(QWidget):
         dlg.setWindowFlag(Qt.WindowType.Tool, True)
         dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         return dlg
+
+    #: analysis-dialog controls that only make sense for the polar cuts
+    _ANALYSIS_POLAR_ONLY = (
+        "lbl_rmin",
+        "spn_rmin",
+        "lbl_rmax",
+        "spn_rmax",
+        "lbl_rstep",
+        "spn_rstep",
+        "lbl_lblpos",
+        "spn_lblpos",
+        "btn_hpbw",
+        "btn_vrv",
+    )
+
+    def _set_analysis_mode(self, polar: bool) -> None:
+        """Enable the polar-only controls of the analysis dialog only on polar
+        cuts; the generic ones (Clear markers, Pop out graph) stay active for
+        every antenna plot (3D, gain / efficiency vs frequency)."""
+        for name in self._ANALYSIS_POLAR_ONLY:
+            w = getattr(self, name, None)
+            if w is not None:
+                w.setEnabled(polar)
+        self._radial_dlg.setWindowTitle("Polar analysis" if polar else "Antenna analysis")
 
     # ----- 3D dBi window (slider) + field selection ----------------------
     def _set_dbi_controls_visible(self, visible: bool) -> None:
@@ -729,6 +782,9 @@ class AntennaPatternViewer(QWidget):
             for f in np.asarray(freqs).reshape(-1):
                 self.cmb_freq.addItem(f"{f / 1e9:.6g} GHz" if f > 1e6 else f"{f:.6g} Hz")
         self.cmb_freq.blockSignals(False)
+        gw = getattr(self, "_graph_win", None)
+        if gw is not None and hasattr(gw, "sync_freq"):
+            gw.sync_freq()
 
         prad = self.data.get("Prad")
         dmax = self.data.get("Dmax_dBi")
@@ -917,6 +973,7 @@ class AntennaPatternViewer(QWidget):
             "Azimuth (theta=90)",
         )
         self._polar_active = polar
+        self._set_analysis_mode(polar)
         self._set_dbi_controls_visible(plot == "3D Pattern")
         if plot == "Gain vs Frequency":
             self._plot_gain_vs_freq()
@@ -937,11 +994,10 @@ class AntennaPatternViewer(QWidget):
         self._marker_cfg["rmin_eff"] = float(getattr(self, "_plot_rmin_eff", 0.0))
 
     def _on_click(self, event) -> None:
-        if (
-            event.button == 3
-            and getattr(self, "_polar_active", False)
-            and event.inaxes is not None
-        ):
+        if event.button == 3 and self.data is not None and event.inaxes is not None:
+            # any antenna plot opens the analysis menu; polar-only controls are
+            # greyed out on the 3D / gain-/efficiency-vs-frequency plots
+            self._set_analysis_mode(getattr(self, "_polar_active", False))
             # position near the click; do NOT raise/activate — that would
             # steal focus from the pop-out window and hide it behind the main UI
             pos = self.canvas.mapToGlobal(self.canvas.rect().center())
@@ -1370,17 +1426,63 @@ class AntennaPatternViewer(QWidget):
         ax.set_ylabel("dBi")
         ax.set_title("Gain / Directivity vs frequency")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=8)
 
-        if prad is not None and np.asarray(prad).size:
-            p = np.asarray(prad, dtype=float).reshape(-1)
-            ax2 = ax.twinx()
-            ax2.plot(fdisp[: p.size], p, "^--", color="tab:orange", alpha=0.7, label="Prad [W]")
-            ax2.set_ylabel("Prad [W]")
-            if eff is not None and np.asarray(eff).size and np.any(np.isfinite(np.asarray(eff))):
-                e = np.asarray(eff, dtype=float).reshape(-1)
-                ax2.plot(fdisp[: e.size], e, "--", color="tab:green", alpha=0.7, label="eta")
-                ax2.set_ylim(0, 1.05)
+        # Secondary axes + a single combined legend built AFTER every curve, so
+        # the efficiency / Prad entries are not dropped (the legend used to be
+        # created before the twin axis was filled).
+        handles, labels = list(ax.get_legend_handles_labels())
+
+        eff_arr = (
+            np.asarray(eff, dtype=float).reshape(-1)
+            if eff is not None and np.asarray(eff).size
+            else None
+        )
+        has_eff = eff_arr is not None and bool(np.any(np.isfinite(eff_arr)))
+        prad_arr = (
+            np.asarray(prad, dtype=float).reshape(-1)
+            if prad is not None and np.asarray(prad).size
+            else None
+        )
+
+        right = None
+        if has_eff:
+            # efficiency is unitless (0..1) -> dedicated right axis
+            right = ax.twinx()
+            right.plot(
+                fdisp[: eff_arr.size],
+                eff_arr,
+                "--",
+                color="tab:green",
+                alpha=0.8,
+                label="eta",
+            )
+            right.set_ylabel("eta = Prad / Pin")
+            right.set_ylim(0.0, 1.05)
+            h, lbl = right.get_legend_handles_labels()
+            handles += h
+            labels += lbl
+
+        if prad_arr is not None and bool(np.any(np.isfinite(prad_arr))):
+            # Prad is in W*s^2 (pulse spectrum); on the 0..1 efficiency axis it
+            # would be flattened onto ~0, so give it its own right axis.
+            pax = ax.twinx()
+            if right is not None:
+                pax.spines["right"].set_position(("outward", 40))
+            pax.plot(
+                fdisp[: prad_arr.size],
+                prad_arr,
+                "^--",
+                color="tab:brown",
+                alpha=0.8,
+                label="Prad [W*s^2]",
+            )
+            pax.set_ylabel("Prad [W*s^2]")
+            h, lbl = pax.get_legend_handles_labels()
+            handles += h
+            labels += lbl
+
+        if handles:
+            ax.legend(handles, labels, loc="best", fontsize=8)
         self._register_marker_ax(ax, "xy", "GHz" if "GHz" in xlabel else "", "dBi")
 
     def _plot_eff_vs_freq(self) -> None:

@@ -48,16 +48,20 @@ def write_synthetic_nf2ff(path: Path) -> dict:
     d_dbi = 10.0 * np.log10(np.maximum(d_lin, 1e-6))
     eta = 0.85
     gain_dbi = d_dbi + 10.0 * np.log10(eta)
+    # two evaluation frequencies so the Freq combo (tab + pop-out) is exercised
     payload = {
-        "frequencies": [2.45e9],
+        "frequencies": [2.40e9, 2.45e9],
         "theta_deg": theta.tolist(),
         "phi_deg": phi.tolist(),
-        "Prad": [prad],
-        "Dmax_dBi": [float(np.nanmax(d_dbi))],
-        "efficiency": [eta],
-        "D_dBi": [d_dbi.tolist()],
-        "gain_dBi": [gain_dbi.tolist()],
-        "P_rad": [(pattern * prad / (4 * np.pi)).tolist()],
+        "Prad": [prad, prad],
+        "Dmax_dBi": [float(np.nanmax(d_dbi)), float(np.nanmax(d_dbi)) - 1.0],
+        "efficiency": [eta, eta],
+        "D_dBi": [d_dbi.tolist(), (d_dbi - 1.0).tolist()],
+        "gain_dBi": [gain_dbi.tolist(), (gain_dbi - 1.0).tolist()],
+        "P_rad": [
+            (pattern * prad / (4 * np.pi)).tolist(),
+            (pattern * prad / (4 * np.pi)).tolist(),
+        ],
         "out_file": str(path),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +169,20 @@ def main() -> int:
         print("FAIL: cmap not mirrored into pop-out")
         return 12
     print("pop-out cmap mirror OK:", gw.cmb_cmap.currentText())
+    # frequency selectable from the pop-out window
+    if not hasattr(gw, "cmb_freq") or gw.cmb_freq.count() != viewer.cmb_freq.count():
+        print("FAIL: pop-out freq combo missing/not synced")
+        return 23
+    if viewer.cmb_freq.count() > 1:
+        viewer.cmb_freq.setCurrentIndex(0)
+        gw.cmb_freq.setCurrentIndex(1)
+        if viewer._freq_index() != 1:
+            print("FAIL: pop-out freq change not applied to viewer")
+            return 23
+        if gw.cmb_freq.currentText() != viewer.cmb_freq.itemText(1):
+            print("FAIL: pop-out freq text mismatch")
+            return 23
+        print("pop-out freq select OK:", gw.cmb_freq.currentText())
     viewer.restore_graph_to_tab()
     if viewer.graph_is_popped_out:
         print("FAIL: restore did not close the pop-out")
@@ -314,6 +332,27 @@ def main() -> int:
 
     viewer.cmb_plot.setCurrentText("Gain vs Frequency")
     viewer._redraw()
+    # regression: the combined legend must list the twin-axis series too, and
+    # eta (0..1) vs Prad (W*s^2) must live on separate right axes.
+    ax0 = viewer.figure.axes[0]
+    leg = ax0.get_legend()
+    leg_labels = [t.get_text() for t in leg.get_texts()] if leg is not None else []
+    ylabels = [a.get_ylabel() for a in viewer.figure.axes]
+    print("[gain/freq] legend:", leg_labels, "| ylabels:", ylabels)
+    for want in ("Dmax [dBi]", "Gain max [dBi]", "eta", "Prad [W*s^2]"):
+        if want not in leg_labels:
+            print("FAIL: legend missing", want, leg_labels)
+            return 19
+    if "eta = Prad / Pin" not in ylabels or "Prad [W*s^2]" not in ylabels:
+        print("FAIL: right-axis labels", ylabels)
+        return 19
+    # Prad must NOT be squashed by the 0..1 efficiency axis
+    prad_ax = next(a for a in viewer.figure.axes if a.get_ylabel() == "Prad [W*s^2]")
+    eta_ax = next(a for a in viewer.figure.axes if a.get_ylabel() == "eta = Prad / Pin")
+    if abs(prad_ax.get_ylim()[1] - 1.05) < 1e-6 or prad_ax.get_ylim() == eta_ax.get_ylim():
+        print("FAIL: Prad shares the efficiency axis", prad_ax.get_ylim(), eta_ax.get_ylim())
+        return 19
+    print("[gain/freq] eta/Prad split axes OK")
     out = work / "antenna_viewer_smoke.png"
     viewer.canvas.draw()
     viewer.canvas.print_png(str(out))
@@ -321,6 +360,32 @@ def main() -> int:
     if not out.exists() or out.stat().st_size < 1000:
         print("FAIL: screenshot missing/too small")
         return 8
+
+    # --- analysis menu (right-click) opens on EVERY plot, not only polar ----
+    viewer._radial_dlg.hide()
+    ax0 = viewer.figure.axes[0]
+    viewer._on_click(SimpleNamespace(button=3, inaxes=ax0, x=0.0, y=0.0))
+    if not viewer._radial_dlg.isVisible():
+        print("FAIL: analysis menu did not open on the gain plot")
+        return 22
+    if viewer.spn_rmin.isEnabled() or viewer.btn_hpbw.isEnabled():
+        print("FAIL: polar-only controls enabled on the gain plot")
+        return 22
+    viewer.cmb_plot.setCurrentText("3D Pattern")
+    viewer._redraw()
+    viewer._on_click(
+        SimpleNamespace(button=3, inaxes=viewer.figure.axes[0], x=0.0, y=0.0)
+    )
+    if not viewer._radial_dlg.isVisible() or viewer.spn_rstep.isEnabled():
+        print("FAIL: analysis menu/3D gating wrong", viewer._radial_dlg.isVisible())
+        return 22
+    viewer.cmb_plot.setCurrentText("H-Plane (phi=0)")
+    viewer._redraw()
+    if not viewer.spn_rmin.isEnabled() or not viewer.btn_hpbw.isEnabled():
+        print("FAIL: polar-only controls disabled on a polar cut")
+        return 22
+    viewer._radial_dlg.hide()
+    print("[analysis] right-click opens on gain/3D/polar, polar controls gated: OK")
 
     # --- Scan work dir must NOT replace the loaded data ------------------
     from PySide6.QtCore import Qt
