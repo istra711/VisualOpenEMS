@@ -183,6 +183,17 @@ Run script (toolbar: Script…)
   • Run regenerates the script; hand-edits are copied to project_run_edited.py and
     you are asked whether to regenerate or run your edited script as-is.
   • Run an edited script by hand:  <simulation python> work/<project>/project_run.py
+
+Progress (status bar)
+  • During a run the status bar shows a progress bar + TS/energy label parsed
+    from the openEMS output: "TS <done>/<max>", residual "Energy <db> dB",
+    elapsed time, and "converged" / "max TS reached". Resets on each run.
+
+Run All Ports (Simulation menu → Ctrl+Shift+R)
+  • One FDTD run per port (each port excited once) → the complete S-matrix for
+    multi-port structures. Runs land in work/<project>/multi/port<n>/ and are
+    merged into work/<project>/sparams/sparams.json + .sNp. Needs ≥ 2 ports
+    (fewer falls back to a normal single run).
 """,
     "Mesh Parameters": """MESH PARAMETERS — standalone window (Ctrl+Shift+M)
 
@@ -214,7 +225,9 @@ Buttons
 Notes
   • Second click on the menu entry re-uses the same window (it re-syncs).
   • Build CSX + Mesh + Validate (Ctrl+M / Mesh menu) reads the project, so
-    Apply first, then Build.
+    Apply first, then Build. The build runs in a background thread — the UI
+    stays responsive, the button is disabled until it finishes and the log
+    panel shows progress.
   • Domain size (black dashed frame in the Mesh Viewer) is NOT here — it
     comes from air margin / boundary: Sim Params → Boundary conditions.
 """,
@@ -266,6 +279,10 @@ with live editors: changes apply immediately (no Apply/Close round-trip).
 Ports
   • Double-click a port (or Edit Port…) — name, type (lumped / MSL / rect waveguide),
     resistance, direction, start/stop, mesh dirs, excite flag.
+  • MSL (microstrip) ports also expose Propagation dir / Excitation dir: leave them on
+    (auto) to derive both axes from the port box (propagation = longest edge, excitation
+    = shortest); set them explicitly for unusual orientations. MSL ports are built after
+    the mesh (the strip + port need the grid lines).
   • Remove Port — delete the selected entry.
   • FreeCAD PORT_in1_start/stop or openems_port_* properties are imported automatically.
   • Settings → Port defaults — type, R, excite, mesh dirs used when FreeCAD omits them
@@ -313,9 +330,10 @@ Tips
     "Antenna": """ANTENNA — far-field pattern, directivity, gain
 
 After a successful Run (with NF2FF enabled)
-  • Loads simulation/nf2ff/nf2ff.json written by the NF2FF post-processing.
+  • Loads the project folder's nf2ff/nf2ff.json written by the NF2FF
+    post-processing (<work>/<project>/nf2ff/nf2ff.json).
   • Loaded files — lists each file as subpath relative to the work dir plus
-    file name (e.g. myproj/simulation/nf2ff/nf2ff.json); tooltip = full path.
+    file name (e.g. myproj/nf2ff/nf2ff.json); tooltip = full path.
   • Details — header shows the current file name in parentheses; below it
     Dmax, Gmax, eta, Prad and theta/phi points for the selected frequency.
   • Plots (combo): E-Plane (phi=90), H-Plane (phi=0), Azimuth (theta=90),
@@ -398,6 +416,11 @@ density, PML distance and NF2FF defaults of this checklist in one click.
      high ≈ 20, very_high ≈ 25 cells/λ.)
    • Use the one-third/two-thirds rule for smooth transitions between cell
      sizes (Mesh → Smooth metal edge = one_third_two_thirds).
+   • "Refine mesh at metal interfaces (graded)" (Mesh Parameters, on for new
+     projects) inserts graded lines on the air/substrate side of every metal
+     face — finest next to the metal, coarsening with distance by the Max
+     grading ratio. Use it when the field concentrates at a surface; turn it
+     off if the added cells are not worth the runtime.
    • Avoid relying on pure automatic meshing alone — it often under-resolves
      the critical edges of the radiator. Check the result in the Mesh Viewer.
    • Where a small feature forces a very small cell (feed gap, thin wire,

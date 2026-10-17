@@ -51,6 +51,12 @@ class PortDef:
     capacitance: float = 0.0
     direction: str = "x"  # x|y|z for waveguide ports
     excite_port: bool = True
+    # MSL (microstrip) ports only: propagation + excitation axis (x|y|z).
+    # ``direction`` above stays the lumped/waveguide normal axis. Empty means
+    # "derive from the port box": propagation = longest edge, excitation =
+    # shortest edge (openEMS MSL tutorial convention).
+    prop_direction: str = ""
+    exc_direction: str = ""
     # mesh hints
     mesh_dirs: str = "xyz"
     metal_edge_res: float | None = None
@@ -130,6 +136,11 @@ class MeshSpec:
     cells_per_wavelength: float = 10.0
     num_lines: int = 5  # extra mesh lines per edge gap
     dirs: str = "xyz"  # mesh axes: xyz|xy|xz|yz|x|y|z
+    # Graded refinement on the vacuum/dielectric side of metal (PEC) faces:
+    # finest cell at the interface (min_cellsize), growing by max_grading_ratio
+    # into the surrounding air/dielectric. Applied app-side after easyMesh
+    # (app/meshing/interface_refine.py); the easyMesh-internal transition pass
+    # is not used anymore. Off for old projects, on for new ones.
     add_graded_mesh_lines_at_material_transitions: bool = False
     # Mesh/FDTD coordinate system: "cartesian" (easyMesh, default) or
     # "cylindrical" (polar (r, alpha, z) mesher; openEMS CoordSystem=1).
@@ -159,7 +170,10 @@ class MeshSpec:
             "num_lines": self.num_lines,
             "dirs": self.dirs,
             "coord_system": self.coord_system,
-            "add_graded_mesh_lines_at_material_transitions": self.add_graded_mesh_lines_at_material_transitions,
+            # NOTE: the metal-interface refinement is applied app-side
+            # (app/meshing/interface_refine.py) — do NOT forward it to easyMesh
+            # (its internal version is smoothed away / breaks metal-in-air).
+            "max_grading_ratio": self.max_grading_ratio,
         }
         if self.target_frequency is not None:
             setup["target_frequency"] = self.target_frequency
@@ -219,6 +233,10 @@ class Project:
     patch_params: dict[str, Any] | None = None
     # generic CSX primitives (box/cylinder/polygon/stl dicts) for non-patch projects
     primitives: list[dict[str, Any]] | None = None
+    #: artifacts of the last simulation run (absolute paths), written by the
+    #: GUI so a re-opened project can restore the Mesh Viewer / S-param Viewer
+    #: without rebuilding: {"sim_dir", "csx_xml", "sparams", "nf2ff", "time"}
+    results: dict[str, Any] | None = None
 
     def material_by_name(self, name: str) -> MaterialDef | None:
         for m in self.materials:
@@ -273,6 +291,9 @@ class Project:
     @classmethod
     def new_default(cls, name: str = "untitled") -> "Project":
         p = cls(name=name)
+        # New projects refine the mesh at metal/vacuum interfaces by default
+        # (graded: fine at the metal, coarsening into the air/dielectric).
+        p.mesh.add_graded_mesh_lines_at_material_transitions = True
         p.materials = [
             MaterialDef(name="copper", kind="pec", color=(0.85, 0.55, 0.2, 1.0)),
             MaterialDef(

@@ -149,12 +149,18 @@ def front_to_back_ratio(ang_deg: np.ndarray, db: np.ndarray) -> dict | None:
 
 
 def find_latest_nf2ff_files(work_dir: Path) -> list[Path]:
-    """Discover ``simulation/nf2ff/nf2ff.json`` under work/*/simulation, newest first."""
+    """Discover ``nf2ff/nf2ff.json`` (new project layout) or the legacy
+    ``*/simulation/nf2ff/nf2ff.json``, newest first."""
     out: list[Path] = []
     if not work_dir or not Path(work_dir).exists():
         return out
-    for sim in sorted(Path(work_dir).glob("*/simulation")):
-        p = sim / "nf2ff" / "nf2ff.json"
+    root = Path(work_dir)
+    candidates = [root / "nf2ff" / "nf2ff.json"]
+    # new layout: <work>/<project>/nf2ff/nf2ff.json
+    candidates += [d / "nf2ff.json" for d in sorted(root.glob("*/nf2ff"))]
+    # legacy layout: <work>/<project>/simulation/nf2ff/nf2ff.json
+    candidates += [d / "nf2ff" / "nf2ff.json" for d in sorted(root.glob("*/simulation"))]
+    for p in candidates:
         if p.exists():
             out.append(p)
     out.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -628,32 +634,72 @@ class AntennaPatternViewer(QWidget):
         self._on_scan()
 
     def _on_open(self) -> None:
-        start = str(self.work_dir) if self.work_dir else ""
+        # start in the folder of the currently loaded file (or the work dir)
+        if self.data_path is not None:
+            start = str(Path(self.data_path).parent)
+        else:
+            start = str(self.work_dir) if self.work_dir else ""
         path, _ = QFileDialog.getOpenFileName(
             self, "Open nf2ff.json", start, "NF2FF JSON (nf2ff.json);;All files (*)"
         )
-        if path:
-            self.load_path(Path(path))
+        if not path:
+            return
+        self.load_path(Path(path))
+        if self.data is None:
+            return
+        # make sure the opened file shows up in the list and stays selected
+        target = str(Path(path))
+        self.file_list.blockSignals(True)
+        row = next(
+            (
+                i
+                for i in range(self.file_list.count())
+                if str(self.file_list.item(i).data(Qt.ItemDataRole.UserRole)) == target
+            ),
+            -1,
+        )
+        if row < 0:
+            item = QListWidgetItem(Path(path).name)
+            item.setData(Qt.ItemDataRole.UserRole, target)
+            item.setToolTip(target)
+            self.file_list.insertItem(0, item)
+            row = 0
+        self.file_list.setCurrentRow(row)
+        self.file_list.blockSignals(False)
 
     def _reload_current(self) -> None:
         if self.data_path:
             self.load_path(self.data_path)
 
-    def _on_scan(self) -> None:
+    def _on_scan(self, auto_load: bool = False) -> None:
+        """Refresh the loaded-files list — without replacing the current data.
+
+        Keeps the currently loaded file selected; with ``auto_load`` and nothing
+        loaded yet the newest entry is loaded (first fill).
+        """
+        current = str(self.data_path) if self.data_path else ""
+        self.file_list.blockSignals(True)
         self.file_list.clear()
-        if not self.work_dir:
-            return
-        for p in find_latest_nf2ff_files(self.work_dir):
-            try:
-                shown = str(p.relative_to(self.work_dir))
-            except ValueError:
-                shown = p.name
-            item = QListWidgetItem(shown)
-            item.setData(Qt.ItemDataRole.UserRole, str(p))
-            item.setToolTip(str(p))
-            self.file_list.addItem(item)
-        if self.file_list.count():
-            self.file_list.setCurrentRow(0)
+        row = -1
+        if self.work_dir:
+            for i, p in enumerate(find_latest_nf2ff_files(self.work_dir)):
+                try:
+                    shown = str(p.relative_to(self.work_dir))
+                except ValueError:
+                    shown = p.name
+                item = QListWidgetItem(shown)
+                item.setData(Qt.ItemDataRole.UserRole, str(p))
+                item.setToolTip(str(p))
+                self.file_list.addItem(item)
+                if current and str(p) == current and row < 0:
+                    row = i
+        if row < 0 and self.file_list.count():
+            row = 0
+        if row >= 0:
+            self.file_list.setCurrentRow(row)
+        self.file_list.blockSignals(False)
+        if auto_load and self.data is None and self.file_list.count():
+            self._on_file_selected(self.file_list.currentItem())
 
     def _on_file_selected(self, current, _previous=None) -> None:
         if current is not None:

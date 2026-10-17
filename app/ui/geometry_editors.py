@@ -68,6 +68,16 @@ def _vec3_row(
     return spins
 
 
+def _axis_combo(current: str) -> QComboBox:
+    """x/y/z combo with an explicit '(auto)' entry (stored as empty string)."""
+    cmb = QComboBox()
+    for label, value in (("(auto)", ""), ("x", "x"), ("y", "y"), ("z", "z")):
+        cmb.addItem(label, value)
+    idx = cmb.findData((current or "").strip().lower())
+    cmb.setCurrentIndex(idx if idx >= 0 else 0)
+    return cmb
+
+
 def _vec3_read(spins: list[QDoubleSpinBox], coord_system: str = "cartesian") -> list[float]:
     """Spins -> project values (cylindrical phi: degrees -> radians)."""
     vals = [float(s.value()) for s in spins]
@@ -102,6 +112,14 @@ class PortDialog(QDialog):
         self.cmb_dir = QComboBox()
         self.cmb_dir.addItems(["x", "y", "z"])
         self.cmb_dir.setCurrentText(p.direction or "z")
+        self.cmb_prop = _axis_combo(getattr(p, "prop_direction", ""))
+        self.cmb_prop.setToolTip(
+            "MSL only: propagation axis along the line\n(empty = longest port edge)"
+        )
+        self.cmb_exc = _axis_combo(getattr(p, "exc_direction", ""))
+        self.cmb_exc.setToolTip(
+            "MSL only: excitation axis through the substrate\n(empty = shortest port edge)"
+        )
         self.chk_excite = QCheckBox("Excite port")
         self.chk_excite.setChecked(bool(p.excite_port))
         self.cmb_mesh = QComboBox()
@@ -112,6 +130,8 @@ class PortDialog(QDialog):
         form.addRow("Type", self.cmb_type)
         form.addRow("Resistance (Ω)", self.spn_r)
         form.addRow("Direction", self.cmb_dir)
+        form.addRow("Propagation dir (MSL)", self.cmb_prop)
+        form.addRow("Excitation dir (MSL)", self.cmb_exc)
         form.addRow(self.chk_excite)
         form.addRow("Mesh dirs", self.cmb_mesh)
         self.spn_start = _vec3_row(form, "Start", p.start, coord_system=coord_system)
@@ -139,6 +159,8 @@ class PortDialog(QDialog):
             stop=_vec3_read(self.spn_stop, self._coord_system),
             resistance=float(self.spn_r.value()),
             direction=self.cmb_dir.currentText(),
+            prop_direction=self.cmb_prop.currentData() or "",
+            exc_direction=self.cmb_exc.currentData() or "",
             excite_port=self.chk_excite.isChecked(),
             mesh_dirs=self.cmb_mesh.currentText(),
         )

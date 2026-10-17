@@ -27,7 +27,6 @@ expected = {
     'num_lines': 8,
     'dirs': 'xy',
     'use_arc_detection': True,
-    'add_graded_mesh_lines_at_material_transitions': True,
     'smooth_metal_edge': 'extra_lines',
     'handle_closely_placed_edges': False,
     'use_circle_detection': True,
@@ -37,6 +36,16 @@ for key, want in expected.items():
     got = setup.get(key, 'MISSING')
     status = 'OK' if got == want else f'FAIL (got {got!r}, want {want!r})'
     print(f'  {key}: {status}')
+
+# The metal-interface refinement is applied APP-SIDE after easyMesh
+# (app/meshing/interface_refine.py) — the flag must NOT be forwarded, because
+# easyMesh's internal pass is smoothed away and misses metal-in-air.
+not_forwarded = 'add_graded_mesh_lines_at_material_transitions' not in setup
+print(
+    "  add_graded_mesh_lines_at_material_transitions not forwarded to easyMesh: "
+    + ('OK' if not_forwarded else 'FAIL (still forwarded)')
+)
+assert not_forwarded, 'app-side refinement flag must not reach easyMesh'
 
 # Simulate what easyMesh does in get_mesh_parameters (after fix)
 print('\n--- Simulating easyMesh get_mesh_parameters ---')

@@ -55,7 +55,8 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - Metal-edge densification for cylindrical structures (custom fix — see [easyMesh Changes](docs/EASYMESH_CHANGES_EN.md))
 - Separate min cell size for Z-axis (useful for flat PCB structures)
 - Axis-restricted meshing (`xy`, `xz`, `xyz`, …)
-- Arc detection and graded mesh lines at material transitions
+- Arc detection and **graded mesh refinement at metal interfaces** (fine next
+  to PEC, coarsening into the air/dielectric by the max grading ratio)
 - Interactive mesh viewer with 3D scene and per-axis slice inspection
 
 ### Simulation
@@ -291,6 +292,7 @@ python app\main.py
 | Ctrl+Shift+S | Save As |
 | Ctrl+M | Open Mesh Parameters |
 | Ctrl+R | Run Simulation |
+| Ctrl+Shift+R | Run All Ports (full S-matrix) |
 
 ### S-Parameter Viewer
 
@@ -368,7 +370,7 @@ Projects are stored as `.fcsim.json` — a human-readable JSON file:
     "max_grading_ratio": 2.0,
     "num_lines": 5,
     "dirs": "xyz",
-    "add_graded_mesh_lines_at_material_transitions": false
+    "add_graded_mesh_lines_at_material_transitions": true
   },
   "boundary": {...},
   "sim": {...},

@@ -151,7 +151,13 @@ class MeshParamsPanel(QWidget):
         self.chk_edges = QCheckBox("Handle closely placed edges")
         self.chk_edges.setChecked(True)
         self.chk_graded_transitions = QCheckBox(
-            "Add graded mesh lines at material transitions"
+            "Refine mesh at metal interfaces (graded)"
+        )
+        self.chk_graded_transitions.setToolTip(
+            "Insert graded mesh lines next to every metal (PEC) surface, on the\n"
+            "vacuum/dielectric side: finest cell at the interface (Min cell\n"
+            "size, fallback local cell / 4), coarsening by the Max grading\n"
+            "ratio with distance. Cartesian only."
         )
         fm.addRow("Refined cell size", self.spn_refined)
         fm.addRow("Min cell size", self.spn_min_cell)

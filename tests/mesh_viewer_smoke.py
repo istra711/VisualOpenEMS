@@ -153,16 +153,22 @@ def main() -> int:
         area0 = get_sim_area(CSX)
         n0 = _SLICE_AXES["XY"][2]  # normal z
         lo0, hi0 = float(area0[0][_AXIS[n0]]), float(area0[1][_AXIS[n0]])
+        # a freshly built/loaded mesh starts on the model origin (plane 0 mm)
+        assert abs(viewer.spn_plane.value()) < 1e-9, (
+            f"plane must be 0 mm after meshing: {viewer.spn_plane.value()}"
+        )
         viewer.slider.setValue(1000)  # full drag must reach the domain end
-        # (spn_plane stores 4 decimals — see setDecimals(4))
-        assert abs(viewer.spn_plane.value() - hi0) < 1e-3, (
+        # (slider values snap to mesh lines; spn_plane stores 4 decimals)
+        want_hi = viewer._nearest_mesh_line(n0, hi0)
+        assert abs(viewer.spn_plane.value() - want_hi) < 1e-3, (
             viewer.spn_plane.value(),
-            hi0,
+            want_hi,
         )
         viewer.slider.setValue(0)
-        assert abs(viewer.spn_plane.value() - lo0) < 1e-3, (
+        want_lo = viewer._nearest_mesh_line(n0, lo0)
+        assert abs(viewer.spn_plane.value() - want_lo) < 1e-3, (
             viewer.spn_plane.value(),
-            lo0,
+            want_lo,
         )
         # switching the slice axis must recalibrate the plane spinbox range
         viewer.cmb_view.setCurrentText("XZ slice")  # normal y
@@ -182,6 +188,170 @@ def main() -> int:
         viewer.cmb_view.setCurrentText("XY slice")
         assert viewer.slider.isEnabled() and viewer.spn_plane.isEnabled()
         print("  plane slider calibration: OK")
+
+        # --- mesh grid visibility slider (alpha + line width) ---------------
+        def _mesh_alphas(axx):
+            out = []
+            for coll in axx.collections:
+                a = coll.get_alpha()
+                if a is None:
+                    try:  # alpha baked into the colour instead
+                        cols = np.asarray(coll.get_edgecolor(), dtype=float)
+                        if cols.ndim == 2 and cols.shape[1] >= 4:
+                            a = float(cols[0, 3])
+                    except Exception:  # noqa: BLE001
+                        a = None
+                if a is not None:
+                    out.append(float(a))
+            return out
+
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer.chk_mesh.setChecked(True)
+        viewer.slider_mesh.setValue(100)
+        viewer._redraw()
+        hi = _mesh_alphas(viewer.fig_slice.axes[0])
+        viewer.slider_mesh.setValue(0)
+        viewer._redraw()
+        lo = _mesh_alphas(viewer.fig_slice.axes[0])
+        assert hi and max(hi) > 0.9, f"mesh lines not strong at 100%: {hi}"
+        assert lo and max(lo) < 0.1, f"mesh lines not faint at 0%: {lo}"
+        # the slider only makes sense while the grid is shown in a slice view
+        viewer.chk_mesh.setChecked(False)
+        assert not viewer.slider_mesh.isEnabled(), "slider must disable with hidden grid"
+        viewer.chk_mesh.setChecked(True)
+        assert viewer.slider_mesh.isEnabled(), "slider must enable with shown grid"
+        viewer.slider_mesh.setValue(35)
+        viewer._redraw()
+        print(f"  mesh grid visibility slider: OK (alpha {max(hi):.2f} -> {max(lo):.2f})")
+
+        # --- visibility toggles must work and must NOT reset the zoom --------
+        import contextlib
+        import io
+
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer.spn_plane.setValue(0.7)  # inside the patch feed port's z-range
+        for chk in (viewer.chk_geom, viewer.chk_ports):
+            chk.setChecked(True)
+            artist_ax = viewer.fig_slice.axes[0]
+            n_on = (len(artist_ax.patches), len(artist_ax.lines))
+            chk.setChecked(False)
+            artist_ax = viewer.fig_slice.axes[0]
+            n_off = (len(artist_ax.patches), len(artist_ax.lines))
+            assert n_on != n_off, f"visibility toggle has no effect: {n_on} == {n_off}"
+        viewer.chk_geom.setChecked(True)
+        viewer.chk_ports.setChecked(True)
+        # no redraw errors: the ports block used to raise NameError (eps)
+        # whenever the geometry was hidden
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            viewer.chk_geom.setChecked(False)
+            viewer.chk_geom.setChecked(True)
+            viewer.chk_ports.setChecked(False)
+            viewer.chk_ports.setChecked(True)
+        assert "redraw error" not in buf.getvalue(), buf.getvalue()
+        # zoom survives the toggles / mesh style changes (same view)
+        artist_ax = viewer.fig_slice.axes[0]
+        artist_ax.set_xlim(-7.0, 7.0)
+        artist_ax.set_ylim(-4.0, 4.0)
+        viewer.slider_mesh.setValue(70)
+        viewer.chk_ports.setChecked(False)
+        viewer.chk_geom.setChecked(False)
+        artist_ax = viewer.fig_slice.axes[0]
+        assert abs(artist_ax.get_xlim()[1] - 7.0) < 1e-9, artist_ax.get_xlim()
+        assert abs(artist_ax.get_ylim()[1] - 4.0) < 1e-9, artist_ax.get_ylim()
+        viewer.chk_ports.setChecked(True)
+        viewer.chk_geom.setChecked(True)
+        viewer.slider_mesh.setValue(35)
+        viewer._redraw()
+        print("  visibility toggles + zoom preservation: OK")
+
+        # --- ports independent of the structure; legend follows the toggles --
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer.spn_plane.setValue(0.7)  # inside the patch feed port z-range
+        viewer.chk_geom.setChecked(True)
+        viewer.chk_ports.setChecked(True)
+
+        def _legend_texts():
+            ax = viewer.fig_slice.axes[0]
+            leg = ax.get_legend()
+            return [t.get_text() for t in leg.get_texts()] if leg else []
+
+        legend = _legend_texts()
+        assert "Ports" in legend, f"port legend entry missing: {legend}"
+        assert not any(
+            tok in l.lower()
+            for l in legend
+            for tok in ("port_resist", "port_excite", "port_ut", "port_it", "lumped", "excitation", "probebox")
+        ), f"CSX port artefacts leaked into the legend: {legend}"
+        # hiding the STRUCTURE must keep the ports visible
+        viewer.chk_geom.setChecked(False)
+        ax = viewer.fig_slice.axes[0]
+        assert len(ax.lines) >= 1, "ports vanished together with the structure"
+        assert "Ports" in _legend_texts(), "port legend entry vanished with the structure"
+        # hiding the PORTS removes them from plot AND legend
+        viewer.chk_ports.setChecked(False)
+        ax = viewer.fig_slice.axes[0]
+        assert len(ax.lines) == 0, "port marker still drawn with 'Show ports' off"
+        assert "Ports" not in _legend_texts(), "port legend entry kept with 'Show ports' off"
+        viewer.chk_geom.setChecked(True)
+        viewer.chk_ports.setChecked(True)
+        viewer._redraw()
+        print("  ports independent of structure + legend follows toggles: OK")
+
+        # --- port perpendicular to the slice (dipole style) -------------------
+        # x-directed port sitting in the z=0 plane: in the XY view its extent
+        # along the normal is zero, so belonging to the local cell it must
+        # still follow "Show ports" (regression: only the exact plane worked).
+        from app.models.project import PortDef
+
+        viewer.set_project_context(
+            project=project,
+            primitives=primitives,
+            ports=[
+                PortDef(
+                    name="inX",
+                    start=[-5.0, 1.0, 0.0],
+                    stop=[5.0, 1.0, 0.0],
+                    direction="x",
+                )
+            ],
+            nf2ff=project.nf2ff,
+        )
+        viewer.cmb_view.setCurrentText("XY slice")
+        # slice inside the port's own cell but off the port plane (the tolerance
+        # is the local cell size)
+        mesh_z = mesh_lines_from_csx(CSX)
+        span = viewer._cell_span(mesh_z, "z", 0.0)
+        viewer.spn_plane.setValue(0.5 * span)
+        viewer._redraw()
+        viewer.chk_ports.setChecked(True)
+        ax = viewer.fig_slice.axes[0]
+        n_on = (len(ax.lines), len(ax.patches))
+        viewer.chk_ports.setChecked(False)
+        ax = viewer.fig_slice.axes[0]
+        n_off = (len(ax.lines), len(ax.patches))
+        assert n_on != n_off, f"perpendicular port must follow 'Show ports': {n_on} == {n_off}"
+        viewer.set_project_context(
+            project=project,
+            primitives=primitives,
+            ports=project.ports,
+            nf2ff=project.nf2ff,
+        )
+        viewer.spn_plane.setValue(0.7)
+        viewer.chk_ports.setChecked(True)
+        viewer._redraw()
+        print("  perpendicular port (dipole style) follows 'Show ports': OK")
+
+        # --- every slice view keeps the domain mapping ------------------------
+        for view in ("XY slice", "XZ slice", "YZ slice"):
+            viewer.cmb_view.setCurrentText("Cell sizes")  # force a view change
+            viewer.cmb_view.setCurrentText(view)
+            normal = _SLICE_AXES[view.split()[0]][2]
+            dom = get_sim_area(CSX)
+            assert abs(viewer.spn_plane.minimum() - float(dom[0][_AXIS[normal]])) < 1e-3
+            assert abs(viewer.spn_plane.maximum() - float(dom[1][_AXIS[normal]])) < 1e-3
+            assert viewer.slider.isEnabled() and viewer.spn_plane.isEnabled()
+        print("  per-view plane controls span the domain: OK")
 
         for i in range(viewer.cmb_view.count()):
             name = viewer.cmb_view.currentText()
@@ -232,6 +402,46 @@ def main() -> int:
             cv.callbacks.process("button_press_event", ev)  # must not raise
         assert len(viewer.canvas_slice.figure.axes) >= 1, "slice canvas has no axes"
         print("  dblclick reset view: OK")
+        # --- cylinders are drawn as circles (true cross-section) -------------
+        from matplotlib.patches import Circle
+
+        cyl = CSX.AddMetal("copper")
+        cyl.AddCylinder([0.0, 0.0, -5.0], [0.0, 0.0, 5.0], 2.0, priority=30)
+        viewer.set_project_context(
+            project=project,
+            primitives=primitives,
+            ports=project.ports,
+            nf2ff=project.nf2ff,
+        )
+        viewer.set_csx(CSX)
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer.spn_plane.setValue(0.0)
+        ax = viewer.fig_slice.axes[0]
+        radii = [c.radius for c in ax.patches if isinstance(c, Circle)]
+        assert any(abs(r - 2.0) < 1e-6 for r in radii), radii
+        # project-primitive dicts (axis endpoints + radius) as well
+        viewer.set_project_context(
+            project=project,
+            primitives=list(primitives)
+            + [
+                {
+                    "kind": "cylinder",
+                    "name": "cyl1",
+                    "material": "copper",
+                    "priority": 10,
+                    "start": [0.0, 0.0, -5.0],
+                    "stop": [0.0, 0.0, 5.0],
+                    "radius": 2.0,
+                }
+            ],
+            ports=project.ports,
+            nf2ff=project.nf2ff,
+        )
+        viewer._redraw()
+        radii = [c.radius for c in viewer.fig_slice.axes[0].patches if isinstance(c, Circle)]
+        assert len(radii) >= 2 and all(abs(r - 2.0) < 1e-6 for r in radii), radii
+        print("  cylinders drawn as circles (CSX + project dict): OK")
+
         print("MESH VIEWER SMOKE PASS")
         return 0
     except Exception:

@@ -42,6 +42,19 @@ def main() -> int:
         viewer.cmb_plot.setCurrentText(plot)
         viewer._redraw()
         print("plot ok:", plot, "axes", len(viewer.figure.axes))
+        if plot == "Re/Im + Phase":
+            # combined plot: Re/Im on the primary axis + phase on a twin axis
+            if len(viewer.figure.axes) != 2:
+                print("FAIL: Re/Im + Phase must use a twin y-axis")
+                return 5
+            ax_main, ax_ph = viewer.figure.axes[0], viewer.figure.axes[1]
+            if len(ax_main.lines) < 2 or len(ax_ph.lines) < 1:
+                print("FAIL: Re/Im + Phase lines missing")
+                return 5
+            if "Phase" not in ax_ph.get_ylabel():
+                print("FAIL: twin axis is not labelled Phase")
+                return 5
+            print("  Re/Im + Phase: 2 axes (Re/Im left, Phase right) OK")
         if plot == "Smith":
             ax = viewer.figure.axes[0]
             n_patches = len(ax.patches)

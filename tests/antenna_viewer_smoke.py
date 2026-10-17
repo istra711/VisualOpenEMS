@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -320,6 +321,63 @@ def main() -> int:
     if not out.exists() or out.stat().st_size < 1000:
         print("FAIL: screenshot missing/too small")
         return 8
+
+    # --- Scan work dir must NOT replace the loaded data ------------------
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QFileDialog
+
+    viewer.load_path(synth_json)
+    loaded_before = viewer.data_path
+    viewer._on_scan()
+    assert viewer.data_path == loaded_before, (
+        f"Scan work dir replaced the loaded file: {viewer.data_path} != {loaded_before}"
+    )
+    cur = viewer.file_list.currentItem()
+    assert cur is not None and str(cur.data(Qt.ItemDataRole.UserRole)) == str(loaded_before)
+    print("[scan] scan keeps the loaded data + selection: OK")
+
+    # a file in the NEW layout (<project>/nf2ff/nf2ff.json) stays after a scan
+    other = work / "antenna_smoke2" / "nf2ff" / "nf2ff.json"
+    write_synthetic_nf2ff(other)
+    found = [str(f) for f in find_latest_nf2ff_files(work)]
+    assert str(other) in found, ("discovery missed the new layout", str(other))
+    viewer.set_work_dir(work)  # rescan with two candidates
+    items = [
+        str(viewer.file_list.item(i).data(Qt.ItemDataRole.UserRole))
+        for i in range(viewer.file_list.count())
+    ]
+    assert str(other) in items, ("new-layout file missing from the list", items[:5])
+    viewer.load_path(other)
+    viewer._on_scan()
+    assert viewer.data_path == other, (viewer.data_path, other)
+    items = [
+        str(viewer.file_list.item(i).data(Qt.ItemDataRole.UserRole))
+        for i in range(viewer.file_list.count())
+    ]
+    assert str(other) in items, ("new-layout file dropped from the list", items[:5])
+    print("[scan] new-layout file discovered + listed + stays loaded: OK")
+
+    # --- Open nf2ff.json: loads, lists and selects the file --------------
+    third = work / "antenna_smoke3_nf2ff.json"  # outside any project folder
+    write_synthetic_nf2ff(third)
+    real_dialog = QFileDialog.getOpenFileName
+    QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (str(third), ""))
+    try:
+        viewer._on_open()
+    finally:
+        QFileDialog.getOpenFileName = real_dialog
+    assert viewer.data_path == third, (viewer.data_path, third)
+    items = [
+        str(viewer.file_list.item(i).data(Qt.ItemDataRole.UserRole))
+        for i in range(viewer.file_list.count())
+    ]
+    assert str(third) in items, items
+    assert str(viewer.file_list.currentItem().data(Qt.ItemDataRole.UserRole)) == str(third)
+    print("[open] Open nf2ff.json loads + lists + selects the file: OK")
+
+    for p in (other, third):
+        p.unlink(missing_ok=True)
+    shutil.rmtree(work / "antenna_smoke2", ignore_errors=True)
 
     print("ANTENNA VIEWER SMOKE PASS")
     return 0

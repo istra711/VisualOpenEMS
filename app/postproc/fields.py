@@ -17,40 +17,74 @@ def _find_h5_files(sim_dir: Path, dump_name: str) -> list[Path]:
     return sorted(files)
 
 
-def read_dump_plane(h5_path: Path):
-    """Return (mesh_dict, field_data) best-effort from openEMS HDF5 dump."""
+def _field_from_group(grp) -> np.ndarray | None:
+    """Field array from an openEMS dump group (``FieldData/FD`` or ``/TD``)."""
     import h5py
 
+    if not isinstance(grp, h5py.Group):
+        return None
+    names = list(grp.keys())
+    # frequency domain: f0_real / f0_imag (optionally f1_… for more frequencies)
+    reals = sorted(k for k in names if k.endswith("_real"))
+    for key in reals:
+        base = key[: -len("_real")]
+        im_key = base + "_imag"
+        re = np.asarray(grp[key])
+        if im_key in grp:
+            return re + 1j * np.asarray(grp[im_key])
+        return re
+    # time domain: t0, t1, … -> last time step
+    tkeys = sorted(k for k in names if k.startswith("t") and k[1:].isdigit())
+    if tkeys:
+        return np.asarray(grp[tkeys[-1]])
+    return None
+
+
+def _vector_magnitude(data: np.ndarray) -> np.ndarray:
+    """Reduce a leading xyz component axis to the vector magnitude."""
+    data = np.asarray(data)
+    if data.ndim >= 2 and data.shape[0] == 3:
+        return np.sqrt(np.sum(np.abs(data.astype(complex)) ** 2, axis=0))
+    return np.abs(data)
+
+
+def read_dump_plane(h5_path: Path):
+    """Return ``(mesh_dict, field_data, attrs)`` from an openEMS HDF5 dump.
+
+    openEMS 0.0.36 stores ``Mesh/{x,y,z}`` plus the field in
+    ``FieldData/FD/f<N>_real|_imag`` (frequency domain) or
+    ``FieldData/TD/t<N>`` (time domain, last step). The xyz component axis is
+    reduced to the vector magnitude so the caller gets a plain 2D/3D array.
+    """
+    import h5py
+
+    mesh: dict = {}
+    attrs: dict = {}
+    field = None
     with h5py.File(h5_path, "r") as f:
-        mesh = {}
         if "Mesh" in f:
             g = f["Mesh"]
             for key in g.keys():
-                mesh[key] = np.asarray(g[key])
-        # field datasets
-        field = None
-        for key in f.keys():
-            if key in {"Mesh", "Info"}:
-                continue
-            node = f[key]
-            if isinstance(node, h5py.Dataset):
-                field = np.asarray(node)
-            elif isinstance(node, h5py.Group):
-                # nested time or component groups
-                for k2 in node.keys():
-                    ds = node[k2]
-                    if isinstance(ds, h5py.Dataset) and ds.size > 0:
-                        field = np.asarray(ds)
-                        break
-                if field is not None:
-                    break
-        # attributes
-        attrs = {}
+                try:
+                    mesh[key] = np.asarray(g[key])
+                except Exception:  # noqa: BLE001
+                    pass
         try:
-            for k, v in f.attrs.items():
-                attrs[k] = v
+            attrs = dict(f.attrs)
         except Exception:  # noqa: BLE001
             pass
+        # --- field data -----------------------------------------------------
+        root = f["FieldData"] if "FieldData" in f else f
+        if isinstance(root, h5py.Group):
+            for name in list(root.keys()):
+                data = _field_from_group(root[name])
+                if data is not None:
+                    field = _vector_magnitude(data)
+                    break
+            if field is None:  # very old layout: datasets directly in the root
+                data = _field_from_group(root)
+                if data is not None:
+                    field = _vector_magnitude(data)
     return mesh, field, attrs
 
 
@@ -92,9 +126,21 @@ def plot_field_slices(sim_dir: Path | str, dumps: list[DumpDef], out_dir: Path |
         mag = _complex_mag(field)
         # squeeze to 2D if possible
         mag = np.squeeze(mag)
+        # axis extent/labels from the mesh (drawing units) when lengths match
+        extent = None
+        xlabel = ylabel = ""
+        if mag.ndim == 2 and mesh:
+            vals = {k: np.asarray(mesh.get(k, []), dtype=float) for k in "xyz"}
+            cols = [(k, v) for k, v in vals.items() if v.size == mag.shape[1]]
+            rows = [(k, v) for k, v in vals.items() if v.size == mag.shape[0]]
+            if cols and rows:
+                (xlabel, xv), (ylabel, yv) = cols[0], rows[0]
+                extent = [float(xv.min()), float(xv.max()), float(yv.min()), float(yv.max())]
         fig, ax = plt.subplots(figsize=(6, 5))
         if mag.ndim == 2:
-            im = ax.imshow(mag, origin="lower", aspect="auto")
+            im = ax.imshow(mag, origin="lower", aspect="auto", extent=extent)
+            ax.set_xlabel(xlabel or "x")
+            ax.set_ylabel(ylabel or "y")
         elif mag.ndim == 1:
             ax.plot(mag)
             im = None

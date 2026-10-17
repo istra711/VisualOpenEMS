@@ -60,7 +60,7 @@ def main() -> int:
     dt = time.time() - t0
     ok = code == 0
     print(f"RUN_OK={ok} exit_code={code} elapsed_s={dt:.1f}")
-    sim_dir = work / "simulation"
+    sim_dir = work  # project folder: results live directly here (sparams/, nf2ff/, fields/)
     print("Simulation dir:", sim_dir, "exists:", sim_dir.exists())
     if sim_dir.exists():
         for p in sorted(sim_dir.rglob("*")):

@@ -171,6 +171,7 @@ from app.postproc import fields as fld
 from app.postproc import nf2ff as nf
 from app.postproc import sparams as sp
 from app.csxcad_builder.quantize import f32
+from app.simulation.msl import resolve_msl_axes
 
 
 def load_project() -> Project:
@@ -572,6 +573,10 @@ def main() -> int:
             raise ValueError("Unknown primitive kind " + str(kind))
 
     port_objects = []
+    # MSL (microstrip) ports are built AFTER the mesh exists: AddMSLPort samples
+    # the propagation-direction grid lines and needs >= 5 of them, and its
+    # signature is AddMSLPort(nr, metal_prop, start, stop, prop_dir, exc_dir).
+    deferred_msl = []
     for idx, port in enumerate(project.ports, start=1):
         start = [f32(x) for x in port.start]
         stop = [f32(x) for x in port.stop]
@@ -588,16 +593,7 @@ def main() -> int:
             )
             port_objects.append((port, pobj))
         elif port.type == "msl":
-            pobj = FDTD.AddMSLPort(
-                idx,
-                port.resistance,
-                start,
-                stop,
-                port.direction,
-                1.0 if port.excite_port else 0.0,
-                priority=15,
-            )
-            port_objects.append((port, pobj))
+            deferred_msl.append((idx, port, start, stop))
         elif port.type == "rect_waveguide":
             FDTD.AddRectWaveGuidePort(
                 idx,
@@ -643,6 +639,31 @@ def main() -> int:
     print("Mesh setup:", json.dumps(setup, indent=2, default=str))
 
     dedupe_grid_lines(CSX)
+
+    # Now that the mesh exists, add the deferred MSL ports. AddMSLPort adds the
+    # microstrip metal strip (prop_dir x transverse) and needs the grid lines.
+    for idx, port, start, stop in deferred_msl:
+        try:
+            prop_dir, exc_dir = resolve_msl_axes(port)
+        except ValueError as e:
+            print(f"ERROR: MSL port '{port.name}' skipped: {e}")
+            continue
+        metal = CSX.AddMetal(f"msl_{idx}_{port.name}_strip")
+        pobj = FDTD.AddMSLPort(
+            idx,
+            metal,
+            start,
+            stop,
+            prop_dir,
+            exc_dir,
+            excite=1.0 if port.excite_port else 0.0,
+            priority=15,
+        )
+        port_objects.append((port, pobj))
+        print(f"MSL port {idx} '{port.name}': prop_dir={prop_dir} exc_dir={exc_dir}")
+    # Keep S-param indexing in port-number order (deferred MSL ports were added
+    # last): compute_sparams_from_ports numbers the columns by list position.
+    port_objects.sort(key=lambda po: getattr(po[1], "number", 0))
 
     report = validate_mesh(
         CSX,
@@ -740,10 +761,24 @@ def main() -> int:
             CSX, "nf2ff", nf_start, nf_stop, directions=[True] * 6, mirror=[0] * 6
         )
 
+    # Keep the meshed CSX in the project folder: when the project is re-opened
+    # the GUI restores the Mesh Viewer (exact mesh + geometry) and the S-param
+    # Viewer from the recorded paths. Written here so it exists for --mesh-only
+    # builds too and survives a later FDTD failure/crash.
+    try:
+        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        CSX.Write2XML(str(WORK_DIR / "csx.xml"))
+        print("CSX saved:", WORK_DIR / "csx.xml")
+    except Exception as e:  # noqa: BLE001
+        print("WARNING: could not save CSX xml:", e)
+
     if "--mesh-only" in sys.argv[1:]:
         print("MESH ONLY: CSX + easyMesh build verified, skipping FDTD run")
         return 0
 
+    # Project folder layout: raw openEMS outputs (et/ht, port dumps, nf2ff_*.h5)
+    # live in WORK_DIR/simulation (FDTD.Run creates it itself), processed
+    # results go to WORK_DIR/sparams, WORK_DIR/fields and WORK_DIR/nf2ff.
     out_dir = WORK_DIR / "simulation"
     out_dir.mkdir(parents=True, exist_ok=True)
     print("Running openEMS into", out_dir)
@@ -757,13 +792,12 @@ def main() -> int:
     FDTD.Run(str(out_dir), **run_kw)
     print("Simulation finished (FDTD.Run complete)")
 
-    # Evaluate S-params over a wider band than the mesh window so a resonance
-    # shifted out of the mesh band (e.g. a longer-than-expected dipole) is still
-    # captured. The mesh is sized for the target frequency; the post-processing
-    # sweep can safely extend a few hundred MHz either side.
-    _f_lo = max(1e8, project.mesh.start_frequency * 0.5)
-    _f_hi = project.mesh.stop_frequency * 1.15
-    freqs = np.linspace(_f_lo, _f_hi, 301)
+    # Evaluate S-params over the EXCITATION band only. Outside
+    # [f_start, f_stop] the Gaussian pulse carries (almost) no energy, so
+    # |S11| = |uf_ref| / |uf_inc| divides noise by ~zero and explodes
+    # (|S11| >> 1) — that garbage dominated the S-param plots. The mesh is
+    # sized for this band, so a resonance can only be trusted here anyway.
+    freqs = np.linspace(project.mesh.start_frequency, project.mesh.stop_frequency, 201)
     s_table = {}
     written = {}
     try:
@@ -779,7 +813,7 @@ def main() -> int:
                 break
         if not finite_ok:
             print("ERROR: S-param table has no finite values (CalcPort failed?)")
-        written = sp.export_sparams(s_table, out_dir, basename="sparams")
+        written = sp.export_sparams(s_table, WORK_DIR / "sparams", basename="sparams")
         print("S-param outputs:", {k: str(v) for k, v in written.items()})
         touch = written.get("touchstone")
         if touch and Path(touch).exists():
@@ -796,7 +830,7 @@ def main() -> int:
         return 3
 
     try:
-        fld.plot_field_slices(out_dir, project.dumps, out_dir / "fields")
+        fld.plot_field_slices(out_dir, project.dumps, WORK_DIR / "fields")
     except Exception as e:
         print("Field postproc warning:", e)
 
@@ -804,7 +838,9 @@ def main() -> int:
         try:
             # auto: S11 minimum; count: N points over the mesh range; list: explicit
             f_eval = nf.resolve_eval_frequencies(project, s_table)
-            result = nf.compute_and_export(out_dir, nf2ff_box, f_eval, project.nf2ff, out_dir / "nf2ff")
+            result = nf.compute_and_export(
+                out_dir, nf2ff_box, f_eval, project.nf2ff, WORK_DIR / "nf2ff"
+            )
             print("NF2FF summary:", result.get("summary"))
         except Exception as e:
             print("NF2FF postproc warning:", e)

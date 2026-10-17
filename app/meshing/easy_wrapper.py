@@ -82,4 +82,22 @@ def generate_mesh(
         primitives_mesh_setup if primitives_mesh_setup is not None else {},
         properties_mesh_setup if properties_mesh_setup is not None else {},
     )
+
+    # Graded refinement on the vacuum/dielectric side of metal faces. Runs
+    # AFTER easyMesh so the inserted lines survive SmoothMeshLines (the
+    # easyMesh-internal graded-transition pass is smoothed away and misses
+    # metal-in-air interfaces entirely).
+    if getattr(mesh, "add_graded_mesh_lines_at_material_transitions", False):
+        try:
+            from app.meshing.interface_refine import refine_at_metal_interfaces
+
+            stats = refine_at_metal_interfaces(CSX, mesh, coord_system="cartesian")
+            if stats:
+                print(
+                    "  metal-interface graded refinement: "
+                    + ", ".join(f"{k} +{v}" for k, v in sorted(stats.items()))
+                    + " line(s)"
+                )
+        except Exception as e:  # noqa: BLE001 — never fail a run on refinement
+            print(f"  metal-interface graded refinement skipped: {e}")
     return setup

@@ -130,6 +130,29 @@ def main() -> int:
     # just ensure method compiles by checking callable
     assert callable(win._on_settings)
 
+    # 6) PortDialog MSL fields (propagation/excitation axis) round-trip
+    from app.models.project import PortDef as _PD2
+    from app.ui.geometry_editors import PortDialog
+
+    msl = _PD2(
+        name="msl1",
+        type="msl",
+        start=[-10.0, -1.0, 1.6],
+        stop=[0.0, 1.0, 0.0],
+        prop_direction="x",
+        exc_direction="z",
+    )
+    dlg = PortDialog(win, port=msl)
+    assert dlg.cmb_prop.currentData() == "x", dlg.cmb_prop.currentData()
+    assert dlg.cmb_exc.currentData() == "z", dlg.cmb_exc.currentData()
+    dlg.cmb_prop.setCurrentIndex(dlg.cmb_prop.findData("y"))
+    dlg._accept()
+    assert dlg.result_port is not None
+    assert dlg.result_port.type == "msl"
+    assert dlg.result_port.prop_direction == "y"
+    assert dlg.result_port.exc_direction == "z"
+    print("msl dialog axes:", dlg.result_port.prop_direction, dlg.result_port.exc_direction)
+
     win.close()
     print("PORT DEFAULTS SMOKE OK")
     return 0

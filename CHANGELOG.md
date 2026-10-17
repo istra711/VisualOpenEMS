@@ -7,7 +7,250 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing pending.
+## [0.4.0] - 2026-10-17
+
+### Added
+
+- **Graded refinement at ε (material) interfaces works on BOTH sides**
+  (`app/meshing/interface_refine.py`): `material_jump_sides` now emits the
+  *inward* face of every dielectric in addition to the outward one (deduped for
+  adjacent media, metal-overlapped faces still skipped). Since each direction
+  is anchored to the cell on the opposite side, the ramp is now produced into
+  the dielectric **and** into the surrounding air — previously only the outward
+  (air) side could ever be refined. Metal-face refinement is unchanged. New
+  deterministic, CSXCAD-free geometry tests: `tests/test_interface_refine.py`
+  (+ updated expectations in `tests/graded_interface_smoke.py`).
+
+- **FDTD engine progress bar (timestep / residual energy)** — the status bar
+  gets a `QProgressBar` + label fed from the openEMS stdout lines by the
+  Qt-free `app.simulation.progress.EngineProgress` (parses `Max. number of
+  timesteps: …`, the `[@ 4s] Timestep: … Energy: ~… (-25.91dB)` report lines and
+  the `end-criteria … reached` / `before the end-criteria` messages). Shows
+  `TS <n>/<max>`, residual energy in dB, elapsed time and a converged /
+  max-TS-reached status; resets on every run (incl. each *Run All Ports* step).
+  Tests: `tests/test_progress.py` + `tests/progress_smoke.py`.
+
+- **Mesh build runs in a background worker thread** — *Build CSX + Mesh +
+  Validate* (`Ctrl+M`) no longer freezes the GUI: `MainWindow._on_build_mesh`
+  starts an `app.ui.mesh_worker.MeshBuildThread` running the new Qt-free core
+  `app.meshing.build_task.build_mesh_and_validate` (CSX build + easyMesh +
+  validation + `csx.xml` export). The live CSX/FDTD come back to the GUI thread
+  via a `done` signal; `_finish_mesh_build` then does the matplotlib preview,
+  the Mesh Viewer CSX swap (with the existing retired-object bookkeeping) and
+  the result recording on the GUI thread. `closeEvent` waits for a running
+  build. The blocking `_build_and_validate` path is kept for
+  `_ensure_mesh_viewer_content` and the tests that stub it; patch-preset
+  fallback moved to `_ensure_patch_primitives`. Test:
+  `tests/mesh_thread_smoke.py` (real easyMesh build off the GUI thread).
+
+- **Multi-excitation driver — the full S-matrix in one click**
+  (`app/ui/main_window.py`, new `app/simulation/multirun.py`): *Simulation →
+  Run All Ports (full S-matrix)* (`Ctrl+Shift+R`) runs one FDTD simulation per
+  port — each with exactly that port excited — then merges the partial
+  `sparams.json` columns (`app.postproc.sparams.merge_sparam_tables`) and
+  exports the complete matrix (`<project>/sparams/sparams.json` + `.sNp` +
+  plot), loading it into the S-param viewer. The per-run scripts/projects are
+  written under `<project>/multi/port<n>/`; the runs execute sequentially in
+  the GUI with per-port log prefixes, and a missing column is reported without
+  aborting the merge. Fewer than 2 ports falls back to a normal single run.
+  `app/simulation/multirun.py` (`plan_port_runs`, `merge_port_runs`,
+  `summarise_table`) is Qt-free and unit-tested. Tests:
+  `tests/test_multirun.py` (planning/deep-copy/merge/`.s2p`) and
+  `tests/multirun_smoke.py` (GUI driver with a fake runner → merged matrix).
+- **Mesh Viewer draws cylinders as circles** (`app/ui/mesh_viewer.py`,
+  `app/meshing/preview.py`): `iter_primitive_infos` now reports the CSX
+  primitive type and the cylinder radius, and the slice/overview plots draw an
+  axis-aligned cylinder's true cross-section as a **circle** (project
+  primitives from their axis endpoints + radius) instead of its bounding box;
+  tilted cylinders keep the box. Regression check in `tests/mesh_viewer_smoke.py`.
+- **Project results are recorded in the project JSON and restored on open**
+  (`app/models/project.py`, `app/ui/main_window.py`): after a run — and after
+  *Build CSX + Mesh + Validate*, which now also writes `<work>/<project>/csx.xml`
+  — the GUI stores the artifact paths in the project file (`results`:
+  `sim_dir`, `csx_xml`/`mesh_xml`, `sparams`, `nf2ff`, `time`; the project file
+  is saved after a run). Opening a project loads the S-params from the recorded
+  path, and opening the **Mesh Viewer** shows the last mesh — loaded from the
+  recorded mesh or, when nothing is recorded yet, generated automatically (no
+  need to press *Build CSX + Mesh + Validate* again).
+- **Opening a project restores the viewers from the last results**
+  (`app/ui/main_window.py`, `app/simulation/script_gen.py`): the run script now
+  also writes the meshed CSX to `<work>/<project>/simulation/csx.xml` (also in
+  `--mesh-only` mode, before the FDTD so it survives a crash). Loading a project
+  puts that CSX into the **Mesh Viewer** (exact mesh + geometry of that run) and
+  the newest `sparams.*` into the **S-param Viewer**; the S-param viewer's file
+  browser/auto-load is scoped to the current project instead of the global work
+  dir. Projects without results leave the viewers untouched.
+- **Mesh Viewer: mesh-grid visibility slider** (`app/ui/mesh_viewer.py`): a
+  slider next to *Show mesh grid* controls the mesh grid lines' opacity and
+  line width (0 = invisible, 100 = strong) so they can be told apart from the
+  geometry/port outlines; it is disabled while the grid is hidden or no slice
+  view / mesh is active.
+- **S-param viewer: combined Re/Im + Phase plot** (`app/ui/sparam_viewer.py`):
+  new *Re/Im + Phase* plot type — real and imaginary parts on the left axis,
+  the phase (deg) on a twin right axis, in one plot.
+- **Graded mesh refinement at metal interfaces** (`app/meshing/interface_refine.py`,
+  `app/meshing/easy_wrapper.py`): the *Mesh Parameters → Refine mesh at metal
+  interfaces (graded)* option (new projects: on) inserts geometric mesh lines
+  on the vacuum/air or dielectric side of every metal (PEC) face — the cell
+  next to the metal is the finest (`min_cellsize`, fallback local cell / 4)
+  and grows with distance by *Max grading ratio* until it merges into the
+  existing grid. Zero-thickness sheets (patch/ground) are refined on both
+  sides, solid metals only outside. The pass runs after easyMesh (so the
+  lines survive `SmoothMeshLines`) and is cartesian-only.
+
+### Changed
+
+- **Dielectric/air (ε) jumps are refined on both sides**
+  (`app/meshing/interface_refine.py`, `app/meshing/preview.py`):
+  `iter_primitive_infos` now reports the property permittivity,
+  `material_jump_sides()` detects medium jumps that no metal covers, and the
+  ramp there starts at the *other* side's cell size (continuity) so the cells
+  across the interface stay within *Max grading ratio*. Measured on the
+  standard fixtures nothing is added where easyMesh already grades smoothly
+  (patch/dipole), so existing results are unchanged. Unit checks added to
+  `tests/graded_interface_smoke.py`.
+- **Project directory layout** (`app/simulation/script_gen.py`,
+  `app/ui/main_window.py`, `sparam_viewer.py`, `antenna_viewer.py`): the project
+  JSON is saved in the work directory and every other project file goes into a
+  folder **named after the JSON file** (`<work>/<name>.fcsim.json` +
+  `<work>/<name>/`) — independent of `Project.name` (which previously sent the
+  results of an “untitled” project to `work/untitled/`). Inside that folder the
+  processed results have their own subfolders: **`sparams/`** (Touchstone, JSON,
+  plot), **`fields/`** (field-slice plots) and **`nf2ff/`** (far-field
+  results); the raw openEMS outputs (et/ht, port dumps, nf2ff_*.h5) stay in
+  `<name>/simulation/`, the meshed CSX is written as `<name>/csx.xml`. The
+  project folder (including the `sparams/`, `fields/` and `nf2ff/`
+  subfolders) is created as soon as the project is saved — plain *Save* and
+  *Save As*. Viewers,
+  result recording and the open-on-load restore use the new locations; the old
+  `<name>/simulation/` layout is still read for existing projects.
+- **Metal-interface refinement is app-side now** — the flag is no longer
+  forwarded to easyMesh (`MeshSpec.global_setup`): easyMesh's internal
+  `add_graded_mesh_lines_at_material_transitions` was smoothed away, missed
+  metal-in-air interfaces entirely (no second primitive edge) and could blow
+  up the max cell size elsewhere (e.g. z cells 5.8 → 15.3 mm). `max_grading_ratio`
+  is now forwarded as well. Old projects keep the previous behaviour (the
+  field loads as off); new projects default to on.
+- **S-parameter sweep limited to the excitation band**
+  (`app/simulation/script_gen.py`): the post-processing sweep was widened to
+  `f_start·0.5 … f_stop·1.15` (301 pts); outside the excitation band the
+  Gaussian pulse carries no energy, so `|S11| = |uf_ref|/|uf_inc|` divided
+  noise by ~zero and exploded (measured |S11| up to 107). That garbage
+  dominated the S-param plots and the exported Touchstone. The sweep now
+  covers `[f_start, f_stop]` (201 pts) where the S-parameters are meaningful.
+
+### Fixed
+
+- **MSL (microstrip) ports generated an invalid `AddMSLPort` call**
+  (`app/simulation/script_gen.py`, `app/ui/main_window.py`,
+  `app/csxcad_builder/builder.py`, new `app/simulation/msl.py`): the generated
+  `project_run.py` passed `port.resistance` as openEMS's `metal_prop` and
+  `port.direction` as `prop_dir`, leaving `exc_dir` to swallow the excite flag —
+  so any MSL port raised at runtime. The call is now
+  `AddMSLPort(nr, metal, start, stop, prop_dir, exc_dir, excite=…)` with a strip
+  metal property (`AddMetal("msl_<n>_<name>_strip")`) and the two axes resolved
+  by `app.simulation.msl.resolve_msl_axes` (explicit `prop_direction`/
+  `exc_direction`, else derived from the port box: propagation = longest edge,
+  excitation = shortest — the openEMS `MSL_NotchFilter.py` convention `x`/`z`).
+  MSL ports are now added **after** `generate_mesh` (in the run script and the
+  GUI *Build CSX + Mesh* preview), because `AddMSLPort` samples the
+  propagation-direction grid lines and needs ≥ 5 of them; non-MSL ports keep
+  their pre-mesh registration so their meshes are unchanged. `PortDef` gains
+  `prop_direction`/`exc_direction` (old JSONs load with empty = auto) and the
+  Port dialog two "(auto)/x/y/z" combos. Tests: `tests/test_msl_port.py` (axis
+  derivation/overrides/errors + generated-script signature) and the PortDialog
+  round-trip in `tests/port_defaults_smoke.py`.
+- **Graded interface refinement: two bugs** (`app/meshing/interface_refine.py`):
+  the geometric ramp fit could push the first inserted cell far below the
+  intended floor, giving mesh jumps of 3–4.6× across an interface instead of
+  ≤ *Max grading ratio*; the series is now fitted from below (α ≥ 1) so the
+  caps hold (measured: 4.61× → 1.97×). The continuity cap was also applied
+  across PEC faces, which needlessly weakened the metal-in-air refinement and
+  inserted lines where the mesh was already smooth — it is now an explicit
+  ``continuity`` flag used only where the fields are continuous.
+- **Mesh Viewer kept a stale mesh after geometry changes**
+  (`app/ui/main_window.py`): the viewer rebuilt only when *nothing* was
+  loaded, so editing primitives, ports, dumps or mesh parameters left the old
+  geometry on screen. A signature of the mesh-relevant project state
+  (primitives, materials, assignments, ports, dumps, NF2FF, mesh, boundary) is
+  now stored when the CSX is built/loaded and compared when the Mesh Viewer tab
+  is opened — the mesh is rebuilt automatically when it changed (no need to
+  press *Build CSX + Mesh + Validate*). Also fixed the *Build Mesh* tab switch
+  (it went to the wrong tab widget).
+- **Antenna tab showed no (or a stale) pattern** (`app/ui/main_window.py`,
+  `app/ui/antenna_viewer.py`): opening the *Antenna* tab did nothing — the file
+  list was only filled by the menu action / *Scan work dir*, so the plot stayed
+  empty (or kept the file loaded at app start). The tab now refreshes the list
+  and loads the current project's recorded NF2FF result (fallback: the newest
+  file) when nothing is loaded; a user-selected file is never replaced
+  (`set_work_dir` no longer auto-loads). Regression check added to
+  `tests/project_results_flow_smoke.py` (NF2FF restored from the project JSON).
+- **Antenna viewer missed the new project layout** (`app/ui/antenna_viewer.py`):
+  `find_latest_nf2ff_files` appended `nf2ff` twice for the new layout
+  (`<project>/nf2ff/nf2ff/nf2ff.json`), so freshly created project folders never
+  appeared in *Loaded files* — only the legacy `*/simulation/nf2ff/…` entries
+  did. Both layouts are discovered now (regression check added to
+  `tests/antenna_viewer_smoke.py`).
+- **Viewer re-scan replaced the loaded data** (`app/ui/antenna_viewer.py`,
+  `app/ui/main_window.py`): *Scan work dir* always selected list row 0, which
+  fired the load callback and overwrote whatever the user had open. The scan
+  now only refreshes the list — the loaded file stays selected/loaded, and the
+  newest entry is loaded only when nothing is loaded yet. *Open nf2ff.json…*
+  starts in the folder of the current file and adds/selects the opened file in
+  the list (even when it lies outside the work directory). The S-param
+  viewer's auto-load when the tab is opened is limited the same way.
+- **Field-dump plots were never produced** (`app/postproc/fields.py`): the HDF5
+  reader only descended one level — but `FieldData` → `FD`/`TD` are *groups* —
+  so `FieldData/FD/f<N>_real|_imag` (frequency domain) and `FieldData/TD/t<N>`
+  (time domain) were missed and `fields/` stayed empty even for projects with
+  field dumps (e.g. the patch preset's `Et_substrate`). The reader now handles
+  both layouts, reduces the xyz component axis to the vector magnitude and the
+  plots use the dump's mesh as axis extent/labels. New regression test
+  `tests/field_dump_postproc_smoke.py` (synthetic HDF5, no FDTD run).
+- **Empty recorded path turned into the working directory**
+  (`app/ui/main_window.py`): a missing entry in `Project.results` produced
+  `Path("")` — which *is* `.` and “exists” — so opening a project without
+  recorded results tried to load the cwd as S-params ("Permission denied: '.'")
+  and the fallback discovery never ran (S-params stayed empty). Recorded
+  strings are now validated via `_existing_path()`.
+- **Mesh Viewer: slice plane starts on the model origin** (`app/ui/mesh_viewer.py`):
+  after *Build CSX + Mesh + Validate* (and after loading a project's last
+  results, and on every view switch) the *Plane* value is reset to **0 mm**
+  instead of the domain's lower bound, so the slice always starts at the model
+  origin. The slider still spans the whole FDTD domain; its handle sits where
+  0 mm lies and can be dragged to the structure.
+- **Mesh Viewer: ports vs. structure + legend** (`app/ui/mesh_viewer.py`):
+  openEMS stores every port as CSX primitives (LumpedElement, Excitation,
+  ProbeBox/ResBox) whose slice footprints were drawn by the *Show structure*
+  block — so *Show ports* did not hide all of them (a box/line stayed visible,
+  and their `port_*` names cluttered the legend) and hiding the structure made
+  the ports disappear. Port artefacts are now excluded from the structure
+  block and drawn only by *Show ports*, with a single "Ports" legend entry
+  that follows the toggle. A port that lies perpendicular to the slice (e.g.
+  an x-directed dipole feed in the XY view, zero extent along the normal) is
+  now drawn whenever the slice cuts one of its cells (tolerance = local cell
+  size) instead of only when the plane hits its exact coordinate.
+- **Mesh Viewer: structure/port toggles + zoom reset** (`app/ui/mesh_viewer.py`):
+  the ports block used an `eps` that was only defined inside the *Show
+  geometry* blocks, so hiding the geometry raised a `NameError` (swallowed by
+  the redraw handler) and the slice — including the ports — was not drawn;
+  `eps` is now defined once at the top of `_draw_slice`. Also, every
+  visibility toggle (Show mesh/structure/ports, and the new mesh slider)
+  rebuilt the plot from scratch and reset the user's zoom: the axes limits are
+  now captured and re-applied when only the visibility/style changes (a view
+  switch still autoscales).
+- **Silent `max_grading_ratio` gap** (`tests/mesh_params_flow.py`): the
+  grading ratio is now part of `global_mesh_setup` (the flow test previously
+  reported FAIL for it).
+- **Graded refinement could collapse the timestep** (`app/meshing/interface_refine.py`):
+  the first version ramped down to 57 µm cells at a dipole feed (a 49× grading
+  jump against the neighbouring 2.8 mm cell), shrinking the CFL timestep 11×
+  (88 365 steps / 465 s, and the very long run tripped a native heap-corruption
+  crash). The inserted cells are now capped: never finer than one grading step
+  below the smallest existing cell on that axis and never more than one grading
+  step off the cell on the other side of the interface — a mesh that is already
+  fine next to the metal is left alone (the dipole keeps its easyMesh cells:
+  timestep 3.2e-13 s, 89 s).
 
 ## [0.3.0] - 2026-10-16
 

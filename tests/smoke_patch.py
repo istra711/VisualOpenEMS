@@ -67,16 +67,16 @@ def main() -> int:
 
     code = runner.wait(timeout=600)
     print("Exit code:", code)
-    sim_dir = work / "simulation"
+    sim_dir = work  # project folder: sparams/, fields/, nf2ff/ live directly here
     print("Simulation dir exists:", sim_dir.exists())
     if sim_dir.exists():
         files = sorted(p.name for p in sim_dir.rglob("*") if p.is_file())[:40]
         print("Output files (sample):", files)
-    sparams_png = sim_dir / "sparams.png"
+    sparams_png = sim_dir / "sparams" / "sparams.png"
     print("S-param plot:", sparams_png.exists(), sparams_png)
-    touch = sim_dir / "sparams.s1p"
+    touch = sim_dir / "sparams" / "sparams.s1p"
     if not touch.exists():
-        touch = next(iter(sim_dir.glob("sparams.s*p")), None)
+        touch = next(iter((sim_dir / "sparams").glob("sparams.s*p")), None)
     print("Touchstone:", touch, "exists:", bool(touch and touch.exists()))
     if touch and touch.exists():
         head = touch.read_text(encoding="utf-8", errors="replace").splitlines()[:6]

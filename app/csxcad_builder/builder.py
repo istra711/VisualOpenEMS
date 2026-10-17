@@ -130,9 +130,9 @@ def build_csx_from_project(
     _default_primitives_from_bounds(project, bounds[0] if bounds else None, bounds[1] if bounds else None, result)
 
     # Ports
-    for port in project.ports:
+    for idx, port in enumerate(project.ports, start=1):
         try:
-            _add_port(csx, port, result, fdtd=fdtd)
+            _add_port(csx, port, result, fdtd=fdtd, index=idx)
         except Exception as e:  # noqa: BLE001
             result.warnings.append(f"Port '{port.name}' failed: {e}")
 
@@ -148,7 +148,7 @@ def add_box(csx, name: str, start, stop, priority: int = 10, metal: str | None =
     return prop
 
 
-def _add_port(csx, port: PortDef, result: BuildResult, fdtd=None):
+def _add_port(csx, port: PortDef, result: BuildResult, fdtd=None, index: int = 1):
     start = [float(x) for x in port.start]
     stop = [float(x) for x in port.stop]
     # openEMS Python bindings: lumped/MSL ports live on FDTD with integer port numbers
@@ -160,6 +160,7 @@ def _add_port(csx, port: PortDef, result: BuildResult, fdtd=None):
             return
         if port.type == "lumped":
             fdtd.AddLumpedPort(
+                index,
                 port.resistance,
                 start,
                 stop,
@@ -168,11 +169,17 @@ def _add_port(csx, port: PortDef, result: BuildResult, fdtd=None):
                 priority=15,
             )
         else:
+            from app.simulation.msl import resolve_msl_axes
+
+            prop_dir, exc_dir = resolve_msl_axes(port)
+            metal = csx.AddMetal(f"msl_{index}_{port.name}_strip")
             fdtd.AddMSLPort(
-                port.resistance,
+                index,
+                metal,
                 start,
                 stop,
-                port.direction,
+                prop_dir,
+                exc_dir,
                 1.0 if port.excite_port else 0.0,
                 priority=15,
             )

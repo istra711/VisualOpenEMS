@@ -70,11 +70,23 @@ def load_network_from_path(path: Path | str):
 
 
 def find_latest_sparam_files(work_dir: Path) -> list[Path]:
-    """Discover sparams.s*p / sparams.json under work/*/simulation, newest first."""
+    """Discover sparams.s*p / sparams.json, newest first.
+
+    Searches the new project layout (``<dir>/sparams``), a single project
+    folder itself and the legacy ``<dir>/simulation`` / ``<dir>/*/simulation``
+    locations — so both the global work directory (all projects) and one
+    project directory can be passed.
+    """
     out: list[Path] = []
     if not work_dir.exists():
         return out
-    for sim in sorted(work_dir.glob("*/simulation")):
+    dirs: list[Path] = [work_dir / "sparams"]
+    dirs += list(work_dir.glob("*/sparams"))
+    direct = work_dir / "simulation"
+    if direct.is_dir():
+        dirs.append(direct)
+    dirs += list(work_dir.glob("*/simulation"))
+    for sim in dirs:
         for name in ("sparams.s1p", "sparams.s2p", "sparams.s3p", "sparams.s4p", "sparams.json"):
             p = sim / name
             if p.exists():
@@ -178,6 +190,7 @@ class SParamViewer(QWidget):
         "Phase deg",
         "VSWR",
         "Complex Re/Im",
+        "Re/Im + Phase",
         "Z Re/Im",
     ]
 
@@ -815,6 +828,27 @@ class SParamViewer(QWidget):
             ax.set_ylabel("S (linear)")
             ax.grid(True, alpha=0.3)
             ax.legend(loc="best")
+        elif plot == "Re/Im + Phase":
+            # Real + imaginary parts on the left axis, phase on the right one
+            # (two different scales, so a twin axis instead of a second plot).
+            ax.plot(f_ghz, np.real(s), lw=1.3, label=f"{key} Re")
+            ax.plot(f_ghz, np.imag(s), lw=1.3, label=f"{key} Im")
+            ax.set_ylabel("S Re/Im (linear)")
+            ax.grid(True, alpha=0.3)
+            ax_ph = ax.twinx()
+            ax_ph.plot(
+                f_ghz,
+                np.degrees(np.angle(s)),
+                lw=1.2,
+                ls="--",
+                color="tab:green",
+                label=f"{key} Phase",
+            )
+            ax_ph.set_ylabel("Phase [deg]", color="tab:green")
+            ax_ph.tick_params(axis="y", colors="tab:green")
+            handles, labels = ax.get_legend_handles_labels()
+            h2, l2 = ax_ph.get_legend_handles_labels()
+            ax.legend(handles + h2, labels + l2, loc="best")
         elif plot == "Z Re/Im":
             if self._is_reflection_key(key):
                 z = np.array([self._s_to_z(complex(v), z0) for v in s], dtype=complex)

@@ -38,7 +38,7 @@ matplotlib.use("QtAgg")
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from matplotlib.patches import FancyBboxPatch, Rectangle
+from matplotlib.patches import Circle, FancyBboxPatch, Rectangle
 
 from app.meshing.preview import (
     default_color_for,
@@ -69,6 +69,33 @@ def _slice_key(view: str) -> str | None:
     """
     key = str(view).split(" ", 1)[0]
     return key if key in _SLICE_AXES else None
+
+
+def _circle_in_slice(
+    start, stop, radius, ia: int, ib: int, inorm: int
+) -> tuple[float, float, float] | None:
+    """``(cx, cy, r)`` when an axis-aligned cylinder is cut by the slice.
+
+    Returns None for non-cylinders and for tilted cylinders (their AABB is not
+    a circle in the slice) — the caller then draws the bounding box.
+    """
+    try:
+        r = float(radius or 0.0)
+    except Exception:  # noqa: BLE001
+        return None
+    if r <= 0:
+        return None
+    ext = [abs(float(stop[k]) - float(start[k])) for k in range(3)]
+    tol = 1e-6 * max(1.0, r)
+    # the two in-plane extents must equal the diameter, the normal one must be
+    # at least that (the normal axis is the cylinder axis)
+    if abs(ext[ia] - 2 * r) > tol or abs(ext[ib] - 2 * r) > tol:
+        return None
+    if ext[inorm] < ext[ia] - tol:
+        return None
+    cx = 0.5 * (float(start[ia]) + float(stop[ia]))
+    cy = 0.5 * (float(start[ib]) + float(stop[ib]))
+    return cx, cy, r
 
 
 class ResponsiveCanvas(FigureCanvas):
@@ -187,15 +214,26 @@ class MeshGeometryViewer(QWidget):
         self.spn_plane.setValue(0.0)
         self.slider = QSlider(Qt.Orientation.Horizontal)
         # handlers map 0..1000 onto the domain (see _on_slider /
-        # _update_plane_range) — keep the same scale at creation
+        # _update_plane_range) — keep the same scale at creation and start at
+        # the left end (0)
         self.slider.setRange(0, 1000)
-        self.slider.setValue(500)
+        self.slider.setValue(0)
         self.slider.setToolTip(
             "Slice plane along the view normal — snaps to the nearest mesh line.\n"
             "Enabled once a mesh is built (Build Mesh)."
         )
         self.chk_mesh = QCheckBox("Show mesh grid")
         self.chk_mesh.setChecked(True)
+        self.slider_mesh = QSlider(Qt.Orientation.Horizontal)
+        # opacity + line width of the mesh grid lines in the slice plot
+        self.slider_mesh.setRange(0, 100)
+        self.slider_mesh.setValue(35)
+        self.slider_mesh.setFixedWidth(90)
+        self.slider_mesh.setToolTip(
+            "Mesh grid lines: visibility (opacity and line width).\n"
+            "Left = fainter (less clutter next to geometry/ports), "
+            "right = stronger."
+        )
         self.chk_geom = QCheckBox("Show geometry")
         self.chk_geom.setChecked(True)
         self.chk_ports = QCheckBox("Show ports")
@@ -212,6 +250,7 @@ class MeshGeometryViewer(QWidget):
             self.spn_plane,
             self.slider,
             self.chk_mesh,
+            self.slider_mesh,
             self.chk_geom,
             self.chk_ports,
             self.chk_nf2ff,
@@ -260,7 +299,8 @@ class MeshGeometryViewer(QWidget):
         self.cmb_view.currentIndexChanged.connect(self._on_view_changed)
         self.spn_plane.valueChanged.connect(self._on_plane_changed)
         self.slider.valueChanged.connect(self._on_slider)
-        self.chk_mesh.toggled.connect(self._redraw)
+        self.chk_mesh.toggled.connect(self._on_mesh_toggled)
+        self.slider_mesh.valueChanged.connect(self._on_mesh_style_changed)
         self.chk_geom.toggled.connect(self._redraw)
         self.chk_ports.toggled.connect(self._redraw)
         self.chk_nf2ff.toggled.connect(self._redraw)
@@ -314,6 +354,8 @@ class MeshGeometryViewer(QWidget):
         self.slice_layout.addWidget(self.toolbar_slice)
         self.slice_layout.addWidget(self.canvas_slice, 1)
         bind_wheel_zoom(self.canvas_slice)
+        # fresh canvases -> no zoom to preserve for the next redraw
+        self._drawn_view = None
 
         # --- cells canvas ---
         if self.canvas_cells is not None:
@@ -397,10 +439,10 @@ class MeshGeometryViewer(QWidget):
     # ------------------------------------------------------------- actions
     def _on_view_changed(self, _idx: int) -> None:
         if _slice_key(self.cmb_view.currentText()) and self._csx is not None:
-            # recalibrate plane spinbox + slider for the NEW slice normal
-            # (stale calibration from the previous axis clamps/misplaces
-            # the slider values)
-            self._update_plane_range()
+            # recalibrate plane spinbox + slider for the NEW slice normal and
+            # pick a plane that shows geometry (the old value belongs to a
+            # different axis and may cut nothing)
+            self._update_plane_range(reset=True)
         self._update_controls_enabled()
         self._redraw()
 
@@ -409,9 +451,21 @@ class MeshGeometryViewer(QWidget):
         active = _slice_key(self.cmb_view.currentText()) is not None and self._csx is not None
         self.spn_plane.setEnabled(active)
         self.slider.setEnabled(active)
+        self.slider_mesh.setEnabled(active and self.chk_mesh.isChecked())
+
+    def _mesh_alpha(self) -> float:
+        """Mesh grid line alpha (0..1) from the visibility slider."""
+        return float(self.slider_mesh.value()) / 100.0
+
+    def _on_mesh_toggled(self, _checked: bool = False) -> None:
+        self._update_controls_enabled()
+        self._redraw()
+
+    def _on_mesh_style_changed(self, _value: int = 0) -> None:
+        self._redraw()
 
     def _on_plane_changed(self, value: float) -> None:
-        # keep slider roughly in sync (0..1000 maps to plane range)
+        # keep slider roughly in sync (0..1000 maps to the domain range)
         if self._csx is None:
             return
         key = _slice_key(self.cmb_view.currentText())
@@ -524,11 +578,16 @@ class MeshGeometryViewer(QWidget):
         if self._csx is None:
             self.clear()
             return
-        self._update_plane_range()
+        self._update_plane_range(reset=True)
+        if _slice_key(self.cmb_view.currentText()) is None:
+            # non-slice view active while meshing (Cell sizes / Overview):
+            # _update_plane_range returns early, so put the plane on the origin
+            # explicitly — a slice view must start at 0 mm after a fresh mesh
+            self.spn_plane.setValue(0.0)
         self._update_info()
         self._redraw()
 
-    def _update_plane_range(self) -> None:
+    def _update_plane_range(self, reset: bool = False) -> None:
         key = _slice_key(self.cmb_view.currentText())
         if key is None:
             return
@@ -542,11 +601,12 @@ class MeshGeometryViewer(QWidget):
         # mesh lines instead of the fixed 0..100 range.
         self.slider.blockSignals(True)
         self.slider.setRange(0, 1000)
-        mid = 0.5 * (lo + hi)
-        if abs(self.spn_plane.value()) < 1e-12 or self.spn_plane.value() == 0.0:
-            self.spn_plane.setValue(mid)
+        if reset:
+            # a freshly built / loaded mesh starts on the model origin
+            # (clamped by the spinbox range when 0 lies outside the domain)
+            self.spn_plane.setValue(0.0)
         self.spn_plane.setValue(self.spn_plane.value())
-        frac = (self.spn_plane.value() - lo) / (hi - lo) if hi > lo else 0.5
+        frac = (self.spn_plane.value() - lo) / (hi - lo) if hi > lo else 0.0
         self.slider.setValue(int(np.clip(frac * 1000, 0, 1000)))
         self.slider.blockSignals(False)
 
@@ -646,6 +706,12 @@ class MeshGeometryViewer(QWidget):
         try:
             view = self.cmb_view.currentText()
             key = _slice_key(view)
+            # Keep the current zoom when only a visibility toggle / style
+            # changed (same view): the plot is rebuilt from scratch, so the
+            # axes limits must be captured before and re-applied after.
+            same_view = view == self._drawn_view
+            keep_slice = self._figure_limits(self.fig_slice) if same_view else None
+            keep_cells = self._figure_limits(self.fig_cells) if same_view else None
             if key is not None:
                 self.plot_tabs.setCurrentIndex(0)
                 self._draw_slice(key)
@@ -655,8 +721,36 @@ class MeshGeometryViewer(QWidget):
             else:  # Cell sizes
                 self.plot_tabs.setCurrentIndex(1)
                 self._draw_cells()
+            self._drawn_view = view
+            if same_view:
+                self._apply_figure_limits(self.fig_slice, keep_slice)
+                self._apply_figure_limits(self.fig_cells, keep_cells)
+                for canvas in (self.canvas_slice, self.canvas_cells):
+                    if canvas is not None:
+                        canvas.draw_idle()
         except Exception as e:  # noqa: BLE001 — never crash the GUI on redraw
             print(f"mesh viewer redraw error: {e}")
+
+    @staticmethod
+    def _figure_limits(fig) -> list[tuple[tuple[float, float], tuple[float, float]]] | None:
+        """Axes limits of a figure (for zoom preservation across redraws)."""
+        if fig is None or not fig.axes:
+            return None
+        out = []
+        for ax in fig.axes:
+            try:
+                out.append((tuple(ax.get_xlim()), tuple(ax.get_ylim())))
+            except Exception:  # noqa: BLE001
+                return None
+        return out
+
+    @staticmethod
+    def _apply_figure_limits(fig, keep) -> None:
+        if not keep or fig is None or len(fig.axes) != len(keep):
+            return
+        for ax, (xlim, ylim) in zip(fig.axes, keep):
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
 
     def _collect_scene(self):
         """Return (mesh_lines, prim_infos, ports, nf2ff, area)."""
@@ -673,9 +767,49 @@ class MeshGeometryViewer(QWidget):
         except Exception:  # noqa: BLE001
             return set()
 
+    @staticmethod
+    def _cell_span(mesh: dict, axis_name: str, coord: float) -> float:
+        """Largest cell that touches ``coord`` on ``axis_name`` (0 if unknown).
+
+        Used so degenerate features (ports perpendicular to the slice) show up
+        for the cells they belong to instead of requiring an exact plane hit.
+        """
+        try:
+            lines = np.sort(np.asarray(mesh.get(axis_name, []), dtype=float))
+        except Exception:  # noqa: BLE001
+            return 0.0
+        if lines.size < 2:
+            return 0.0
+        below = lines[lines <= coord]
+        above = lines[lines >= coord]
+        cells: list[float] = []
+        if below.size >= 2:
+            cells.append(float(below[-1] - below[-2]))
+        if above.size >= 2:
+            cells.append(float(above[1] - above[0]))
+        if not cells:
+            cells = [float(np.max(np.diff(lines)))]
+        return max(cells)
+
+    @staticmethod
+    def _is_port_artifact(kind: str) -> bool:
+        """True for CSX properties that belong to a port, not to the structure.
+
+        openEMS stores every port as a set of CSX primitives (LumpedElement,
+        Excitation, ProbeBox/ResBox) whose sliding-plane footprints used to be
+        drawn by the *structure* block — so they ignored "Show ports" and
+        vanished with "Show structure".
+        """
+        k = (kind or "").lower()
+        return any(
+            tok in k for tok in ("lumped", "excitation", "probe", "resbox", "dump")
+        )
+
     def _draw_slice(self, view: str) -> None:
         ax_a, ax_b, normal = _SLICE_AXES[view]
         ia, ib, inorm = _AXIS[ax_a], _AXIS[ax_b], _AXIS[normal]
+        eps = 1e-9  # shared tolerance: also used by the ports block below,
+        #             so it must exist even when the geometry is hidden
         plane = float(self.spn_plane.value())
         mesh, infos, ports, nf2ff, area = self._collect_scene()
         outside = self._outside_names(infos, area)
@@ -699,20 +833,29 @@ class MeshGeometryViewer(QWidget):
 
         # Mesh grid lines
         if self.chk_mesh.isChecked():
-            for lines, idx, color in ((mesh[ax_a], ia, (0.4, 0.4, 0.4, 0.35)),
-                                       (mesh[ax_b], ib, (0.4, 0.4, 0.4, 0.35))):
+            alpha = self._mesh_alpha()
+            lw = 0.3 + 1.4 * alpha
+            for lines, idx in ((mesh[ax_a], ia), (mesh[ax_b], ib)):
                 arr = np.sort(np.asarray(lines, dtype=float))
                 if arr.size == 0:
                     continue
                 if idx == ia:
-                    ax.vlines(arr, *self._axis_limits(area, ib), colors=color, linewidths=0.4)
+                    ax.vlines(
+                        arr, *self._axis_limits(area, ib),
+                        colors=(0.4, 0.4, 0.4), linewidths=lw, alpha=alpha,
+                    )
                 else:
-                    ax.hlines(arr, *self._axis_limits(area, ia), colors=color, linewidths=0.4)
+                    ax.hlines(
+                        arr, *self._axis_limits(area, ia),
+                        colors=(0.4, 0.4, 0.4), linewidths=lw, alpha=alpha,
+                    )
 
         # Geometry primitives: draw 2D footprint when the box intersects the slice plane
         if self.chk_geom.isChecked():
             eps = 1e-9
             for info in infos:
+                if self._is_port_artifact(info.kind):
+                    continue  # ports are drawn by the "Show ports" block below
                 lo_n, hi_n = info.start[inorm], info.stop[inorm]
                 if plane < lo_n - eps or plane > hi_n + eps:
                     continue
@@ -720,6 +863,21 @@ class MeshGeometryViewer(QWidget):
                 y0, y1 = info.start[ib], info.stop[ib]
                 color = default_color_for(info.kind, info.name)
                 bad = info.name in outside
+                circle = _circle_in_slice(
+                    info.start, info.stop, getattr(info, "radius", 0.0), ia, ib, inorm
+                )
+                if circle is not None:  # cylinder: draw the true cross-section
+                    cx, cy, r = circle
+                    ax.add_patch(
+                        Circle(
+                            (cx, cy), r,
+                            facecolor=color,
+                            edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else color[:3] + (0.9,),
+                            linewidth=2.0 if bad else 1.0,
+                            label=info.name,
+                        )
+                    )
+                    continue
                 ax.add_patch(
                     Rectangle(
                         (x0, y0), x1 - x0, y1 - y0,
@@ -742,6 +900,26 @@ class MeshGeometryViewer(QWidget):
                 y0, y1 = st[ib], sp[ib]
                 mat = pr.get("material", "")
                 color = default_color_for("Metal" if "copper" in mat or "ground" in mat else "Material", pr.get("name", mat))
+                circle = None
+                if str(pr.get("kind")) == "cylinder":
+                    # dict start/stop are the AXIS endpoints -> build the AABB
+                    r = float(pr.get("radius") or 0.0)
+                    bb0 = [min(st[k], sp[k]) - r for k in range(3)]
+                    bb1 = [max(st[k], sp[k]) + r for k in range(3)]
+                    circle = _circle_in_slice(bb0, bb1, r, ia, ib, inorm)
+                    if circle is None:  # tilted cylinder: bounding box
+                        x0, x1 = bb0[ia], bb1[ia]
+                        y0, y1 = bb0[ib], bb1[ib]
+                if circle is not None:
+                    cx, cy, r = circle
+                    ax.add_patch(
+                        Circle(
+                            (cx, cy), r,
+                            fill=False, edgecolor=color[:3] + (1.0,),
+                            linewidth=1.5, linestyle=":",
+                        )
+                    )
+                    continue
                 ax.add_patch(
                     Rectangle(
                         (x0, y0), x1 - x0, y1 - y0,
@@ -757,7 +935,12 @@ class MeshGeometryViewer(QWidget):
                 sp = getattr(p, "stop", None) or (p.get("stop") if isinstance(p, dict) else None)
                 if not st or not sp:
                     continue
-                if plane < min(st[inorm], sp[inorm]) - eps or plane > max(st[inorm], sp[inorm]) + eps:
+                lo_n, hi_n = min(st[inorm], sp[inorm]), max(st[inorm], sp[inorm])
+                # A port that lies perpendicular to the slice has (almost) no
+                # extent along the normal — show it for the cells touching it
+                # instead of only when the plane hits its exact coordinate.
+                tol = self._cell_span(mesh, normal, (lo_n + hi_n) / 2.0)
+                if plane < lo_n - tol or plane > hi_n + tol:
                     continue
                 x0, x1 = min(st[ia], sp[ia]), max(st[ia], sp[ia])
                 y0, y1 = min(st[ib], sp[ib]), max(st[ib], sp[ib])
@@ -767,6 +950,7 @@ class MeshGeometryViewer(QWidget):
                         [(x0 + x1) / 2], [(y0 + y1) / 2],
                         marker="o", markersize=8, color="red",
                         markeredgecolor="white", markeredgewidth=0.8, zorder=5,
+                        label="Ports",
                     )
                 else:
                     ax.add_patch(
@@ -774,6 +958,7 @@ class MeshGeometryViewer(QWidget):
                             (x0, y0), x1 - x0, y1 - y0,
                             facecolor=(1.0, 0.2, 0.2, 0.55),
                             edgecolor="darkred", linewidth=1.2, zorder=5,
+                            label="Ports",
                         )
                     )
 
@@ -832,6 +1017,20 @@ class MeshGeometryViewer(QWidget):
             for info in infos:
                 color = default_color_for(info.kind, info.name)
                 bad = info.name in outside
+                circle = _circle_in_slice(
+                    info.start, info.stop, getattr(info, "radius", 0.0), ia, ib, inorm
+                )
+                if circle is not None:  # cylinder: true cross-section
+                    cx, cy, r = circle
+                    ax.add_patch(
+                        Circle(
+                            (cx, cy), r,
+                            facecolor=color,
+                            edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else color[:3] + (0.8,),
+                            linewidth=2.0 if bad else 0.8,
+                        )
+                    )
+                    continue
                 ax.add_patch(
                     Rectangle(
                         (info.start[ia], info.start[ib]),

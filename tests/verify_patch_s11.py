@@ -68,7 +68,7 @@ def main() -> int:
     import numpy as np
     import skrf as rf
 
-    touch = work / "simulation" / "sparams.s1p"
+    touch = work / "sparams" / "sparams.s1p"
     if not touch.exists():
         print("FAIL: no touchstone")
         return 2

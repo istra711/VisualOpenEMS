@@ -73,6 +73,12 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("Mesh"), "Export CSX XML\u2026") is not None
     assert _find(_menu("Mesh"), "Open in AppCSXCAD (3D)\u2026") is not None
     assert _find(_menu("Simulation"), "Run Simulation").shortcut().toString() == "Ctrl+R"
+    assert (
+        _find(_menu("Simulation"), "Run All Ports (full S-matrix)")
+        .shortcut()
+        .toString()
+        == "Ctrl+Shift+R"
+    )
     assert _find(_menu("View"), "Log Panel").shortcut().toString() == "Ctrl+L"
     assert _find(_menu("Help"), "Help for Current Tab").shortcut().toString() == "F1"
     assert _find(_menu("Geometry"), "Delete Selected").shortcut().toString() == "Del"

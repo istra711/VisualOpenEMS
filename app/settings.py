@@ -32,6 +32,8 @@ class AppSettings:
     work_dir: str = str(DEFAULT_WORKDIR)
     default_unit: str = "mm"  # mm | um | m
     last_project: str = ""
+    #: most-recently-opened project files, newest first (File → Recent projects)
+    recent_projects: list[str] = field(default_factory=list)
     window_geometry: str = ""  # base64 QByteArray from QMainWindow.saveGeometry()
     log_panel_visible: bool = True  # simulator log panel under the tabs
 
@@ -63,18 +65,53 @@ class AppSettings:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    #: how many project paths the recent-projects list keeps
+    MAX_RECENT_PROJECTS = 10
+
+    @staticmethod
+    def _norm_project_path(path: Path | str) -> str:
+        try:
+            return os.path.normcase(str(Path(path).resolve()))
+        except Exception:  # noqa: BLE001 — odd/invalid paths: compare as given
+            return os.path.normcase(str(path))
+
+    def remember_project(self, path: Path | str, limit: int | None = None) -> None:
+        """Push ``path`` to the front of the recent-projects list.
+
+        Newest first, de-duplicated (case-insensitive on Windows), capped at
+        ``limit`` (default :data:`MAX_RECENT_PROJECTS`); also keeps
+        ``last_project`` in sync.
+        """
+        limit = int(limit or self.MAX_RECENT_PROJECTS)
+        key = str(Path(path))
+        norm = self._norm_project_path(key)
+        items = [
+            p for p in self.recent_projects if self._norm_project_path(p) != norm
+        ]
+        self.recent_projects = [key, *items][: max(1, limit)]
+        self.last_project = key
+
+    def recent_projects_existing(self) -> list[str]:
+        """Recent entries that still exist on disk (newest first)."""
+        return [p for p in self.recent_projects if Path(p).exists()]
+
     @classmethod
     def load(cls, path: Path | str | None = None) -> "AppSettings":
-        path = Path(path) if path else DEFAULT_SETTINGS
-        if not path.exists():
+        target = Path(path) if path else DEFAULT_SETTINGS
+        if not target.exists():
             s = cls()
-            s.save(path)
+            s._source_path = target
+            s.save(target)
             return s
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(target.read_text(encoding="utf-8"))
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
-        return cls(**{k: v for k, v in data.items() if k in known})
+        s = cls(**{k: v for k, v in data.items() if k in known})
+        # remember where they came from so save() writes back there (tests and
+        # portable installs use a custom path)
+        s._source_path = target
+        return s
 
     def save(self, path: Path | str | None = None) -> Path:
-        path = Path(path) if path else DEFAULT_SETTINGS
-        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
-        return path
+        target = Path(path) if path else getattr(self, "_source_path", None) or DEFAULT_SETTINGS
+        target.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        return target

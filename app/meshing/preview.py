@@ -38,6 +38,12 @@ class PrimitiveInfo:
     stop: tuple[float, float, float]
     priority: int = 0
     color: tuple[float, float, float, float] = (0.8, 0.5, 0.2, 0.7)
+    #: CSXCAD primitive type id (1 = box, 5 = cylinder, …) and cylinder radius,
+    #: so viewers can draw the true cross-section (circle) instead of the AABB
+    prim_type: int = 0
+    radius: float = 0.0
+    #: relative permittivity of the property (1.0 for metals / air boxes)
+    epsilon: float = 1.0
 
 
 def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[PrimitiveInfo]:
@@ -105,6 +111,22 @@ def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[Primitive
                 start = tuple(float(v) for v in bbox[0])
                 stop = tuple(float(v) for v in bbox[1])
                 prio = int(prim.GetPriority()) if hasattr(prim, "GetPriority") else 0
+                ptype_id = 0
+                radius = 0.0
+                try:
+                    if hasattr(prim, "GetType"):
+                        ptype_id = int(prim.GetType())
+                    if hasattr(prim, "GetRadius"):
+                        radius = float(prim.GetRadius())
+                except Exception:  # noqa: BLE001
+                    ptype_id, radius = 0, 0.0
+                eps_val = 1.0
+                try:
+                    prop_obj = prim.GetProperty()
+                    if hasattr(prop_obj, "GetMaterialProperty"):
+                        eps_val = float(prop_obj.GetMaterialProperty("epsilon"))
+                except Exception:  # noqa: BLE001
+                    eps_val = 1.0
             except Exception:  # noqa: BLE001
                 continue
             infos.append(
@@ -114,6 +136,9 @@ def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[Primitive
                     start=start,
                     stop=stop,
                     priority=prio,
+                    prim_type=ptype_id,
+                    radius=radius,
+                    epsilon=eps_val,
                 )
             )
     return infos

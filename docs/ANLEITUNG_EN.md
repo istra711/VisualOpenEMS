@@ -302,7 +302,8 @@ warning) — the mesh viewer outlines such primitives in red and writes
 3. **Antenna** tab / **Simulation → Antenna Pattern Viewer** — NF2FF far field:
    3D polar gain plot, 2D polar cuts (E/H plane), directivity/gain/η vs
    frequency; **Pop-out Antenna Graph** = separate window; field dumps remain
-   under `work/<project>/simulation/`
+   under `work/<project>/fields/` (S-parameters in
+   `work/<project>/sparams/`, NF2FF in `work/<project>/nf2ff/`)
 4. **2-port (S2P)** — one FDTD run measures **one** column of the S-matrix (for 2 ports:
    S11 + S21). Further columns need further runs with the other excited port
    (`excite_port` switched); the JSON results are merged afterwards —

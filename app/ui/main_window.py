@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
 
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QSplitter,
@@ -37,6 +39,7 @@ from PySide6.QtWidgets import (
 from app.freecad_io.importer import load_geometry_file, overall_bounds
 from app.models.project import GeomAssignment, PortDef, Project
 from app.settings import AppSettings
+from app.simulation.progress import EngineProgress
 from app.simulation.runner import SimulationRunner
 from app.simulation.script_gen import generate_run_script
 from app.csxcad_builder.primitives import patch_antenna_primitives
@@ -70,6 +73,15 @@ class MainWindow(QMainWindow):
         self.primitives: list[dict] = []
         self.runner = SimulationRunner(settings, app_root=APP_ROOT)
         self._current_file_path: Path | None = None
+        # signature of the project state the Mesh Viewer's CSX was built from
+        self._mesh_sig: str | None = None
+        # background mesh build (worker thread) state
+        self._mesh_building = False
+        self._mesh_thread = None
+        # multi-excitation driver state (Simulation → Run All Ports)
+        self._multi_plans: list | None = None
+        self._multi_pos: int = 0
+        self._multi_timer = None
         self.setWindowTitle("FreeCAD OpenEMS GUI")
         self._build_ui()
         self._apply_window_geometry()
@@ -146,6 +158,15 @@ class MainWindow(QMainWindow):
             self._fit_default(avail)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        # Let a running background mesh build finish before tearing down the
+        # CSX/FDTD objects and the GUI thread.
+        thread = getattr(self, "_mesh_thread", None)
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.wait(5000)
+            except Exception as e:  # noqa: BLE001
+                print("wait for mesh thread failed:", e)
         try:
             import base64
 
@@ -519,6 +540,19 @@ class MainWindow(QMainWindow):
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
+        # FDTD engine progress (energy / end criteria) — updated from the
+        # openEMS stdout lines as they arrive (see _append_log_on_gui).
+        self._engine_progress = EngineProgress()
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFixedWidth(220)
+        self.progress.setTextVisible(True)
+        self.progress.setVisible(False)
+        self.lbl_engine = QLabel("")
+        self.lbl_engine.setVisible(False)
+        self.status.addPermanentWidget(self.lbl_engine)
+        self.status.addPermanentWidget(self.progress)
         # Larger default window so the mesh viewer is usable
         self.resize(1440, 900)
 
@@ -627,6 +661,8 @@ class MainWindow(QMainWindow):
         fmenu = bar.addMenu("&File")
         add_action(fmenu, "New Project", btn=self.btn_new, shortcut="Ctrl+N")
         add_action(fmenu, "Open\u2026", btn=self.btn_open, shortcut="Ctrl+O")
+        self._recent_menu = fmenu.addMenu("Recent projects")
+        self._recent_menu.setStatusTip("Project files opened most recently")
         add_action(fmenu, "Save", btn=self.btn_save, shortcut="Ctrl+S")
         add_action(fmenu, "Save As\u2026", slot=self._on_save_as, shortcut="Ctrl+Shift+S")
         fmenu.addSeparator()
@@ -636,6 +672,7 @@ class MainWindow(QMainWindow):
         add_action(fmenu, "Open Work Folder", slot=self._open_work_folder)
         fmenu.addSeparator()
         add_action(fmenu, "Exit", btn=self.btn_exit, shortcut="Ctrl+Q")
+        self._refresh_recent_projects()
 
         pmenu = bar.addMenu("&Presets")
         add_action(pmenu, "Preset: Patch Antenna\u2026", btn=self.btn_patch)
@@ -699,6 +736,14 @@ class MainWindow(QMainWindow):
 
         smenu = bar.addMenu("&Simulation")
         add_action(smenu, "Run Simulation", btn=self.btn_run, shortcut="Ctrl+R")
+        self.act_run_all_ports = add_action(
+            smenu,
+            "Run All Ports (full S-matrix)",
+            slot=self._on_run_all_ports,
+            shortcut="Ctrl+Shift+R",
+            tip="One FDTD run per port (one excitation each) then merge into the "
+            "complete S-matrix — needs >= 2 ports",
+        )
         add_action(smenu, "Abort", btn=self.btn_abort)
         smenu.addSeparator()
         add_action(
@@ -776,6 +821,7 @@ class MainWindow(QMainWindow):
         idx = self._tab_title_map.get("Mesh Viewer", -1)
         if idx >= 0:
             self.tabs.setCurrentIndex(idx)
+        self._ensure_mesh_viewer_content()
 
     def _open_work_folder(self) -> None:
         try:
@@ -817,6 +863,12 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed_for_help(self, _index: int) -> None:
         title = self._current_tab_title()
+        # opening the Mesh Viewer shows the last mesh (recorded or generated)
+        if _index == getattr(self, "mesh_viewer_tab_index", -1):
+            self._ensure_mesh_viewer_content()
+        # opening the Antenna tab shows the current project's pattern
+        if _index == getattr(self, "antenna_tab_index", -1):
+            self._refresh_antenna_viewer()
         try:
             self.btn_help.setText(f"Help: {title}")
             self.btn_help.setToolTip(f"Open help for the {title} tab")
@@ -847,6 +899,40 @@ class MainWindow(QMainWindow):
         except Empty:
             pass
 
+    def _reset_engine_progress(self) -> None:
+        """Clear the FDTD engine progress bar (called when a run starts)."""
+        self._engine_progress.reset()
+        self.progress.setValue(0)
+        self.progress.setFormat("")
+        self.progress.setVisible(False)
+        self.lbl_engine.setText("")
+        self.lbl_engine.setVisible(False)
+
+    def _show_engine_progress(self) -> None:
+        p = self._engine_progress
+        percent = p.percent
+        self.progress.setValue(percent)
+        self.progress.setFormat(f"{percent}%")
+        self.progress.setVisible(True)
+        self.lbl_engine.setText(p.text())
+        self.lbl_engine.setVisible(True)
+
+    def _feed_engine_progress(self, msg: str) -> None:
+        """Feed openEMS stdout lines into the engine progress bar.
+
+        Cheap pre-filter so multi-line reports (mesh, S-params) don't run the
+        regexes line by line.
+        """
+        low = msg.lower()
+        if "timestep" not in low and "criteria" not in low:
+            return
+        for raw in msg.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if self._engine_progress.feed(line):
+                self._show_engine_progress()
+
     def _append_log_on_gui(self, msg: str) -> None:
         try:
             self.log_view.appendPlainText(msg)
@@ -856,6 +942,7 @@ class MainWindow(QMainWindow):
             n = self.log_view.blockCount()
             self.lbl_log_count.setText(f"{n} lines")
             self.status.showMessage(msg.splitlines()[-1] if msg else "")
+            self._feed_engine_progress(msg)
             low = msg.lower()
             # Refresh only AFTER export messages (not "simulation finished" — too early).
             if (
@@ -865,8 +952,11 @@ class MainWindow(QMainWindow):
                 or "[exit code" in low
             ):
                 try:
-                    self.sparam_viewer.set_work_dir(self.settings.work_path())
+                    self.sparam_viewer.set_work_dir(self._project_work_dir())
                     self.sparam_viewer._on_scan(auto_load=True)
+                    # remember the run's artifacts in the project JSON so a
+                    # re-opened project restores the viewers directly
+                    self._record_results()
                 except Exception as e:  # noqa: BLE001
                     print("sparam viewer refresh failed:", e)
             # NF2FF summary → refresh the antenna pattern viewer
@@ -988,25 +1078,85 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_show_sparams(self) -> None:
-        self.sparam_viewer.set_work_dir(self.settings.work_path())
-        self.sparam_viewer._on_scan(auto_load=True)
+        # scope the browser/auto-load to the CURRENT project's results, and
+        # prefer the file recorded in the project JSON
+        self.sparam_viewer.set_work_dir(self._project_work_dir())
+        recorded = self._existing_path((self.project.results or {}).get("sparams"))
+        if recorded is not None and self.sparam_viewer.network is None:
+            try:
+                self.sparam_viewer.load_path(recorded)
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not load recorded S-params: {e}")
+        else:
+            self._auto_load_sparams_if_empty()
         if self.sparam_tab_index >= 0:
             self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
 
+    def _auto_load_sparams_if_empty(self) -> None:
+        """Auto-load the newest S-params only when nothing is loaded yet.
+
+        Re-scanning must never replace what the user has selected.
+        """
+        self.sparam_viewer._on_scan(auto_load=self.sparam_viewer.network is None)
+
     def _on_popout_sparams(self) -> None:
-        self.sparam_viewer.set_work_dir(self.settings.work_path())
-        self.sparam_viewer._on_scan(auto_load=True)
+        self.sparam_viewer.set_work_dir(self._project_work_dir())
+        recorded = self._existing_path((self.project.results or {}).get("sparams"))
+        if recorded is not None and self.sparam_viewer.network is None:
+            try:
+                self.sparam_viewer.load_path(recorded)
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not load recorded S-params: {e}")
+        else:
+            self._auto_load_sparams_if_empty()
         self.sparam_viewer.popout_graph()
         self._log("S-Params viewer opened")
 
+    def _refresh_antenna_viewer(self) -> None:
+        """Show the current project's pattern when the Antenna tab is opened.
+
+        Refreshes the file list without touching a user selection; when nothing
+        is loaded yet it loads the project's recorded NF2FF result, else the
+        newest file in the list.
+        """
+        self.antenna_viewer.set_work_dir(self.settings.work_path())  # rescan list
+        if self.antenna_viewer.data is not None:
+            return  # keep what the user has loaded
+        # project's result first (recorded -> project folder -> legacy folder),
+        # only then the newest file of the whole work dir
+        proj_dir = self._project_work_dir()
+        target = next(
+            (
+                c
+                for c in (
+                    self._existing_path((self.project.results or {}).get("nf2ff")),
+                    self._existing_path(proj_dir / "nf2ff" / "nf2ff.json"),
+                    self._existing_path(proj_dir / "simulation" / "nf2ff" / "nf2ff.json"),
+                )
+                if c is not None
+            ),
+            None,
+        )
+        if target is None:
+            item = self.antenna_viewer.file_list.item(0)
+            if item is not None:
+                target = self._existing_path(item.data(Qt.ItemDataRole.UserRole))
+        if target is None:
+            return
+        try:
+            self.antenna_viewer.load_path(target)
+            self._log(f"Antenna pattern: loaded {Path(target).name} ({Path(target).parent.parent.name})")
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Could not load NF2FF {target}: {e}")
+
     def _on_show_antenna(self) -> None:
-        self.antenna_viewer.set_work_dir(self.settings.work_path())
+        self._refresh_antenna_viewer()
         if self.antenna_tab_index >= 0:
             self.tabs.setCurrentIndex(self.antenna_tab_index)
         self._log("Antenna pattern viewer opened")
 
     def _on_popout_antenna(self) -> None:
-        self.antenna_viewer.set_work_dir(self.settings.work_path())
+        self._refresh_antenna_viewer()
         self.antenna_viewer.popout_graph()
         self._log("Antenna pattern viewer opened")
 
@@ -1310,7 +1460,7 @@ class MainWindow(QMainWindow):
         _note_script_backup). A visible Script editor reloads the file unless
         it holds unsaved edits.
         """
-        work = self.settings.work_path() / (self.project.name or "project")
+        work = self._project_work_dir()
         if not (work / "project_run.py").exists():
             return
         try:
@@ -1415,8 +1565,13 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        self._open_project_path(path)
+
+    def _open_project_path(self, path: Path | str) -> None:
+        """Load a project file and restore the viewers from its last results."""
         try:
             self._current_file_path = Path(path)
+            self._mesh_sig = None  # different project -> loaded CSX is unknown
             self.project = Project.load(path)
             # Rebuild primitives from saved project.primitives / mesh_path / patch preset
             self.primitives = []
@@ -1457,6 +1612,14 @@ class MainWindow(QMainWindow):
             self._refresh_ports()
             self._log(f"Opened {path}")
             self._log_computed_summary()
+            # remember for File → Recent projects (persisted in the settings)
+            try:
+                self.settings.remember_project(self._current_file_path or path)
+                self.settings.save()
+                self._refresh_recent_projects()
+            except Exception as e:  # noqa: BLE001
+                print("recent projects update failed:", e)
+            self._load_last_results()
         except Exception as e:
             import traceback
 
@@ -1469,11 +1632,308 @@ class MainWindow(QMainWindow):
                 f"Could not open project:\n{path}\n\n{e}\n\nSee Log tab for details.",
             )
 
+    def _refresh_recent_projects(self) -> None:
+        """Rebuild File → Recent projects from the settings MRU list."""
+        menu = getattr(self, "_recent_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        items = self.settings.recent_projects_existing()
+        if not items:
+            empty = menu.addAction("(no recent projects)")
+            empty.setEnabled(False)
+            return
+        for p in items:
+            path = Path(p)
+            act = menu.addAction(path.name)
+            act.setToolTip(p)
+            act.setStatusTip(p)
+            act.triggered.connect(
+                lambda _checked=False, pp=path: self._open_recent_project(pp)
+            )
+        menu.addSeparator()
+        menu.addAction("Clear list").triggered.connect(self._clear_recent_projects)
+
+    def _open_recent_project(self, path: Path) -> None:
+        if not Path(path).exists():
+            self._log(f"Recent project no longer exists: {path}")
+            self.settings.recent_projects = [
+                p for p in self.settings.recent_projects if Path(p).exists()
+            ]
+            self.settings.save()
+            self._refresh_recent_projects()
+            return
+        self._open_project_path(path)
+
+    def _clear_recent_projects(self) -> None:
+        self.settings.recent_projects = []
+        self.settings.save()
+        self._refresh_recent_projects()
+        self._log("Recent projects list cleared")
+
+    def _ensure_project_dir(self) -> Path:
+        """Create the project folder (and the result subfolders) if needed.
+
+        Called whenever the project is saved so the layout is in place before
+        the first run/build: ``<work>/<project>/{sparams,fields,nf2ff}``.
+        """
+        d = self._project_work_dir()
+        try:
+            for sub in (d, d / "sparams", d / "fields", d / "nf2ff"):
+                sub.mkdir(parents=True, exist_ok=True)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Could not create project folder {d}: {e}")
+        return d
+
+    def _project_work_dir(self) -> Path:
+        """Project folder ``<work>/<project file name>`` holding the results.
+
+        The folder is named after the project JSON file (which lives in the
+        work directory); until the project has been saved it falls back to the
+        project name.
+        """
+        stem = Path(self._current_file_path).stem if self._current_file_path else ""
+        if stem.endswith(".fcsim"):
+            stem = stem[: -len(".fcsim")]
+        name = (stem or str(self.project.name or "")).strip() or "project"
+        return self.settings.work_path() / name
+
+    # ------------------------------------------------------------------ results
+    @staticmethod
+    def _existing_path(value) -> Path | None:
+        """Existing path from a recorded string, else None.
+
+        NOTE: ``Path("")`` is the cwd (``.``) and *does* exist — an empty
+        recorded string must never be turned into a path.
+        """
+        s = str(value or "").strip()
+        if not s:
+            return None
+        p = Path(s)
+        return p if p.exists() else None
+
+    def _find_sparams_files(self, project_dir: Path, sim_dir: Path | None = None) -> list[Path]:
+        """``sparams.*`` of a project — new ``<project>/sparams`` layout first,
+        then the legacy ``<project>/simulation`` location and the old
+        name-based ``<work>/<Project.name>/simulation`` folder."""
+        dirs = [Path(project_dir) / "sparams"]
+        if sim_dir is not None:
+            dirs.append(Path(sim_dir))
+        dirs.append(Path(project_dir) / "simulation")
+        legacy = self.settings.work_path() / (
+            str(self.project.name or "").strip() or "project"
+        )
+        dirs.append(legacy / "simulation")
+        for d in dirs:
+            for pat in ("sparams.s*p", "sparams.json"):
+                hits = sorted(d.glob(pat))
+                if hits:
+                    return hits
+        return []
+
+    def _collect_result_paths(self, project_dir: Path | None = None) -> dict:
+        """Paths of the project's artifacts (only those that exist).
+
+        New layout: ``<work>/<project>/{csx.xml, sparams/, fields/, nf2ff/}``;
+        the legacy ``<project>/simulation/`` location is still searched.
+        """
+        project_dir = Path(project_dir) if project_dir else self._project_work_dir()
+        sim_dir = project_dir / "simulation"  # legacy layout
+        out: dict[str, Any] = {
+            "project_dir": str(project_dir),
+            "sim_dir": str(sim_dir),
+        }
+        csx = project_dir / "csx.xml"
+        if not csx.exists():
+            csx = sim_dir / "csx.xml"
+        if csx.exists():
+            out["csx_xml"] = str(csx)
+        sparams = self._find_sparams_files(project_dir, sim_dir)
+        if sparams:
+            out["sparams"] = str(sparams[-1])
+        nf2ff = project_dir / "nf2ff" / "nf2ff.json"
+        if not nf2ff.exists():
+            nf2ff = sim_dir / "nf2ff" / "nf2ff.json"
+        if nf2ff.exists():
+            out["nf2ff"] = str(nf2ff)
+        return out
+
+    def _record_results(self, sim_dir: Path | None = None, save: bool = True) -> None:
+        """Store the last run's artifact paths in the project JSON.
+
+        ``save`` writes the project file (if it has one) so a later
+        *File → Open* can restore the Mesh Viewer / S-param Viewer straight from
+        the recorded paths.
+        """
+        try:
+            self.project.results = self._collect_result_paths(sim_dir)
+            self.project.results["time"] = datetime.now().isoformat(timespec="seconds")
+            if save and self._current_file_path and self._current_file_path.exists():
+                self.project.primitives = list(self.primitives)
+                self.project.save(self._current_file_path)
+            keys = [k for k in ("csx_xml", "sparams", "nf2ff") if k in self.project.results]
+            self._log(f"Recorded results in project ({', '.join(keys) or 'none'})")
+        except Exception as e:  # noqa: BLE001
+            print("record results failed:", e)
+
+    def _load_recorded_csx(self) -> bool:
+        """Load the CSX recorded in the project JSON into the Mesh Viewer.
+
+        Prefers the last simulation's mesh (``csx_xml``), falls back to the
+        mesh built by *Build CSX + Mesh + Validate* (``mesh_xml``).
+        """
+        rec = self.project.results or {}
+        # recorded mesh -> fixed locations (new project folder, legacy
+        # simulation/ folder)
+        candidates = [rec.get("csx_xml"), rec.get("mesh_xml")]
+        rec_sim = self._existing_path(rec.get("sim_dir"))
+        if rec_sim is not None:
+            candidates.append(rec_sim / "csx.xml")
+        candidates += [
+            self._project_work_dir() / "csx.xml",
+            self._project_work_dir() / "simulation" / "csx.xml",
+            # old name-based project folder
+            self.settings.work_path()
+            / (str(self.project.name or "").strip() or "project")
+            / "simulation"
+            / "csx.xml",
+        ]
+        for cand in candidates:
+            xml = self._existing_path(cand)
+            if xml is None:
+                continue
+            try:
+                from CSXCAD import ContinuousStructure
+
+                csx = ContinuousStructure()
+                csx.ReadFromXML(str(xml))
+                self.mesh_viewer.set_project_context(
+                    project=self.project,
+                    primitives=self.primitives,
+                    ports=self.project.ports,
+                    nf2ff=self.project.nf2ff,
+                )
+                self.mesh_viewer.set_csx(csx)
+                self._mesh_sig = self._mesh_signature()
+                self._log(f"Mesh Viewer: loaded recorded mesh {xml}")
+                return True
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not load recorded mesh {xml}: {e}")
+        return False
+
+    def _mesh_signature(self) -> str:
+        """Hash of everything that shapes the CSX/mesh of the current project.
+
+        Used to detect that the Mesh Viewer's CSX is stale after geometry,
+        port, dump or mesh-parameter changes.
+        """
+        import hashlib
+        import json as _json
+        from dataclasses import asdict
+
+        def _plain(obj):
+            try:
+                return asdict(obj)
+            except Exception:  # noqa: BLE001
+                return repr(obj)
+
+        payload = {
+            "primitives": self.primitives,
+            "materials": [_plain(m) for m in self.project.materials],
+            "assignments": [_plain(a) for a in self.project.assignments],
+            "ports": [_plain(p) for p in self.project.ports],
+            "dumps": [_plain(d) for d in self.project.dumps],
+            "nf2ff": _plain(self.project.nf2ff),
+            "mesh": _plain(self.project.mesh),
+            "boundary": _plain(self.project.boundary),
+        }
+        blob = _json.dumps(payload, sort_keys=True, default=str)
+        return hashlib.sha1(blob.encode("utf-8")).hexdigest()
+
+    def _ensure_mesh_viewer_content(self) -> None:
+        """Show the last mesh when the Mesh Viewer is opened.
+
+        Rebuilds when the loaded CSX no longer matches the project (geometry,
+        ports, dumps or mesh parameters changed); otherwise keeps it. Prefers
+        recorded results only when nothing is loaded at all.
+        """
+        try:
+            current = self._mesh_signature()
+        except Exception:  # noqa: BLE001
+            current = None
+        if self.mesh_viewer._csx is not None and self._mesh_sig == current:
+            return  # up to date
+        if self.mesh_viewer._csx is None and self._load_recorded_csx():
+            return
+        if not (self.primitives or self.project.geometry_files):
+            self._log("Mesh Viewer: nothing to show yet (no geometry/primitives)")
+            return
+        if self.mesh_viewer._csx is not None:
+            self._log("Mesh Viewer: geometry changed — rebuilding the mesh…")
+        else:
+            self._log("Mesh Viewer: no recorded mesh — building the mesh now…")
+        try:
+            self._build_and_validate()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Mesh Viewer: automatic meshing failed: {e}")
+
+    def _load_last_results(self) -> None:
+        """Restore Mesh Viewer + S-param Viewer from the project's results.
+
+        Prefers the paths recorded in the project JSON (``Project.results``,
+        written after every run) and falls back to the project folder
+        (``<work>/<project>/{csx.xml, sparams/}``) plus the legacy
+        ``<project>/simulation/`` location for older projects.
+        """
+        rec = dict(self.project.results or {})
+        project_dir = self._existing_path(rec.get("project_dir")) or self._project_work_dir()
+        sim_dir = self._existing_path(rec.get("sim_dir")) or (project_dir / "simulation")
+        if not project_dir.is_dir() and not any(
+            self._existing_path(rec.get(k)) for k in ("csx_xml", "mesh_xml", "sparams")
+        ):
+            return
+        loaded: list[str] = []
+
+        # --- Mesh Viewer: the meshed CSX of that run (or the last build) ----
+        if self._load_recorded_csx():
+            loaded.append("mesh")
+
+        # --- S-param Viewer: recorded file, else newest of THIS project -----
+        recorded = self._existing_path(rec.get("sparams"))
+        cands: list[Path] = []
+        if recorded is not None:
+            cands = [recorded]
+        else:
+            cands = self._find_sparams_files(project_dir, sim_dir)
+        if cands:
+            self.sparam_viewer.set_work_dir(self._project_work_dir())
+            try:
+                self.sparam_viewer.load_path(cands[-1])
+                loaded.append(f"S-params ({cands[-1].name})")
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not restore S-params {cands[-1].name}: {e}")
+
+        # --- Antenna pattern (NF2FF), when recorded -------------------------
+        nf2ff = self._existing_path(rec.get("nf2ff"))
+        if nf2ff is not None:
+            try:
+                self.antenna_viewer.set_work_dir(self.settings.work_path())
+                self.antenna_viewer.load_path(nf2ff)
+                loaded.append(f"NF2FF ({nf2ff.name})")
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not restore NF2FF {nf2ff.name}: {e}")
+
+        if loaded:
+            self._log(f"Restored last results from {project_dir}: " + ", ".join(loaded))
+        else:
+            self._log(f"No restorable results in {project_dir}")
+
     def _on_save(self) -> None:
         self._sync_project_from_form()
         self.project.primitives = list(self.primitives)
         if self._current_file_path and self._current_file_path.exists():
             saved = self.project.save(self._current_file_path)
+            self._ensure_project_dir()
             self._log(f"Saved {saved}")
             return
         # No known file yet — behave like Save As
@@ -1495,7 +1955,14 @@ class MainWindow(QMainWindow):
             return
         self._current_file_path = Path(path)
         saved = self.project.save(path)
+        self._ensure_project_dir()
         self._log(f"Saved {saved}")
+        try:
+            self.settings.remember_project(saved)
+            self.settings.save()
+            self._refresh_recent_projects()
+        except Exception as e:  # noqa: BLE001
+            print("recent projects update failed:", e)
 
     def _object_names_for_dialog(self) -> list[str]:
         names: list[str] = []
@@ -2780,264 +3247,109 @@ class MainWindow(QMainWindow):
         self._refresh_tree()
 
     def _on_build_mesh(self) -> None:
-        if getattr(self, "_mesh_building", False):
+        if getattr(self, "_mesh_building", False) or (
+            getattr(self, "_mesh_thread", None) is not None
+            and self._mesh_thread.isRunning()
+        ):
             self._log("Mesh build already running — ignored.")
             return
-        self._mesh_building = True
-        self.btn_build_mesh.setEnabled(False)
         self._ensure_log_visible("mesh build")
         self._sync_project_from_form()
-        self._log_computed_summary()
-        self._log("Building mesh (this uses easyMesh + validators)…")
         try:
-            report = self._build_and_validate()
-            self._set_mesh_report(report)
+            self._ensure_patch_primitives()
+        except Exception as e:  # noqa: BLE001
+            self._set_mesh_report(f"ERROR: {e}")
+            self._log(f"Mesh build failed: {e}")
+            return
+        self._log_computed_summary()
+        self._mesh_building = True
+        self.btn_build_mesh.setEnabled(False)
+        self._log("Building mesh in the background (easyMesh + validators)…")
+        from app.ui.mesh_worker import MeshBuildThread
+
+        thread = MeshBuildThread(
+            self.project, list(self.primitives), self._project_work_dir(), self
+        )
+        thread.log.connect(self._log)
+        thread.done.connect(self._on_mesh_built)
+        thread.failed.connect(self._on_mesh_build_failed)
+        self._mesh_thread = thread
+        thread.start()
+
+    def _on_mesh_built(self, result) -> None:
+        """GUI-thread slot: finish a background mesh build."""
+        try:
+            self._finish_mesh_build(result)
         except Exception as e:  # noqa: BLE001
             self._set_mesh_report(f"ERROR: {e}")
             self._log(f"Mesh build failed: {e}")
         finally:
             self._mesh_building = False
             self.btn_build_mesh.setEnabled(True)
+            self._mesh_thread = None
 
-    def _build_and_validate(self) -> str:
-        import numpy as np
+    def _on_mesh_build_failed(self, message: str) -> None:
+        """GUI-thread slot: the background mesh build raised."""
+        self._set_mesh_report(f"ERROR: {message}")
+        self._log(f"Mesh build failed: {message}")
+        self._mesh_building = False
+        self.btn_build_mesh.setEnabled(True)
+        self._mesh_thread = None
 
-        from app.meshing.easy_wrapper import apply_boundary, enhance_csx, enhance_fdtd, generate_mesh
-        from app.meshing.rules import compute_targets
-        from app.meshing.validators import report_to_lines, validate_mesh
-        from app.meshing.preview import save_mesh_preview
-        from openEMS import openEMS
-        from CSXCAD import ContinuousStructure
-
+    def _ensure_patch_primitives(self) -> None:
+        """Patch-preset fallback: derive primitives from patch_params if empty."""
         if not self.primitives and self.project.patch_params:
             self.project, self.primitives = patch_antenna_primitives(
-                **{
-                    k: float(v)
-                    for k, v in self.project.patch_params.items()
-                }
+                **{k: float(v) for k, v in self.project.patch_params.items()}
             )
             self.sim_params.patch_params = dict(self.project.patch_params)
             self._sync_form_from_project()
 
-        _cs = 1 if self.project.mesh.is_cylindrical else 0
-        FDTD = openEMS(NrTS=1000, EndCriteria=1e-3, CoordSystem=_cs)
-        f0 = self.project.mesh.target_frequency or 2.45e9
-        fc = 0.5 * abs(self.project.mesh.stop_frequency - self.project.mesh.start_frequency) or 1e6
-        FDTD.SetGaussExcite(f0, fc)
-        CSX = ContinuousStructure(CoordSystem=_cs)
-        FDTD.SetCSX(CSX)
-        primitives_mesh_setup = {}
-        CSX = enhance_csx(CSX, primitives_mesh_setup)
-        FDTD = enhance_fdtd(FDTD, primitives_mesh_setup)
-        targets = compute_targets(self.project.mesh, eps_max=1.0)
-        apply_boundary(FDTD, self.project.boundary, self.project.mesh, targets)
-        CSX.GetGrid().SetDeltaUnit(self.project.mesh.unit_to_meters())
+    def _build_and_validate(self) -> str:
+        """Synchronous mesh build (Mesh-Viewer auto-build + tests).
 
-        mat_by_name = {m.name: m for m in self.project.materials}
-        props: dict = {}
-        for mat in self.project.materials:
-            if mat.kind == "pec":
-                props[mat.name] = CSX.AddMetal(mat.name)
-            elif mat.kind == "dielectric":
-                kwargs = {"epsilon": mat.epsilon}
-                if mat.kappa:
-                    kwargs["kappa"] = mat.kappa
-                props[mat.name] = CSX.AddMaterial(mat.name, **kwargs)
-            elif mat.kind == "conducting_sheet":
-                props[mat.name] = CSX.AddConductingSheet(mat.name, conductivity=mat.kappa)
+        The Build action (:meth:`_on_build_mesh`) runs the same core on a worker
+        thread; this blocking path stays for ``_ensure_mesh_viewer_content`` and
+        for tests that stub it.
+        """
+        from app.meshing.build_task import build_mesh_and_validate
 
-        def _prop_for(mat_name: str):
-            if mat_name in props:
-                return props[mat_name]
-            m = mat_by_name.get(mat_name)
-            if m is None:
-                if mat_name in ("copper", "pec") or "copper" in mat_name:
-                    props[mat_name] = CSX.AddMetal(mat_name)
-                else:
-                    props[mat_name] = CSX.AddMaterial(mat_name, epsilon=2.2)
-                return props[mat_name]
-            if m.kind == "pec":
-                props[mat_name] = CSX.AddMetal(m.name)
-            elif m.kind == "conducting_sheet":
-                props[mat_name] = CSX.AddConductingSheet(m.name, conductivity=m.kappa)
-            else:
-                kwargs = {"epsilon": m.epsilon}
-                if m.kappa:
-                    kwargs["kappa"] = m.kappa
-                props[mat_name] = CSX.AddMaterial(m.name, **kwargs)
-            return props[mat_name]
-
-        for pr in self.primitives:
-            kind = pr.get("kind", "box")
-            name = str(pr.get("name", "prim"))
-            if self.project.mesh.is_cylindrical:
-                from app.meshing.polar import ensure_polar_primitive
-
-                ensure_polar_primitive(kind, name)
-            mat = pr.get("material", "copper")
-            pri = int(pr.get("priority", 10))
-            prop = _prop_for(mat)
-            if kind == "box":
-                prop.AddBox(
-                    start=[_f32(x) for x in pr["start"]],
-                    stop=[_f32(x) for x in pr["stop"]],
-                    priority=pri,
-                )
-                if pr.get("edges2grid"):
-                    try:
-                        FDTD.AddEdges2Grid(
-                            dirs=pr.get("edges2grid", "xy"),
-                            properties=prop,
-                            metal_edge_res=pr.get("metal_edge_res"),
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        self._log(f"AddEdges2Grid warning: {e}")
-            elif kind == "cylinder":
-                prop.AddCylinder(
-                    [_f32(x) for x in pr["start"]],
-                    [_f32(x) for x in pr["stop"]],
-                    float(pr.get("radius", 0.5)),
-                    priority=pri,
-                )
-            elif kind == "polygon":
-                pts = pr.get("points") or []
-                if len(pts) < 3:
-                    raise ValueError(f"Polygon primitive '{name}' needs >= 3 points")
-                # CSXCAD expects columnar [xs, ys], NOT a list of [x, y] pairs
-                xs = [_f32(pt[0]) for pt in pts]
-                ys = [_f32(pt[1]) for pt in pts]
-                length = float(pr.get("length") or 0.0)
-                if length > 0:
-                    prop.AddLinPoly(
-                        [xs, ys],
-                        pr.get("axis", "z"),
-                        _f32(pr.get("coord", 0)),
-                        _f32(length),
-                        priority=pri,
-                    )
-                else:
-                    prop.AddPolygon(
-                        [xs, ys],
-                        pr.get("axis", "z"),
-                        _f32(pr.get("coord", 0)),
-                        priority=pri,
-                    )
-            elif kind == "sphere":
-                center = [_f32(x) for x in pr.get("center", [])]
-                if len(center) != 3:
-                    raise ValueError(f"Sphere primitive '{name}' needs a 3D center")
-                prop.AddSphere(center, float(pr.get("radius", 0.5)), priority=pri)
-            elif kind == "stl":
-                from app.csxcad_builder.triangle_mesh import add_triangle_mesh
-
-                path = pr.get("path") or pr.get("mesh_path")
-                stl_path = pr.get("stl_path") or ""
-                if stl_path and not Path(stl_path).exists():
-                    stl_path = ""
-                if (not path or not Path(path).exists()) and (not stl_path):
-                    raise FileNotFoundError(f"STL primitive '{name}' missing: {path}")
-                tris = None
-                if path and Path(path).exists() and Path(path).suffix.lower() == ".npy":
-                    tris = np.load(path)
-                # CSXCAD has no AddMesh — use Polyhedron / PolyhedronReader
-                add_triangle_mesh(
-                    prop,
-                    name=name,
-                    triangles=tris,
-                    stl_path=stl_path or None,
-                    mesh_path=path if path and Path(path).exists() else None,
-                    priority=pri,
-                )
-                if pr.get("edges2grid"):
-                    try:
-                        FDTD.AddEdges2Grid(
-                            dirs=pr.get("edges2grid", "xy"),
-                            properties=prop,
-                            metal_edge_res=pr.get("metal_edge_res"),
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        self._log(f"AddEdges2Grid warning (stl): {e}")
-            else:
-                raise ValueError(f"Unknown primitive kind: {kind}")
-
-        for idx, port in enumerate(self.project.ports, start=1):
-            start = [_f32(x) for x in port.start]
-            stop = [_f32(x) for x in port.stop]
-            excite = 1.0 if port.excite_port else 0.0
-            if port.type == "msl":
-                FDTD.AddMSLPort(
-                    idx,
-                    port.resistance,
-                    start,
-                    stop,
-                    port.direction,
-                    excite,
-                    priority=15,
-                )
-            elif port.type == "rect_waveguide":
-                try:
-                    FDTD.AddRectWaveGuidePort(
-                        idx,
-                        start,
-                        stop,
-                        port.direction,
-                        port.resistance,
-                        excite=excite,
-                    )
-                except Exception as e:  # noqa: BLE001
-                    self._log(f"rect_waveguide port preview failed: {e}")
-            else:
-                FDTD.AddLumpedPort(
-                    idx,
-                    port.resistance,
-                    start,
-                    stop,
-                    port.direction,
-                    excite,
-                    priority=15,
-                )
-
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=RuntimeWarning)
-            setup = generate_mesh(
-                CSX,
-                self.project.mesh,
-                self.project.boundary,
-                targets,
-                primitives_mesh_setup=primitives_mesh_setup,
-                ports=self.project.ports,
-            )
-        report = validate_mesh(
-            CSX,
-            targets,
-            ports=self.project.ports,
-            max_grading=self.project.mesh.max_grading_ratio,
-            coord_system=self.project.mesh.coord_system,
+        self._ensure_patch_primitives()
+        result = build_mesh_and_validate(
+            self.project, self.primitives, self._project_work_dir(), log=self._log
         )
-        lines = report_to_lines(report)
-        lines.append("")
-        lines.append("Mesh setup:")
-        import json
+        return self._finish_mesh_build(result)
 
-        lines.append(json.dumps(setup, indent=2, default=str))
+    def _finish_mesh_build(self, result) -> str:
+        """GUI-thread finish: preview PNG, report, viewer swap, result record.
+
+        Must run on the GUI thread — matplotlib preview, the Mesh Viewer CSX
+        swap and the retired-object bookkeeping are not worker-safe.
+        """
+        lines = list(result.lines)
+
+        # Backend-safe PNG export (does not switch matplotlib backend).
+        try:
+            from app.meshing.preview import save_mesh_preview
+
+            preview = save_mesh_preview(
+                result.csx, self.settings.work_path() / "mesh_preview.png", "Mesh cells"
+            )
+            lines.append(f"Preview: {preview}")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"(preview export failed: {e})")
+
+        CSX = result.csx
+        FDTD = result.fdtd
 
         # Keep previous CSX/FDTD alive until the viewer has switched to the new
         # ones. Freeing FDTD while the viewer still holds its CSX causes an
         # access violation on the 2nd Build Mesh click (CSXCAD parent freed).
         old_csx = getattr(self, "_last_csx", None)
         old_fdtd = getattr(self, "_last_fdtd", None)
-
-        # Backend-safe PNG export (does not switch matplotlib backend).
-        try:
-            preview = save_mesh_preview(CSX, self.settings.work_path() / "mesh_preview.png", "Mesh cells")
-            lines.append(f"Preview: {preview}")
-        except Exception as e:  # noqa: BLE001
-            lines.append(f"(preview export failed: {e})")
-
         self._last_csx = CSX
         self._last_fdtd = FDTD
+
         # Feed interactive mesh/geometry viewer (new CSX only)
         try:
             self.mesh_viewer.set_project_context(
@@ -3047,11 +3359,12 @@ class MainWindow(QMainWindow):
                 nf2ff=self.project.nf2ff,
             )
             self.mesh_viewer.set_csx(CSX)
+            self._mesh_sig = self._mesh_signature()
             self._sync_scene_info()
             # Switch to the viewer tab so the user sees the new mesh
             idx = getattr(self, "mesh_viewer_tab_index", None)
             if idx is not None and idx >= 0:
-                self.sparam_tabs.setCurrentIndex(idx)
+                self.tabs.setCurrentIndex(idx)
         except Exception as e:  # noqa: BLE001 — viewer must not block mesh build
             lines.append(f"(viewer update failed: {e})")
 
@@ -3071,8 +3384,10 @@ class MainWindow(QMainWindow):
         if len(self._retired_fdtd) > 4:
             self._retired_fdtd = self._retired_fdtd[-4:]
 
-        self._log("Mesh build finished")
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        self._set_mesh_report(text)
+        self._record_results(save=False)
+        return text
 
     def _prepare_run_state(self, work: Path) -> None:
         """Work dir + patch-preset fallback — shared by Run Simulation and Script…."""
@@ -3143,7 +3458,7 @@ class MainWindow(QMainWindow):
         from app.ui.script_editor import ScriptEditorDialog
 
         self._sync_project_from_form()
-        work = self.settings.work_path() / (self.project.name or "project")
+        work = self._project_work_dir()
         self._prepare_run_state(work)
         script_path = work / "project_run.py"
         error: str | None = None
@@ -3158,7 +3473,7 @@ class MainWindow(QMainWindow):
         def _regenerate() -> Path:
             # resolve the work dir at call time (project may have been renamed)
             return self._generate_script(
-                self.settings.work_path() / (self.project.name or "project")
+                self._project_work_dir()
             )
 
         dlg = self._script_dialog
@@ -3201,7 +3516,7 @@ class MainWindow(QMainWindow):
     def _on_run(self) -> None:
         self._ensure_log_visible("simulation")
         self._sync_project_from_form()
-        work = self.settings.work_path() / (self.project.name or "project")
+        work = self._project_work_dir()
         self._prepare_run_state(work)
         f0 = self.project.mesh.target_frequency or 2.45e9
         fc = max(1e6, 0.5 * abs(self.project.mesh.stop_frequency - self.project.mesh.start_frequency))
@@ -3220,9 +3535,10 @@ class MainWindow(QMainWindow):
             f"end_criteria={self.project.sim.end_criteria}, "
             f"boundary={self.project.boundary.as_openems_list()}"
         )
-        if self.runner.is_running():
+        if self.runner.is_running() or self._multi_plans is not None:
             QMessageBox.warning(self, "Busy", "A simulation is already running.")
             return
+        self._reset_engine_progress()
         try:
             # _log is thread-safe (queue only) — do not pass Signal.emit
             self.runner.start(script, log_cb=self._log)
@@ -3239,17 +3555,13 @@ class MainWindow(QMainWindow):
                 timer.stop()
                 exit_code = getattr(self.runner, "last_exit", None)
                 log_path = getattr(self.runner, "log_path", None)
-                sim = work / "simulation"
-                files = [
-                    sim / "sparams.s1p",
-                    sim / "sparams.s2p",
-                    sim / "sparams.s3p",
-                    sim / "sparams.s4p",
-                    sim / "sparams.json",
-                ]
-                found = next((p for p in files if p.exists()), None)
+                files = self._find_sparams_files(work)
+                found = files[-1] if files else None
                 # Antenna pattern (NF2FF) — load alongside the S-params result
-                nf2ff_json = sim / "nf2ff" / "nf2ff.json"
+                nf2ff_json = work / "nf2ff" / "nf2ff.json"
+                if not nf2ff_json.exists():
+                    legacy = work / "simulation" / "nf2ff" / "nf2ff.json"
+                    nf2ff_json = legacy if legacy.exists() else nf2ff_json
                 if nf2ff_json.exists():
                     try:
                         self.antenna_viewer.set_work_dir(self.settings.work_path())
@@ -3258,7 +3570,7 @@ class MainWindow(QMainWindow):
                     except Exception as e:  # noqa: BLE001
                         self._log(f"Antenna pattern load failed: {e}")
                 if found:
-                    self.sparam_viewer.set_work_dir(self.settings.work_path())
+                    self.sparam_viewer.set_work_dir(self._project_work_dir())
                     self.sparam_viewer.load_path(found)
                     if self.sparam_tab_index >= 0:
                         self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
@@ -3266,14 +3578,14 @@ class MainWindow(QMainWindow):
                     if exit_code not in (0, None):
                         self._log(f"WARNING: simulation exit code {exit_code} (S-params may be partial)")
                 else:
-                    self._log(f"S-param results MISSING under: {sim}")
+                    self._log(f"S-param results MISSING under: {work}")
                     self._log(f"Simulation exit code: {exit_code}")
                     if log_path:
                         self._log(f"Full simulation log: {log_path}")
                     self._log(
                         "Look for: S-param postproc FAILED / CalcPort failed / mesh validation failed"
                     )
-                    self.sparam_viewer.set_work_dir(self.settings.work_path())
+                    self.sparam_viewer.set_work_dir(self._project_work_dir())
                     self.sparam_viewer._on_scan(auto_load=True)
                     if self.sparam_tab_index >= 0:
                         self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
@@ -3292,6 +3604,114 @@ class MainWindow(QMainWindow):
         timer = QTimer(self)
         timer.timeout.connect(_check)
         timer.start(1000)
+
+    def _on_run_all_ports(self) -> None:
+        """Run one FDTD simulation per port and merge the full S-matrix.
+
+        One run measures one S-matrix column; running every port excited once
+        and merging (``app/simulation/multirun.py``) yields the complete matrix
+        / ``.sNp``. Needs >= 2 ports — otherwise it falls back to a normal run.
+        """
+        self._ensure_log_visible("simulation")
+        self._sync_project_from_form()
+        if self.runner.is_running() or self._multi_plans is not None:
+            QMessageBox.warning(self, "Busy", "A simulation is already running.")
+            return
+        nports = len(self.project.ports)
+        if nports < 2:
+            self._log("Run All Ports: fewer than 2 ports — running the normal simulation")
+            self._on_run()
+            return
+        work = self._project_work_dir()
+        self._prepare_run_state(work)
+        from app.simulation.multirun import plan_port_runs
+
+        try:
+            plans = plan_port_runs(self.project, self.primitives, work)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Multi-run setup failed", str(e))
+            self._log(f"Multi-run setup failed: {e}")
+            return
+        self._multi_plans = plans
+        self._multi_pos = 0
+        self._log(
+            f"Run All Ports: {nports} ports → {nports} FDTD runs (one excitation "
+            f"each) under {work / 'multi'}"
+        )
+        self._start_next_multi_run()
+
+    def _start_next_multi_run(self) -> None:
+        plans = self._multi_plans or []
+        if self._multi_pos >= len(plans):
+            self._finish_multi_run()
+            return
+        plan = plans[self._multi_pos]
+        self._log(
+            f"Multi-run {self._multi_pos + 1}/{len(plans)}: excite "
+            f"'{plan.port_name}' (port {plan.port_number})"
+        )
+        self._reset_engine_progress()
+        try:
+            self.runner.start(
+                plan.script_path,
+                log_cb=lambda line, _n=plan.port_name: self._log(f"[{_n}] {line}"),
+            )
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Multi-run start failed ({plan.port_name}): {e}")
+            QMessageBox.critical(self, "Run failed", str(e))
+            self._multi_plans = None
+            return
+        if self._multi_timer is None:
+            self._multi_timer = QTimer(self)
+            self._multi_timer.timeout.connect(self._poll_multi_run)
+        self._multi_timer.start(1000)
+
+    def _poll_multi_run(self) -> None:
+        if self.runner.is_running():
+            return
+        self._multi_timer.stop()
+        plans = self._multi_plans or []
+        plan = plans[self._multi_pos]
+        exit_code = getattr(self.runner, "last_exit", None)
+        self._log(
+            f"Multi-run {self._multi_pos + 1}/{len(plans)} "
+            f"('{plan.port_name}') exit code {exit_code}"
+        )
+        self._multi_pos += 1
+        self._start_next_multi_run()
+
+    def _finish_multi_run(self) -> None:
+        from app.simulation.multirun import merge_port_runs, summarise_table
+
+        plans = self._multi_plans or []
+        self._multi_plans = None
+        work = self._project_work_dir()
+        try:
+            result = merge_port_runs(work, plans)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Multi-run merge failed: {e}")
+            QMessageBox.warning(self, "Merge failed", str(e))
+            return
+        if result["missing"]:
+            self._log(
+                f"WARNING: no sparams.json for port(s) {result['missing']} — "
+                "those columns stay empty"
+            )
+        self._log("Merged S-matrix:")
+        for line in summarise_table(result["table"]):
+            self._log(line)
+        self._log(f"Merged outputs: {result['written']}")
+        self._record_results()
+        try:
+            found = self._find_sparams_files(work)
+            if found:
+                self.sparam_viewer.set_work_dir(work)
+                self.sparam_viewer.load_path(found[-1])
+                if self.sparam_tab_index >= 0:
+                    self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
+                self._log(f"S-param results ready: {found[-1]}")
+        except Exception as e:  # noqa: BLE001 — merge succeeded, viewer is best-effort
+            self._log(f"S-param viewer update failed: {e}")
 
     def _on_abort(self) -> None:
         self.runner.abort()
