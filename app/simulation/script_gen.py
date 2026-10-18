@@ -810,7 +810,11 @@ def main() -> int:
         print(f"FDTD threads (numThreads) = {n_threads}")
     else:
         print("FDTD threads: auto (all cores)")
-    FDTD.Run(str(out_dir), **run_kw)
+    # openEMS 0.0.36's Run() asserts os.getcwd() == os.path.realpath(sim_path):
+    # a drive-letter case difference (getcwd returns 'c:' but realpath 'C:') or a
+    # short/symlink name trips it (openEMS issues #113/#284). Passing the
+    # realpath makes the chdir'd cwd match, so the assertion passes.
+    FDTD.Run(os.path.realpath(str(out_dir)), **run_kw)
     print("Simulation finished (FDTD.Run complete)")
 
     # Evaluate S-params over the EXCITATION band only. Outside

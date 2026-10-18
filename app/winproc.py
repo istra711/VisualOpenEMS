@@ -16,7 +16,8 @@ def hidden_console_kwargs() -> dict:
     """
     if sys.platform != "win32":
         return {}
-    si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 0  # SW_HIDE
-    return {"startupinfo": si, "creationflags": subprocess.CREATE_NO_WINDOW}
+    # CREATE_NO_WINDOW alone suppresses the console window reliably. Combining
+    # it with a STARTUPINFO (STARTF_USESHOWWINDOW) is redundant and has been
+    # observed to make CreateProcess fail with WinError 87 ("The parameter is
+    # incorrect") on some setups, so keep it minimal.
+    return {"creationflags": subprocess.CREATE_NO_WINDOW}

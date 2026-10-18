@@ -81,6 +81,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"Run failed: [WinError 87]" — robust subprocess launch**
+  (`app/winproc.py`, `app/simulation/runner.py`): the hidden-console flags
+  (`STARTUPINFO` + `CREATE_NO_WINDOW`) can make `CreateProcess` fail with
+  WinError 87 on some setups (e.g. under a security/sandbox product). The window
+  is now suppressed with `CREATE_NO_WINDOW` alone, and `SimulationRunner.start`
+  validates `simulation_python` with `is_file()` (an empty value is `Path(".")`
+  and would spawn `Popen([".", …])` → WinError 87) and retries a plain `Popen`
+  on any `OSError`.
+
+- **openEMS "Run() AssertionError" on a non-canonical sim path**
+  (`app/simulation/script_gen.py`): openEMS 0.0.36's `Run` asserts
+  `os.getcwd() == os.path.realpath(sim_path)`; a drive-letter case difference
+  (`getcwd` returns `c:` but `realpath` `C:`) or a short/symlink name trips it
+  (openEMS issues #113/#284). The generated run script now calls
+  `FDTD.Run(os.path.realpath(str(out_dir)), …)` so the assertion passes.
+
 - **Mesh Editor: removed line lingered; rebuild now runs in the background**
   (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`): deleting a line left a red
   "removed line" overlay in the slice and the entry in the list even after the
