@@ -551,29 +551,39 @@ class MainWindow(QMainWindow):
         # FDTD engine progress (energy / end criteria) — updated from the
         # openEMS stdout lines as they arrive (see _append_log_on_gui).
         self._engine_progress = EngineProgress()
+        # Two NARROW bars stacked vertically (half the old width each).
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.progress.setFixedWidth(200)
+        self.progress.setFixedWidth(110)
+        self.progress.setFixedHeight(14)
         self.progress.setTextVisible(True)
         self.progress.setVisible(False)
         self.progress.setToolTip("Timestep progress (TS / max TS)")
         # Second bar: residual-energy convergence toward the end criteria — the
         # run's actual stopping condition, which the timestep count alone misses.
+        # 0% = energy at start (0 dB), 100% = end criterion reached (min. energy).
         self.progress_energy = QProgressBar()
         self.progress_energy.setRange(0, 100)
         self.progress_energy.setValue(0)
-        self.progress_energy.setFixedWidth(220)
+        self.progress_energy.setFixedWidth(110)
+        self.progress_energy.setFixedHeight(14)
         self.progress_energy.setTextVisible(True)
         self.progress_energy.setVisible(False)
         self.progress_energy.setToolTip(
-            "Residual-energy convergence toward the end criteria (EndCriteria)"
+            "Residual-energy convergence: 0% = energy at start (0 dB), "
+            "100% = end criteria reached (minimum energy in dB)"
         )
+        self._progress_box = QWidget()
+        _vbox = QVBoxLayout(self._progress_box)
+        _vbox.setContentsMargins(0, 0, 0, 0)
+        _vbox.setSpacing(1)
+        _vbox.addWidget(self.progress)
+        _vbox.addWidget(self.progress_energy)
         self.lbl_engine = QLabel("")
         self.lbl_engine.setVisible(False)
         self.status.addPermanentWidget(self.lbl_engine)
-        self.status.addPermanentWidget(self.progress)
-        self.status.addPermanentWidget(self.progress_energy)
+        self.status.addPermanentWidget(self._progress_box)
         # Larger default window so the mesh viewer is usable
         self.resize(1440, 900)
 
@@ -1091,7 +1101,7 @@ class MainWindow(QMainWindow):
         self.progress.setFormat(f"TS {percent}%")
         self.progress.setVisible(True)
         self.progress_energy.setValue(p.energy_percent)
-        self.progress_energy.setFormat(p.energy_text())
+        self.progress_energy.setFormat(f"E {p.energy_percent}%")
         self.progress_energy.setVisible(True)
         self.lbl_engine.setText(p.text())
         self.lbl_engine.setVisible(True)

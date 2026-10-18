@@ -9,15 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Second status-bar progress bar for the residual energy / convergence**
-  (`app/simulation/progress.py`, `app/ui/main_window.py`): the run's stopping
-  condition is the residual-energy end criterion (EndCriteria), not the timestep
-  budget, so there is now a separate **Energy** bar next to the TS bar. It fills
-  as the energy drops toward `-10·log10(end_criteria)` dB (e.g. 1e-5 → -50 dB),
-  shows the level (`Energy -25 / -50 dB`) and snaps to 100 % when the end
-  criteria is reached. `EngineProgress.energy_percent` / `energy_text` +
-  `target_db` (set per run from `sim.end_criteria`). Tests in
-  `tests/test_progress.py` + `progress_smoke.py`.
+- **Two stacked status-bar progress bars (TS + energy) and dB end criteria**
+  (`app/simulation/progress.py`, `app/ui/main_window.py`, `app/ui/sim_params.py`):
+  the run's stopping condition is the residual-energy end criterion (EndCriteria),
+  not the timestep budget. The status bar now shows **two narrow bars stacked
+  vertically** (half the old width each): a **TS** bar (timesteps/max) and an
+  **energy** bar in **percent** — 0 % = energy at start (0 dB), 100 % = the end
+  criterion / minimum energy reached. `EngineProgress.energy_percent` /
+  `energy_text` + `target_db` (set per run from `sim.end_criteria`).
+  The **End criteria (energy)** field in Simulation Parameters is now entered in
+  **dB** (e.g. -50 dB = linear 1e-5; stored linearly for openEMS). Tests in
+  `tests/test_progress.py`, `progress_smoke.py`, `sim_params_smoke.py`.
 
 - **Mesh Editor — manual mesh lines (Mesh Viewer)**
   (`app/meshing/manual_mesh.py`, `app/models/project.py` `MeshSpec.manual_mesh_lines`

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
@@ -165,10 +166,19 @@ class SimParamsPanel(QWidget):
         g_conv = QGroupBox("Excitation & convergence")
         fconv = QFormLayout(g_conv)
         self.spn_end_criteria = QDoubleSpinBox()
-        self.spn_end_criteria.setDecimals(8)
-        self.spn_end_criteria.setRange(1e-8, 1e-1)
-        self.spn_end_criteria.setSingleStep(1e-6)
-        self.spn_end_criteria.setValue(1e-5)
+        # shown/stored in dB (relative to the start energy); the run stops when
+        # the residual energy has dropped by this many dB. Internally openEMS
+        # uses the linear energy ratio (10**(dB/10)).
+        self.spn_end_criteria.setDecimals(1)
+        self.spn_end_criteria.setRange(-200.0, -1.0)
+        self.spn_end_criteria.setSingleStep(1.0)
+        self.spn_end_criteria.setSuffix(" dB")
+        self.spn_end_criteria.setValue(-50.0)
+        self.spn_end_criteria.setToolTip(
+            "End criteria: residual energy level relative to the start (0 dB),\n"
+            "e.g. -50 dB (= linear 1e-5). The run stops when the energy has\n"
+            "dropped by this much; 0 dB is the energy in the system at start."
+        )
         self.spn_max_ts = QSpinBox()
         self.spn_max_ts.setRange(1_000, 20_000_000)
         self.spn_max_ts.setSingleStep(1_000)
@@ -183,6 +193,7 @@ class SimParamsPanel(QWidget):
             "Set > 0 to limit CPU load or reserve cores for other tasks."
         )
         fconv.addRow("End criteria (energy)", self.spn_end_criteria)
+        # NOTE: the spin is in dB; write_to_project converts to the linear ratio.
         fconv.addRow("Max timesteps (NrTS)", self.spn_max_ts)
         fconv.addRow("Threads (numThreads)", self.spn_num_threads)
         inner.addWidget(g_conv)
@@ -478,7 +489,8 @@ class SimParamsPanel(QWidget):
 
     def write_to_project(self, project: Project) -> None:
         m: MeshSpec = project.mesh
-        project.sim.end_criteria = float(self.spn_end_criteria.value())
+        # the spin is in dB (e.g. -50) -> store the linear energy ratio (1e-5)
+        project.sim.end_criteria = float(10.0 ** (float(self.spn_end_criteria.value()) / 10.0))
         project.sim.max_timesteps = int(self.spn_max_ts.value())
         project.sim.num_threads = int(self.spn_num_threads.value())
         b: BoundarySpec = project.boundary
@@ -590,7 +602,11 @@ class SimParamsPanel(QWidget):
         )
 
     def _sync_from_project_impl(self, project: Project, m: MeshSpec) -> None:
-        self.spn_end_criteria.setValue(float(project.sim.end_criteria))
+        # spin is in dB: linear energy ratio -> dB
+        _ec = float(project.sim.end_criteria or 1e-5)
+        self.spn_end_criteria.setValue(
+            10.0 * math.log10(_ec) if _ec > 0 else -50.0
+        )
         self.spn_max_ts.setValue(int(project.sim.max_timesteps or 200_000))
         self.spn_num_threads.setValue(max(0, int(getattr(project.sim, "num_threads", 0) or 0)))
         b = project.boundary
@@ -679,7 +695,8 @@ class SimParamsPanel(QWidget):
 
             eff = [
                 f"Gauss excite   = f0 {_fmt_hz(f0)}, fc {_fmt_hz(fc)}",
-                f"NrTS / EndCrit = {p.sim.max_timesteps} / {p.sim.end_criteria:g}",
+                f"NrTS / EndCrit = {p.sim.max_timesteps} / "
+                f"{10.0 * math.log10(p.sim.end_criteria):.1f} dB",
                 f"Threads        = {int(getattr(p.sim, 'num_threads', 0) or 0) or 'auto (all cores)'}",
                 f"Boundary       = {p.boundary.as_openems_list()}",
                 f"Air margin     = {', '.join(_fmt_len(a) for a in air)}",
