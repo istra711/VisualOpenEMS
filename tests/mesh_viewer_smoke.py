@@ -442,6 +442,24 @@ def main() -> int:
         assert len(radii) >= 2 and all(abs(r - 2.0) < 1e-6 for r in radii), radii
         print("  cylinders drawn as circles (CSX + project dict): OK")
 
+        # --- Mesh editor: hidden until activated; selection highlights a line ---
+        assert viewer.chk_editor.isChecked() is False
+        assert viewer._editor_panel.isHidden() is True
+        viewer.chk_editor.setChecked(True)
+        app.processEvents()
+        assert viewer._editor_panel.isHidden() is False
+        viewer.cmb_edit_axis.setCurrentText("z")
+        assert viewer._sel_line is None
+        if viewer.lst_edit_lines.count():
+            viewer.lst_edit_lines.setCurrentRow(0)
+            app.processEvents()
+            assert viewer._sel_line is not None, "selecting a row must set the highlight"
+            assert viewer._sel_line[0] == "z"
+        viewer.chk_editor.setChecked(False)
+        app.processEvents()
+        assert viewer._editor_panel.isHidden() is True
+        print("  mesh editor panel visibility + selection highlight: OK")
+
         print("MESH VIEWER SMOKE PASS")
         return 0
     except Exception:
