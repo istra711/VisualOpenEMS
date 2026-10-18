@@ -724,6 +724,12 @@ class MainWindow(QMainWindow):
 
         mmenu = bar.addMenu("Mes&h")
         add_action(mmenu, "Build Mesh", btn=self.btn_build_mesh, shortcut="Ctrl+M")
+        add_action(
+            mmenu,
+            "Rebuild from scratch\u2026",
+            slot=self._on_rebuild_scratch,
+            tip="Discard ALL manual mesh lines and rebuild with easyMesh (asks first)",
+        )
         mmenu.addSeparator()
         add_action(
             mmenu,

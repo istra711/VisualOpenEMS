@@ -68,6 +68,7 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("File"), "Save As\u2026").shortcut().toString() == "Ctrl+Shift+S"
     assert _find(_menu("File"), "Exit").shortcut().toString() == "Ctrl+Q"
     assert _find(_menu("Mesh"), "Build Mesh").shortcut().toString() == "Ctrl+M"
+    assert _find(_menu("Mesh"), "Rebuild from scratch\u2026") is not None
     assert _find(_menu("Mesh"), "Export CSX XML\u2026") is not None
     assert _find(_menu("Mesh"), "Open in AppCSXCAD (3D)\u2026") is not None
     assert _find(_menu("Simulation"), "Run Simulation").shortcut().toString() == "Ctrl+R"
