@@ -66,7 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   may be arbitrarily asymmetric) and snaps `center` to the box centre with a
   warning. With the correct centre our dipole matches CST (Dmax 2.13 dBi @ 90°,
   HPBW 78.0°, η 1.00 vs CST 2.21 dBi / 78.3° / ≈1.0). Tests in
-  `tests/test_nf2ff_fit_margin.py`.
+  `tests/test_nf2ff_fit_margin.py`. Help documents the rule (Antenna Simulation
+  → NF2FF box §5, Antenna tips, Ports / Dumps): the evaluation centre must equal
+  the box centre (hard requirement), equal margins around the geometry are the
+  recommendation, and there is only one box (the FDTD domain containing the
+  NF2FF box).
 
 - **NF2FF far-field box was asymmetric in z → tilted ("egg") antenna pattern**
   (`app/ui/main_window.py:_on_fit_nf2ff`, new `app.meshing.bounds.nf2ff_fit_box`):
