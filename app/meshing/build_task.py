@@ -35,16 +35,63 @@ class MeshBuildResult:
         return "\n".join(self.lines)
 
 
-def build_mesh_and_validate(
+def _domain_grid_lines(primitives, mesh, boundary, targets):
+    """FDTD domain box corners from the geometry bbox + air margin, or None."""
+    import math
+
+    from app.meshing.bounds import cartesian_primitive_bbox
+    from app.meshing.rules import air_margin_units
+
+    lo = [math.inf] * 3
+    hi = [-math.inf] * 3
+    for pr in primitives:
+        bb = cartesian_primitive_bbox(pr)
+        if bb is None:
+            continue
+        for i in range(3):
+            lo[i] = min(lo[i], float(bb[0][i]))
+            hi[i] = max(hi[i], float(bb[1][i]))
+    if not all(math.isfinite(v) for v in lo):
+        return None
+    margins = air_margin_units(mesh, list(boundary.air_margin), targets)
+    dlo = [lo[i] - float(margins[2 * i]) for i in range(3)]
+    dhi = [hi[i] + float(margins[2 * i + 1]) for i in range(3)]
+    return dlo, dhi
+
+
+def build_scene_csx(
     project,
     primitives,
     work_dir: Path | str,
     log: Callable[[str], None] | None = None,
 ) -> MeshBuildResult:
-    """Build the CSX, run easyMesh, validate and export ``csx.xml``.
+    """Build the CSX (geometry + ports + boundary) WITHOUT meshing.
 
-    Returns the report lines plus the live CSX/FDTD objects. Raises on hard
-    errors (the caller reports them); soft warnings are appended to ``lines``.
+    The grid is set to the domain box (geometry bbox + air margin) only, so the
+    Mesh Viewer shows the geometry, the FDTD domain and the NF2FF box and the
+    user can add every mesh line by hand (Mesh Editor). Nothing is written to
+    disk (no csx.xml). ``auto_mesh_lines`` holds the domain-corner base grid so
+    editor edits build up the grid visibly.
+    """
+    return build_mesh_and_validate(
+        project, primitives, work_dir, log=log, build_mesh=False
+    )
+
+
+def build_mesh_and_validate(
+    project,
+    primitives,
+    work_dir: Path | str,
+    log: Callable[[str], None] | None = None,
+    build_mesh: bool = True,
+) -> MeshBuildResult:
+    """Build the CSX, (optionally) run easyMesh / validate / export ``csx.xml``.
+
+    With ``build_mesh=False`` the CSX is built with the geometry, ports and
+    boundary but NO easyMesh; the grid is set to the domain box only (see
+    :func:`build_scene_csx`). Returns the report lines plus the live CSX/FDTD
+    objects. Raises on hard errors (the caller reports them); soft warnings are
+    appended to ``lines``.
     """
     import json
     import warnings
@@ -241,21 +288,38 @@ def build_mesh_and_validate(
                 priority=15,
             )
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        setup = generate_mesh(
-            CSX,
-            mesh,
-            project.boundary,
-            targets,
-            primitives_mesh_setup=primitives_mesh_setup,
-            ports=project.ports,
-        )
+    if build_mesh:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            setup = generate_mesh(
+                CSX,
+                mesh,
+                project.boundary,
+                targets,
+                primitives_mesh_setup=primitives_mesh_setup,
+                ports=project.ports,
+            )
+    else:
+        # Scene only: no easyMesh — set the grid to the domain box corners so the
+        # viewer shows geometry + domain (+ NF2FF) and the editor can add lines.
+        setup = {}
+        domain = _domain_grid_lines(primitives, mesh, project.boundary, targets)
+        if domain is None:
+            raise ValueError("No geometry / primitives to size the domain from")
+        _grid = CSX.GetGrid()
+        for _d in range(3):
+            _grid.SetLines(_d, [float(domain[0][_d]), float(domain[1][_d])])
+        setup["auto_mesh_lines"] = {
+            "x": [float(domain[0][0]), float(domain[1][0])],
+            "y": [float(domain[0][1]), float(domain[1][1])],
+            "z": [float(domain[0][2]), float(domain[1][2])],
+        }
+        _log("Scene prepared (geometry + domain + NF2FF box; no mesh built)")
 
     # MSL ports need the grid: AddMSLPort(nr, metal, start, stop, prop_dir, exc_dir)
     from app.simulation.msl import resolve_msl_axes
 
-    for idx, port, start, stop in deferred_msl_ports:
+    for idx, port, start, stop in (deferred_msl_ports if build_mesh else []):
         try:
             prop_dir, exc_dir = resolve_msl_axes(port)
             metal = CSX.AddMetal(f"msl_{idx}_{port.name}_strip")
@@ -272,45 +336,55 @@ def build_mesh_and_validate(
         except Exception as e:  # noqa: BLE001
             _log(f"MSL port '{port.name}' preview failed: {e}")
 
-    report = validate_mesh(
-        CSX,
-        targets,
-        ports=project.ports,
-        max_grading=mesh.max_grading_ratio,
-        coord_system=mesh.coord_system,
-    )
-    lines.extend(report_to_lines(report))
-    manual = setup.get("manual_mesh_lines") if isinstance(setup, dict) else None
-    if manual:
+    if build_mesh:
+        report = validate_mesh(
+            CSX,
+            targets,
+            ports=project.ports,
+            max_grading=mesh.max_grading_ratio,
+            coord_system=mesh.coord_system,
+        )
+        lines.extend(report_to_lines(report))
+        manual = setup.get("manual_mesh_lines") if isinstance(setup, dict) else None
+        if manual:
+            lines.append("")
+            lines.append("Manual mesh lines (Mesh Editor):")
+            for _k in sorted(manual):
+                _s = manual[_k]
+                lines.append(f"  {_k}: +{_s['added']} / -{_s['removed']}")
+                if _s.get("drift", 0.0) > 0.0:
+                    lines.append(
+                        f"    (removal snapped by up to {_s['drift']:.4g} to the nearest line)"
+                    )
+                for _c in _s.get("missed", []):
+                    lines.append(
+                        f"    WARNING: no grid line near {_c:.4g} to remove "
+                        "(did the mesh change?)"
+                    )
+                for _c in _s.get("outside", []):
+                    lines.append(
+                        f"    WARNING: manual line at {_c:.4g} is outside the domain — ignored"
+                    )
         lines.append("")
-        lines.append("Manual mesh lines (Mesh Editor):")
-        for _k in sorted(manual):
-            _s = manual[_k]
-            lines.append(f"  {_k}: +{_s['added']} / -{_s['removed']}")
-            if _s.get("drift", 0.0) > 0.0:
-                lines.append(f"    (removal snapped by up to {_s['drift']:.4g} to the nearest line)")
-            for _c in _s.get("missed", []):
-                lines.append(
-                    f"    WARNING: no grid line near {_c:.4g} to remove "
-                    "(did the mesh change?)"
-                )
-            for _c in _s.get("outside", []):
-                lines.append(
-                    f"    WARNING: manual line at {_c:.4g} is outside the domain — ignored"
-                )
-    lines.append("")
-    lines.append("Mesh setup:")
-    lines.append(json.dumps(setup, indent=2, default=str))
+        lines.append("Mesh setup:")
+        lines.append(json.dumps(setup, indent=2, default=str))
 
-    # Keep the built mesh next to the project so a re-opened project shows it
-    # without meshing again (separate from the run's <sim>/csx.xml).
-    try:
-        xml = export_csx_xml(CSX, work_dir / "csx.xml")
-        lines.append(f"CSX XML: {xml}")
-    except Exception as e:  # noqa: BLE001
-        lines.append(f"(csx xml export failed: {e})")
-
-    _log("Mesh build finished")
+        # Keep the built mesh next to the project so a re-opened project shows it
+        # without meshing again (separate from the run's <sim>/csx.xml).
+        try:
+            xml = export_csx_xml(CSX, work_dir / "csx.xml")
+            lines.append(f"CSX XML: {xml}")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"(csx xml export failed: {e})")
+        _log("Mesh build finished")
+    else:
+        lines.append(
+            "Scene only: geometry + domain box + NF2FF box (NO mesh built)."
+        )
+        lines.append(
+            "Add mesh lines in the Mesh Editor, then use Build Mesh to mesh."
+        )
+        _log("Scene prepared (no mesh)")
     auto_grid = setup.get("auto_mesh_lines") if isinstance(setup, dict) else None
     return MeshBuildResult(
         lines=lines, csx=CSX, fdtd=FDTD, auto_mesh_lines=auto_grid or {}

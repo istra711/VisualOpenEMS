@@ -739,6 +739,12 @@ class MainWindow(QMainWindow):
             slot=self._on_delete_mesh,
             tip="Remove the current mesh (clears the Mesh Viewer and the stored csx.xml)",
         )
+        add_action(
+            mmenu,
+            "New Scene (no mesh)\u2026",
+            slot=self._on_prepare_scene,
+            tip="Show geometry + domain box + NF2FF box only (builds NO mesh) to add the lines by hand",
+        )
         mmenu.addSeparator()
         add_action(
             mmenu,
@@ -920,6 +926,55 @@ class MainWindow(QMainWindow):
         self._last_fdtd = None
         self._mesh_deleted = True
         self._log("Mesh deleted. Click 'Build Mesh' to recreate it.")
+
+    def _on_prepare_scene(self) -> None:
+        """Show geometry + domain box + NF2FF box WITHOUT building a mesh.
+
+        Lets the user add every mesh line by hand (Mesh Editor) starting from the
+        domain corners; nothing is written to disk.
+        """
+        self._sync_project_from_form()
+        try:
+            self._ensure_patch_primitives()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Prepare scene failed: {e}")
+            return
+        from app.meshing.build_task import build_scene_csx
+
+        try:
+            result = build_scene_csx(
+                self.project,
+                list(self.primitives),
+                self._project_work_dir(),
+                log=self._log,
+            )
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Prepare scene failed: {e}")
+            return
+        self._last_csx = result.csx
+        self._last_fdtd = result.fdtd
+        try:
+            self.mesh_viewer.set_project_context(
+                project=self.project,
+                primitives=self.primitives,
+                ports=self.project.ports,
+                nf2ff=self.project.nf2ff,
+            )
+            self.mesh_viewer.set_auto_grid(result.auto_mesh_lines)
+            self.mesh_viewer.set_csx(result.csx)
+            self._mesh_sig = self._mesh_signature()
+            self._mesh_deleted = False
+            self._sync_scene_info()
+            self._set_mesh_report("\n".join(result.lines))
+            idx = getattr(self, "mesh_viewer_tab_index", None)
+            if idx is not None and idx >= 0:
+                self.tabs.setCurrentIndex(idx)
+        except Exception as e:  # noqa: BLE001 — viewer must not block
+            self._log(f"Prepare scene: viewer update failed: {e}")
+        self._log(
+            "Scene prepared: geometry + domain + NF2FF box (NO mesh). "
+            "Add lines in the Mesh Editor, then Build Mesh."
+        )
 
     def _open_work_folder(self) -> None:
         try:

@@ -107,6 +107,9 @@ Mesh editor (right-hand panel) — manual mesh lines
     mesh report (the applied counts are listed there too) — it is never applied
     to the wrong place silently.
   • Cartesian meshes only; a very small manual cell shrinks the CFL timestep.
+  • Mesh menu → "New Scene (no mesh)…": shows the geometry, the FDTD domain box
+    and the NF2FF box on an EMPTY grid (no easyMesh run, nothing written to
+    disk). Start from the domain corners and add every mesh line by hand.
 
 Frames (overview + slices)
   • Black dashed — FDTD domain (geometry + air margin, on mesh lines); size it on
