@@ -82,8 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   highlight, `keep_view` plane preservation). The line list supports
   **multi-selection** (Shift/Ctrl) with Delete/Backspace removing the whole
   selection, a **single left-click** on a line in the slice selects it (axis
-  combo follows), and a **right-click** menu toggles the editor and pops the
-  viewer out.
+  combo follows), and a **right-click** menu toggles the editor, deletes the
+  selected line(s) (like Del) and pops the viewer out.
 
 - **Mesh Editor overrides are robust to a changed auto mesh**
   (`app/meshing/manual_mesh.py`, `app/meshing/easy_wrapper.py`,

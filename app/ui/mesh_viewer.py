@@ -670,12 +670,22 @@ class MeshGeometryViewer(QWidget):
         act_editor.setChecked(bool(self.chk_editor.isChecked()))
         act_pop = menu.addAction("Pop-out viewer…")
         menu.addSeparator()
+        n_sel = len(getattr(self, "_selected_lines", []) or [])
+        del_label = "Delete selected line(s)"
+        if n_sel:
+            del_label += f" ({n_sel})"
+        act_del = menu.addAction(del_label)
+        act_del.setEnabled(n_sel > 0)
+        act_del.setToolTip("Remove the selected line(s) from the mesh (like Del)")
+        menu.addSeparator()
         act_home = menu.addAction("Reset / Home view")
         chosen = menu.exec(QCursor.pos())
         if chosen is act_editor:
             self.chk_editor.setChecked(not self.chk_editor.isChecked())
         elif chosen is act_pop:
             self._on_popout()
+        elif chosen is act_del:
+            self._editor_remove_selected()
         elif chosen is act_home:
             try:
                 self.toolbar_slice.home()
