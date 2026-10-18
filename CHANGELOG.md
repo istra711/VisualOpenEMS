@@ -85,6 +85,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   combo follows), and a **right-click** menu toggles the editor and pops the
   viewer out.
 
+- **Mesh Editor overrides are robust to a changed auto mesh**
+  (`app/meshing/manual_mesh.py`, `app/meshing/easy_wrapper.py`,
+  `app/meshing/build_task.py`): the overrides are absolute coordinates but the
+  auto grid is rebuilt from scratch on every build, so a slightly changed mesh
+  could make a removal miss its line (silent no-op) or land elsewhere. A removal
+  now drops the grid line **nearest** the stored coordinate within a local-cell
+  tolerance; removals that find no line are reported (`missed`) and surfaced as
+  a **WARNING in the mesh report** together with the applied `+added/-removed`
+  counts (and the snap `drift`), instead of silently producing a different mesh.
+  Tests in `tests/test_manual_mesh.py` (nearest-line snap, miss report).
+
 - **NF2FF "egg" pattern was a stale box `center`, not the box shape**
   (`app/meshing/bounds.py`, `app/simulation/script_gen.py`): the far-field sphere
   is expanded around `project.nf2ff.center`, so the box must be centred on that

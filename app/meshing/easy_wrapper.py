@@ -130,10 +130,22 @@ def generate_mesh(
 
         stats = apply_manual_mesh_lines(CSX, mesh, coord_system="cartesian")
         if stats:
-            print(
-                "  manual mesh lines: "
-                + ", ".join(f"{k} +{v}" for k, v in sorted(stats.items()))
-            )
+            parts: list[str] = []
+            for k in sorted(stats):
+                s = stats[k]
+                parts.append(f"{k}: +{s['added']}/-{s['removed']}")
+                for c in s.get("missed", []):
+                    print(
+                        f"  WARNING: manual line removal on {k} found no matching "
+                        f"grid line (did the mesh change?) near {c:.4g}"
+                    )
+                if s.get("drift", 0.0) > 0.0:
+                    print(
+                        f"  note: manual removal on {k} snapped by up to "
+                        f"{s['drift']:.4g} to the nearest grid line"
+                    )
+            print("  manual mesh lines: " + ", ".join(parts))
+        setup["manual_mesh_lines"] = stats
     except Exception as e:  # noqa: BLE001 — never fail a run on the editor
         print(f"  manual mesh lines skipped: {e}")
     return setup

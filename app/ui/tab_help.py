@@ -92,6 +92,12 @@ Mesh editor (right-hand panel) — manual mesh lines
     (green dashed = will be added, red dotted = will be removed).
   • Click "Build Mesh" to apply; the result is validated (cell sizes / grading /
     CFL) like any mesh. "Reset axis" / "Reset all" clears the overrides.
+  • Robustness: the overrides store absolute coordinates while easyMesh rebuilds
+    the grid each time. A removal therefore drops the grid line NEAREST the
+    stored coordinate (within a local-cell tolerance), so a slightly changed mesh
+    still matches; a removal that finds no line is reported as a WARNING in the
+    mesh report (the applied counts are listed there too) — it is never applied
+    to the wrong place silently.
   • Cartesian meshes only; a very small manual cell shrinks the CFL timestep.
 
 Frames (overview + slices)
