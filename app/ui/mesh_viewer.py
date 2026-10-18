@@ -205,6 +205,9 @@ class MeshGeometryViewer(QWidget):
         self._primitives: list[dict] = []
         self._ports: list = []
         self._nf2ff = None
+        self._sel_line: tuple[str, float] | None = None  # highlighted editor row
+        self._editor_panel = None
+        self._split = None
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -248,6 +251,11 @@ class MeshGeometryViewer(QWidget):
         self.chk_ports.setChecked(True)
         self.chk_nf2ff = QCheckBox("Show NF2FF")
         self.chk_nf2ff.setChecked(True)
+        self.chk_editor = QCheckBox("Mesh editor")
+        self.chk_editor.setToolTip(
+            "Show the manual mesh-line editor panel (add / edit / delete grid\n"
+            "lines per axis). Hidden by default."
+        )
         self.btn_appcsxcad = QPushButton("Open in AppCSXCAD (3D)…")
         self.btn_export_xml = QPushButton("Export CSX XML…")
         self.btn_popout = QPushButton("Pop-out viewer…")
@@ -262,6 +270,7 @@ class MeshGeometryViewer(QWidget):
             self.chk_geom,
             self.chk_ports,
             self.chk_nf2ff,
+            self.chk_editor,
         ):
             bar.addWidget(w)
         bar.addStretch(1)
@@ -269,6 +278,7 @@ class MeshGeometryViewer(QWidget):
         root.addLayout(bar)
 
         split = QSplitter(Qt.Orientation.Horizontal)
+        self._split = split
         root.addWidget(split, 1)
 
         # Left: plot area with tabs (slice + cell sizes always available)
@@ -290,7 +300,10 @@ class MeshGeometryViewer(QWidget):
         lv.addWidget(self.plot_tabs)
         left.setMinimumSize(480, 360)
         split.addWidget(left)
-        split.addWidget(self._build_editor_panel())
+        # Editor panel: hidden until the "Mesh editor" box is ticked.
+        self._editor_panel = self._build_editor_panel()
+        self._editor_panel.setVisible(False)
+        split.addWidget(self._editor_panel)
 
         self.fig_slice = None
         self.canvas_slice = None
@@ -318,6 +331,8 @@ class MeshGeometryViewer(QWidget):
         self.btn_popout.clicked.connect(self._on_popout)
 
         # Mesh editor
+        self.chk_editor.toggled.connect(self._on_editor_toggled)
+        self.lst_edit_lines.currentItemChanged.connect(self._on_editor_selection)
         self.cmb_edit_axis.currentIndexChanged.connect(self._refresh_editor)
         self.btn_edit_add.clicked.connect(self._editor_add)
         self.btn_edit_remove.clicked.connect(self._editor_remove_selected)
@@ -386,6 +401,27 @@ class MeshGeometryViewer(QWidget):
         v.addWidget(lbl)
         return box
 
+    def _on_editor_toggled(self, checked: bool) -> None:
+        """Show / hide the editor panel; give it width when shown."""
+        if self._editor_panel is not None:
+            self._editor_panel.setVisible(bool(checked))
+        if checked and self._split is not None:
+            self._split.setSizes([1000, 330])
+        if checked:
+            self._refresh_editor()
+
+    def _on_editor_selection(self, current, _previous=None) -> None:
+        """Remember the highlighted line so the slice can emphasise it."""
+        if current is None:
+            self._sel_line = None
+        else:
+            c = float(current.data(Qt.ItemDataRole.UserRole))
+            self._sel_line = (self.cmb_edit_axis.currentText(), c)
+        try:
+            self._redraw()
+        except Exception:  # noqa: BLE001
+            pass
+
     @staticmethod
     def _lines_dict(mesh, attr: str, create: bool = True) -> dict:
         d = getattr(mesh, attr, None)
@@ -414,7 +450,9 @@ class MeshGeometryViewer(QWidget):
     def _refresh_editor(self, *_args) -> None:
         if not hasattr(self, "lst_edit_lines"):
             return
+        self.lst_edit_lines.blockSignals(True)
         self.lst_edit_lines.clear()
+        self._sel_line = None
         mesh = self._mesh_spec()
         ax = self.cmb_edit_axis.currentText()
         built: list[float] = []
@@ -443,6 +481,7 @@ class MeshGeometryViewer(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, float(v))
             item.setForeground(QBrush(QColor(color)))
             self.lst_edit_lines.addItem(item)
+        self.lst_edit_lines.blockSignals(False)
 
     def _editor_add(self, coord: float | None = None) -> None:
         mesh = self._mesh_spec()
@@ -1099,6 +1138,24 @@ class MeshGeometryViewer(QWidget):
                     else:
                         ax.axhline(c, color="#c62828", linestyle=":", linewidth=1.2,
                                    alpha=0.9, label="removed line")
+
+        # Emphasise the line selected in the editor list (only when it lies in
+        # this slice plane).
+        sel = getattr(self, "_sel_line", None)
+        if sel is not None and mesh_spec is not None:
+            saxis, scoord = sel
+            for axn, idx in ((ax_a, ia), (ax_b, ib)):
+                if axn != saxis:
+                    continue
+                band = 0.06 * max(1.0, float(np.ptp(self._axis_limits(area, idx))))
+                if idx == ia:
+                    ax.axvspan(scoord - band, scoord + band, color="#ff9800", alpha=0.28, zorder=4)
+                    ax.axvline(scoord, color="#ff9800", linewidth=2.4, zorder=7,
+                               label="selected line")
+                else:
+                    ax.axhspan(scoord - band, scoord + band, color="#ff9800", alpha=0.28, zorder=4)
+                    ax.axhline(scoord, color="#ff9800", linewidth=2.4, zorder=7,
+                               label="selected line")
 
         # Geometry primitives: draw 2D footprint when the box intersects the slice plane
         if self.chk_geom.isChecked():
