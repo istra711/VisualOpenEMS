@@ -20,6 +20,7 @@ TAB_ORDER = [
     "Antenna",
     "Antenna Simulation",
     "Cylindrical Mesh",
+    "VTK",
 ]
 
 TAB_HELP: dict[str, str] = {
@@ -476,6 +477,32 @@ Tips
     nf2ff.center = (start+stop)/2. Re-run "Fit NF2FF to Geometry" (the run also
     warns and snaps a stale centre back). See Antenna Simulation → NF2FF box.
   • Summary PNG (nf2ff_summary.png) is written next to nf2ff.json.
+""",
+    "VTK": """VTK — field dumps as a 3D VTK file (.vtr)
+
+Turns the openEMS HDF5 field dumps into VTK rectilinear grids and shows them in
+an embedded 3D view (no external ParaView needed).
+
+Buttons
+  • "Export project dumps → VTK": converts every dump in the current project's
+    simulation/ folder (*.h5, excluding nf2ff_*) into <project>/vtk/*.vtr and
+    loads the first one.
+  • "Open .vtr…": open an already-converted VTK file.
+  • "Iso-surface" / "Outline": show the |field| iso-surface and the domain box.
+  • "Iso-level" slider: move the iso-value between the min and max of |field|.
+  • "Reset view": fit the camera to the data. Mouse: rotate (left), pan
+    (middle/shift), zoom (wheel).
+
+What it writes (per dump)
+  • point data "magnitude" = |vector field| (the active scalar), and
+  • point data "field" = the vector (real part) for glyphs/streamlines.
+
+Notes
+  • A dump must cover a volume or plane (Edit Dump: start != stop). A single
+    point yields a useless 1-point grid and is skipped.
+  • The files are plain .vtr — they open in ParaView too.
+  • Needs a working OpenGL (a normal desktop session); in a headless/remote
+    session the 3D view may be unavailable but the .vtr files are still written.
 """,
     "Antenna Simulation": """ANTENNA SIMULATION — settings that keep FDTD results trustworthy
 
