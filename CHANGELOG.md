@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-18
+
 ### Added
 
 - **Two status-bar progress bars (TS + energy, side by side) and dB end criteria**
@@ -758,4 +760,6 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.1.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.1.0
 [0.2.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.2.0
 [0.3.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.3.0
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/commits/master
+[0.4.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.4.0
+[0.5.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.0
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.0...HEAD

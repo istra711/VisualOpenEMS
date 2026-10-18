@@ -58,6 +58,16 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - Arc detection and **graded mesh refinement at metal interfaces** (fine next
   to PEC, coarsening into the air/dielectric by the max grading ratio)
 - Interactive mesh viewer with 3D scene and per-axis slice inspection
+- **Mesh Editor** — add / edit / delete manual grid lines per axis directly in
+  the slice (click to add, click a line to select, Shift+click to add several,
+  snap to geometry edges, multi-select with Del, right-click menu). Edits apply
+  to the *existing* mesh instantly (no easyMesh re-run, view kept) and to every
+  rebuild; removals snap to the nearest line and are reported if the mesh moved.
+  **New Scene (no mesh)** shows geometry + domain + NF2FF box on an empty grid so
+  the mesh can be built by hand; **Rebuild from scratch** and **Delete Mesh**
+  round it out.
+- **Two status-bar progress bars** (side by side): timesteps and residual-energy
+  convergence toward the end criterion (0 % = energy at start, 100 % = converged).
 
 ### Simulation
 
