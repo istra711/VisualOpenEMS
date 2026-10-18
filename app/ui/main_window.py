@@ -75,6 +75,9 @@ class MainWindow(QMainWindow):
         self._current_file_path: Path | None = None
         # signature of the project state the Mesh Viewer's CSX was built from
         self._mesh_sig: str | None = None
+        # user deleted the mesh -> suppress the automatic rebuild until the next
+        # explicit Build Mesh
+        self._mesh_deleted = False
         # background mesh build (worker thread) state
         self._mesh_building = False
         self._mesh_thread = None
@@ -730,6 +733,12 @@ class MainWindow(QMainWindow):
             slot=self._on_rebuild_scratch,
             tip="Discard ALL manual mesh lines and rebuild with easyMesh (asks first)",
         )
+        add_action(
+            mmenu,
+            "Delete Mesh\u2026",
+            slot=self._on_delete_mesh,
+            tip="Remove the current mesh (clears the Mesh Viewer and the stored csx.xml)",
+        )
         mmenu.addSeparator()
         add_action(
             mmenu,
@@ -875,6 +884,42 @@ class MainWindow(QMainWindow):
         self.mesh_viewer.set_auto_grid(None)
         self._log("Mesh editor: manual lines cleared — rebuilding from scratch…")
         self._on_build_mesh()
+
+    def _on_delete_mesh(self) -> None:
+        """Delete the current mesh (viewer + stored csx.xml), with confirmation."""
+        from PySide6.QtWidgets import QMessageBox
+
+        resp = QMessageBox.warning(
+            self,
+            "Delete mesh",
+            "Delete the current mesh?\n\n"
+            "• the Mesh Viewer is cleared\n"
+            "• the stored csx.xml in the project folder is removed\n\n"
+            "The project, geometry and manual mesh lines are NOT touched.\n"
+            "Use Build Mesh to create a new mesh.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.mesh_viewer.clear_mesh()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Delete mesh: clearing the viewer failed: {e}")
+        work = self._project_work_dir()
+        for name in ("csx.xml", "mesh_preview.png"):
+            p = work / name
+            try:
+                if p.exists():
+                    p.unlink()
+                    self._log(f"Deleted {p}")
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not delete {p}: {e}")
+        self._mesh_sig = None
+        self._last_csx = None
+        self._last_fdtd = None
+        self._mesh_deleted = True
+        self._log("Mesh deleted. Click 'Build Mesh' to recreate it.")
 
     def _open_work_folder(self) -> None:
         try:
@@ -1914,6 +1959,9 @@ class MainWindow(QMainWindow):
             current = self._mesh_signature()
         except Exception:  # noqa: BLE001
             current = None
+        if self._mesh_deleted:
+            self._log("Mesh Viewer: mesh deleted — click Build Mesh to recreate it")
+            return
         if self.mesh_viewer._csx is not None and self._mesh_sig == current:
             return  # up to date
         if self.mesh_viewer._csx is None and self._load_recorded_csx():
@@ -3382,6 +3430,7 @@ class MainWindow(QMainWindow):
         """
         auto = bool(getattr(self, "_auto_mesh_build", False))
         self._auto_mesh_build = False
+        self._mesh_deleted = False  # a fresh build re-enables the auto-show
         lines = list(result.lines)
 
         # Backend-safe PNG export (does not switch matplotlib backend).

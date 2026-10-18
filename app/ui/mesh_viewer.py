@@ -929,7 +929,20 @@ class MeshGeometryViewer(QWidget):
         self._ports = []
         self._nf2ff = None
         self._info_text = ""
+        self._auto_mesh = None
+        self._selected_lines = []
+        self._sel_line = None
         self._update_controls_enabled()
+
+    def clear_mesh(self) -> None:
+        """Remove the current mesh: drop scene data AND wipe the figures."""
+        self.clear()
+        self._safe_clear_fig(self.fig_slice, self.canvas_slice)
+        self._safe_clear_fig(self.fig_cells, self.canvas_cells)
+        try:
+            self._refresh_editor()
+        except Exception:  # noqa: BLE001
+            pass
 
     @staticmethod
     def _safe_clear_fig(fig, canvas) -> None:
