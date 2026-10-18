@@ -34,9 +34,15 @@ class SimulationRunner:
         if self.is_running():
             raise RuntimeError("Simulation already running")
         script_path = Path(script_path)
-        python = Path(self.settings.simulation_python)
-        if not python.exists():
-            raise FileNotFoundError(f"Simulation python not found: {python}")
+        # NOTE: Path("") == Path(".") which exists — an empty setting would then
+        # spawn Popen([".", script]) and fail with WinError 87. Require a real file.
+        py_str = str(getattr(self.settings, "simulation_python", "") or "").strip()
+        python = Path(py_str) if py_str else None
+        if python is None or not python.is_file():
+            raise FileNotFoundError(
+                "Simulation python not found: "
+                f"{py_str or '(empty)'} — set it in Settings → Paths."
+            )
         env = os.environ.copy()
         env["PYTHONPATH"] = str(self.app_root) + os.pathsep + env.get("PYTHONPATH", "")
         # ensure openEMS can find DLLs
@@ -52,8 +58,18 @@ class SimulationRunner:
         except Exception as e:  # noqa: BLE001
             print("sim log open failed:", e)
             self._log_file = None
-        self._proc = subprocess.Popen(
-            [str(python), str(script_path)],
+        self._proc = self._spawn([str(python), str(script_path)], env)
+        t = threading.Thread(target=self._pump, daemon=True)
+        t.start()
+
+    def _spawn(self, cmd: list[str], env: dict) -> subprocess.Popen:
+        """Popen that hides the console, with a plain fallback.
+
+        The hidden-console flags (CREATE_NO_WINDOW) can make CreateProcess fail
+        with WinError 87 on some setups; retrying without them still runs (a
+        console may flash briefly).
+        """
+        kwargs = dict(
             cwd=str(self.app_root),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -61,10 +77,13 @@ class SimulationRunner:
             encoding="utf-8",
             errors="replace",
             env=env,
-            **hidden_console_kwargs(),
         )
-        t = threading.Thread(target=self._pump, daemon=True)
-        t.start()
+        extra = hidden_console_kwargs()
+        try:
+            return subprocess.Popen(cmd, **kwargs, **extra)
+        except OSError as e:  # noqa: BLE001 — fall back to a plain spawn
+            print(f"subprocess spawn with {extra} failed ({e}); retrying plainly")
+            return subprocess.Popen(cmd, **kwargs)
 
     def _pump(self) -> None:
         """Drain subprocess stdout. log_cb may be invoked from this thread."""
