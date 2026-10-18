@@ -85,8 +85,9 @@ Mesh editor (right-hand panel) — manual mesh lines
     "Remove selected" (drop a '+', or delete an auto line) /
     "Restore selected" (undo a removal). Select several with Shift (range) or
     Ctrl (toggle); Del / Backspace removes the selection.
-  • Right-click in the plot area opens a menu: toggle the Mesh editor, pop the
-    viewer out (like the Antenna / S-Params viewers), reset the view.
+  • Right-click in the plot area opens a menu: toggle the Mesh editor, delete
+    the selected line(s), pop the viewer out (like the Antenna / S-Params
+    viewers), reset the view.
   • Edits are applied to the CURRENT mesh immediately (the grid is re-derived
     from the last auto mesh + your overrides — no easyMesh re-run, the view is
     not reset), and stored in the project, so they survive everything.
