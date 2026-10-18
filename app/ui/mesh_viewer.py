@@ -1207,14 +1207,13 @@ class MeshGeometryViewer(QWidget):
             for axn, idx in ((ax_a, ia), (ax_b, ib)):
                 if axn != saxis:
                     continue
-                band = 0.06 * max(1.0, float(np.ptp(self._axis_limits(area, idx))))
+                # Highlight ONLY the line (no full-height/width band: a span
+                # changes the data limits under aspect='equal' -> the view jumps).
                 if idx == ia:
-                    ax.axvspan(scoord - band, scoord + band, color="#ff9800", alpha=0.28, zorder=4)
-                    ax.axvline(scoord, color="#ff9800", linewidth=2.4, zorder=7,
+                    ax.axvline(scoord, color="#ff9800", linewidth=2.8, zorder=7,
                                label="selected line")
                 else:
-                    ax.axhspan(scoord - band, scoord + band, color="#ff9800", alpha=0.28, zorder=4)
-                    ax.axhline(scoord, color="#ff9800", linewidth=2.4, zorder=7,
+                    ax.axhline(scoord, color="#ff9800", linewidth=2.8, zorder=7,
                                label="selected line")
 
         # Geometry primitives: draw 2D footprint when the box intersects the slice plane
