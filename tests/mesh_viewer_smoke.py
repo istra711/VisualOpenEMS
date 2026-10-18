@@ -468,6 +468,21 @@ def main() -> int:
         assert abs(viewer.spn_plane.value() - mid) < 1e-3, (viewer.spn_plane.value(), mid)
         print("  set_csx keep_view preserves the plane: OK")
 
+        # clicking a line in the slice selects it in the editor (single click)
+        import types as _types
+
+        import numpy as _np
+        viewer.chk_editor.setChecked(True)
+        viewer.cmb_view.setCurrentText("XY slice")
+        xl = _np.sort(_np.asarray(mesh_lines_from_csx(viewer._csx)["x"], float))
+        target = float(xl[len(xl) // 2])
+        ev = _types.SimpleNamespace(
+            button=1, inaxes=viewer.fig_slice.axes[0], xdata=target, ydata=0.0
+        )
+        viewer._on_slice_click(ev)
+        assert viewer._sel_line is not None and viewer._sel_line[0] == "x", viewer._sel_line
+        print("  click-select a line in the slice: OK")
+
         print("MESH VIEWER SMOKE PASS")
         return 0
     except Exception:

@@ -77,6 +77,9 @@ Mesh editor (right-hand panel) — manual mesh lines
   • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line
     there — or tick "Add by click in slice" and click in a slice view (only when
     the chosen axis is one of the two in-plane axes).
+  • With "Add by click" OFF, a single left-click on a grid line in a slice
+    selects that line in the editor (and switches the axis to match); the
+    selected line is highlighted orange.
   • The list shows the current lines: blank = from easyMesh, "+" (green) = added
     by you, "−" (red) = an auto line you removed. Select a row and
     "Remove selected" (drop a '+', or delete an auto line) /
