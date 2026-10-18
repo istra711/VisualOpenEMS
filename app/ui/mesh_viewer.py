@@ -14,15 +14,19 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -187,7 +191,11 @@ def bind_wheel_zoom(canvas: FigureCanvas) -> None:
 
 
 class MeshGeometryViewer(QWidget):
-    """Matplotlib-based mesh / geometry inspector."""
+    """Matplotlib-based mesh / geometry inspector + Mesh Editor."""
+
+    #: emitted when the user changes the manual mesh-line overrides (the caller
+    #: may refresh the scene info / mark the mesh stale for a rebuild).
+    mesh_edited = Signal()
 
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -282,6 +290,7 @@ class MeshGeometryViewer(QWidget):
         lv.addWidget(self.plot_tabs)
         left.setMinimumSize(480, 360)
         split.addWidget(left)
+        split.addWidget(self._build_editor_panel())
 
         self.fig_slice = None
         self.canvas_slice = None
@@ -291,7 +300,7 @@ class MeshGeometryViewer(QWidget):
         self.toolbar_cells = None
         self._recreate_canvases()
 
-        split.setSizes([1000, 0])
+        split.setSizes([1000, 330])
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 0)
 
@@ -308,7 +317,219 @@ class MeshGeometryViewer(QWidget):
         self.btn_export_xml.clicked.connect(self._on_export_xml)
         self.btn_popout.clicked.connect(self._on_popout)
 
+        # Mesh editor
+        self.cmb_edit_axis.currentIndexChanged.connect(self._refresh_editor)
+        self.btn_edit_add.clicked.connect(self._editor_add)
+        self.btn_edit_remove.clicked.connect(self._editor_remove_selected)
+        self.btn_edit_restore.clicked.connect(self._editor_restore_selected)
+        self.btn_edit_reset_axis.clicked.connect(lambda: self._editor_reset(None))
+        self.btn_edit_reset_all.clicked.connect(self._editor_reset_all)
+
         self._on_view_changed(0)
+        self._refresh_editor()
+
+    # ------------------------------------------------------- mesh editor
+    def _build_editor_panel(self) -> QWidget:
+        box = QGroupBox("Mesh editor — manual lines")
+        v = QVBoxLayout(box)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Axis"))
+        self.cmb_edit_axis = QComboBox()
+        self.cmb_edit_axis.addItems(["x", "y", "z"])
+        row.addWidget(self.cmb_edit_axis)
+        row.addStretch(1)
+        v.addLayout(row)
+
+        row2 = QHBoxLayout()
+        self.spn_edit_line = QDoubleSpinBox()
+        self.spn_edit_line.setDecimals(4)
+        self.spn_edit_line.setRange(-1e6, 1e6)
+        self.spn_edit_line.setSuffix(" mm")
+        self.btn_edit_add = QPushButton("Add line")
+        row2.addWidget(self.spn_edit_line)
+        row2.addWidget(self.btn_edit_add)
+        v.addLayout(row2)
+
+        self.lst_edit_lines = QListWidget()
+        self.lst_edit_lines.setToolTip(
+            "Current lines on the chosen axis.  '+' = added by you, '-' = removed\n"
+            "by you (auto line), blank = from easyMesh. Select a row to remove /\n"
+            "restore it."
+        )
+        v.addWidget(self.lst_edit_lines, 1)
+
+        row3 = QHBoxLayout()
+        self.btn_edit_remove = QPushButton("Remove selected")
+        self.btn_edit_restore = QPushButton("Restore selected")
+        row3.addWidget(self.btn_edit_remove)
+        row3.addWidget(self.btn_edit_restore)
+        v.addLayout(row3)
+
+        row4 = QHBoxLayout()
+        self.chk_click_add = QCheckBox("Add by click in slice")
+        self.btn_edit_reset_axis = QPushButton("Reset axis")
+        self.btn_edit_reset_all = QPushButton("Reset all")
+        row4.addWidget(self.chk_click_add)
+        v.addLayout(row4)
+        row5 = QHBoxLayout()
+        row5.addWidget(self.btn_edit_reset_axis)
+        row5.addWidget(self.btn_edit_reset_all)
+        v.addLayout(row5)
+
+        lbl = QLabel(
+            "Edits are saved in the project (MeshSpec). Click Build Mesh to "
+            "apply them to the grid; they survive automatic meshing."
+        )
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("color:#666;")
+        v.addWidget(lbl)
+        return box
+
+    @staticmethod
+    def _lines_dict(mesh, attr: str, create: bool = True) -> dict:
+        d = getattr(mesh, attr, None)
+        if isinstance(d, dict):
+            return d
+        d = {}
+        if create:
+            setattr(mesh, attr, d)
+        return d
+
+    def _mesh_spec(self):
+        proj = getattr(self, "_project", None)
+        return getattr(proj, "mesh", None)
+
+    @staticmethod
+    def _has(lst, c: float) -> bool:
+        return any(abs(float(v) - float(c)) < 1e-6 for v in (lst or []))
+
+    def _emit_mesh_edited(self) -> None:
+        try:
+            self._redraw()
+        except Exception:  # noqa: BLE001
+            pass
+        self.mesh_edited.emit()
+
+    def _refresh_editor(self, *_args) -> None:
+        if not hasattr(self, "lst_edit_lines"):
+            return
+        self.lst_edit_lines.clear()
+        mesh = self._mesh_spec()
+        ax = self.cmb_edit_axis.currentText()
+        built: list[float] = []
+        if self._csx is not None:
+            try:
+                built = sorted(
+                    float(v) for v in np.asarray(mesh_lines_from_csx(self._csx)[ax], float)
+                )
+            except Exception:  # noqa: BLE001
+                built = []
+        adds = self._lines_dict(mesh, "manual_mesh_lines", create=False).get(ax, []) if mesh else []
+        rems = (
+            self._lines_dict(mesh, "manual_mesh_lines_removed", create=False).get(ax, [])
+            if mesh
+            else []
+        )
+        vals = sorted(set(built) | {float(v) for v in adds} | {float(v) for v in rems})
+        for v in vals:
+            if self._has(adds, v):
+                prefix, color = "+", "#2e7d32"
+            elif self._has(rems, v):
+                prefix, color = "−", "#c62828"
+            else:
+                prefix, color = " ", "#333333"
+            item = QListWidgetItem(f"{prefix} {v:.4f}")
+            item.setData(Qt.ItemDataRole.UserRole, float(v))
+            item.setForeground(QBrush(QColor(color)))
+            self.lst_edit_lines.addItem(item)
+
+    def _editor_add(self, coord: float | None = None) -> None:
+        mesh = self._mesh_spec()
+        if mesh is None:
+            return
+        ax = self.cmb_edit_axis.currentText()
+        c = float(self.spn_edit_line.value() if coord is None else coord)
+        self.spn_edit_line.setValue(c)
+        adds = self._lines_dict(mesh, "manual_mesh_lines")
+        rems = self._lines_dict(mesh, "manual_mesh_lines_removed")
+        rems[ax] = [v for v in rems.get(ax, []) if not self._has([c], v)]
+        if not self._has(adds.get(ax, []), c):
+            adds.setdefault(ax, []).append(c)
+        self._refresh_editor()
+        self._emit_mesh_edited()
+
+    def _editor_remove_selected(self) -> None:
+        mesh = self._mesh_spec()
+        item = self.lst_edit_lines.currentItem()
+        if mesh is None or item is None:
+            return
+        ax = self.cmb_edit_axis.currentText()
+        c = float(item.data(Qt.ItemDataRole.UserRole))
+        adds = self._lines_dict(mesh, "manual_mesh_lines")
+        rems = self._lines_dict(mesh, "manual_mesh_lines_removed")
+        if self._has(adds.get(ax, []), c):
+            adds[ax] = [v for v in adds.get(ax, []) if not self._has([c], v)]
+        elif not self._has(rems.get(ax, []), c):
+            rems.setdefault(ax, []).append(c)
+        self._refresh_editor()
+        self._emit_mesh_edited()
+
+    def _editor_restore_selected(self) -> None:
+        mesh = self._mesh_spec()
+        item = self.lst_edit_lines.currentItem()
+        if mesh is None or item is None:
+            return
+        ax = self.cmb_edit_axis.currentText()
+        c = float(item.data(Qt.ItemDataRole.UserRole))
+        rems = self._lines_dict(mesh, "manual_mesh_lines_removed")
+        rems[ax] = [v for v in rems.get(ax, []) if not self._has([c], v)]
+        self._refresh_editor()
+        self._emit_mesh_edited()
+
+    def _editor_reset(self, axis: str | None) -> None:
+        mesh = self._mesh_spec()
+        if mesh is None:
+            return
+        if axis is None:
+            axis = self.cmb_edit_axis.currentText()
+        for attr in ("manual_mesh_lines", "manual_mesh_lines_removed"):
+            d = self._lines_dict(mesh, attr, create=False)
+            if axis in d:
+                d.pop(axis, None)
+        self._refresh_editor()
+        self._emit_mesh_edited()
+
+    def _editor_reset_all(self) -> None:
+        mesh = self._mesh_spec()
+        if mesh is None:
+            return
+        mesh.manual_mesh_lines = None
+        mesh.manual_mesh_lines_removed = None
+        self._refresh_editor()
+        self._emit_mesh_edited()
+
+    def _on_slice_click(self, event) -> None:
+        """Add a manual line at a clicked coordinate (editor 'add by click')."""
+        try:
+            if not self.chk_click_add.isChecked() or event.button != 1:
+                return
+            if event.inaxes is None:
+                return
+            view = _slice_key(self.cmb_view.currentText())
+            if view is None:
+                return
+            ax_a, ax_b, _normal = _SLICE_AXES[view]
+            axis = self.cmb_edit_axis.currentText()
+            if axis == ax_a and event.xdata is not None:
+                coord = float(event.xdata)
+            elif axis == ax_b and event.ydata is not None:
+                coord = float(event.ydata)
+            else:
+                return  # the editor axis is the slice normal — not pickable here
+            self._editor_add(coord)
+        except Exception as e:  # noqa: BLE001 — never crash on a stray click
+            print(f"mesh editor click error: {e}")
 
     def _on_popout(self) -> None:
         """Open a large detached window with the current scene."""
@@ -354,6 +575,10 @@ class MeshGeometryViewer(QWidget):
         self.slice_layout.addWidget(self.toolbar_slice)
         self.slice_layout.addWidget(self.canvas_slice, 1)
         bind_wheel_zoom(self.canvas_slice)
+        try:
+            self.canvas_slice.mpl_connect("button_press_event", self._on_slice_click)
+        except Exception:  # noqa: BLE001
+            pass
         # fresh canvases -> no zoom to preserve for the next redraw
         self._drawn_view = None
 
@@ -381,6 +606,7 @@ class MeshGeometryViewer(QWidget):
             self._recreate_canvases()
             self._refresh()
             self._update_controls_enabled()
+            self._refresh_editor()
         except Exception as e:  # noqa: BLE001 — never crash the GUI on redraw
             print(f"mesh viewer set_csx refresh error: {e}")
 
@@ -849,6 +1075,30 @@ class MeshGeometryViewer(QWidget):
                         arr, *self._axis_limits(area, ia),
                         colors=(0.4, 0.4, 0.4), linewidths=lw, alpha=alpha,
                     )
+
+        # Pending Mesh-Editor overrides on the in-plane axes — shown before a
+        # rebuild so the user sees exactly what will be added / removed.
+        mesh_spec = self._mesh_spec()
+        if mesh_spec is not None:
+            adds = self._lines_dict(mesh_spec, "manual_mesh_lines", create=False)
+            rems = self._lines_dict(mesh_spec, "manual_mesh_lines_removed", create=False)
+            for axn, idx in ((ax_a, ia), (ax_b, ib)):
+                for c in adds.get(axn, []) or []:
+                    c = float(c)
+                    if idx == ia:
+                        ax.axvline(c, color="#2e7d32", linestyle="--", linewidth=1.2,
+                                   alpha=0.9, label="manual line")
+                    else:
+                        ax.axhline(c, color="#2e7d32", linestyle="--", linewidth=1.2,
+                                   alpha=0.9, label="manual line")
+                for c in rems.get(axn, []) or []:
+                    c = float(c)
+                    if idx == ia:
+                        ax.axvline(c, color="#c62828", linestyle=":", linewidth=1.2,
+                                   alpha=0.9, label="removed line")
+                    else:
+                        ax.axhline(c, color="#c62828", linestyle=":", linewidth=1.2,
+                                   alpha=0.9, label="removed line")
 
         # Geometry primitives: draw 2D footprint when the box intersects the slice plane
         if self.chk_geom.isChecked():

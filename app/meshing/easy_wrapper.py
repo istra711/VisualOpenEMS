@@ -122,4 +122,18 @@ def generate_mesh(
     # Finally clamp EVERY cell (incl. the PML/absorbing region easyMesh may have
     # stretched) to the hard lambda/10 limit the validator enforces.
     cap_max_cell_size(CSX, mesh, targets)
+
+    # Manual Mesh-Editor overrides LAST, so user-placed lines are not smoothed
+    # away again by easyMesh / the cap. Removals first, then additions.
+    try:
+        from app.meshing.manual_mesh import apply_manual_mesh_lines
+
+        stats = apply_manual_mesh_lines(CSX, mesh, coord_system="cartesian")
+        if stats:
+            print(
+                "  manual mesh lines: "
+                + ", ".join(f"{k} +{v}" for k, v in sorted(stats.items()))
+            )
+    except Exception as e:  # noqa: BLE001 — never fail a run on the editor
+        print(f"  manual mesh lines skipped: {e}")
     return setup
