@@ -1057,7 +1057,7 @@ class MainWindow(QMainWindow):
         # opening the VTK tab points it at the current project's work dir
         if _index == getattr(self, "vtk_tab_index", -1):
             try:
-                self.vtk_viewer.set_work_dir(self.settings.work_path())
+                self.vtk_viewer.set_work_dir(self._project_work_dir())
             except Exception:  # noqa: BLE001
                 pass
         try:
@@ -1367,7 +1367,7 @@ class MainWindow(QMainWindow):
     def _on_show_vtk(self) -> None:
         """Switch to the VTK tab (its work dir follows the current project)."""
         try:
-            self.vtk_viewer.set_work_dir(self.settings.work_path())
+            self.vtk_viewer.set_work_dir(self._project_work_dir())
         except Exception:  # noqa: BLE001
             pass
         if getattr(self, "vtk_tab_index", -1) >= 0:
@@ -1377,7 +1377,7 @@ class MainWindow(QMainWindow):
     def _on_export_vtk(self) -> None:
         """Convert the project's field dumps to VTK and show them."""
         try:
-            self.vtk_viewer.set_work_dir(self.settings.work_path())
+            self.vtk_viewer.set_work_dir(self._project_work_dir())
         except Exception:  # noqa: BLE001
             pass
         if getattr(self, "vtk_tab_index", -1) >= 0:
