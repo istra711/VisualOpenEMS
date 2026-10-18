@@ -37,6 +37,19 @@ def _vtk():
     return vtk
 
 
+def _make_reader(vtk, path: Path):
+    """Pick a VTK reader from the file extension (not just our own .vtr)."""
+    cls = {
+        ".vtr": "vtkXMLRectilinearGridReader",
+        ".vti": "vtkXMLImageDataReader",
+        ".vtu": "vtkXMLUnstructuredGridReader",
+        ".vtp": "vtkXMLPolyDataReader",
+        ".vts": "vtkXMLStructuredGridReader",
+        ".vtk": "vtkGenericDataObjectReader",  # legacy .vtk
+    }.get(path.suffix.lower(), "vtkXMLGenericDataObjectReader")
+    return getattr(vtk, cls)()
+
+
 class VtkFieldViewer(QWidget):
     """A VTK render window + a small toolbar for field dumps."""
 
@@ -159,7 +172,10 @@ class VtkFieldViewer(QWidget):
     def _on_open(self) -> None:
         start = str(self.work_dir) if self.work_dir else ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open VTK file", start, "VTK files (*.vtr *.vti *.vtk);;All files (*)"
+            self,
+            "Open VTK file",
+            start,
+            "VTK files (*.vtr *.vti *.vtu *.vtp *.vts *.vtk);;All files (*)",
         )
         if path:
             self.load(path)
@@ -191,19 +207,37 @@ class VtkFieldViewer(QWidget):
         path = Path(path)
         if not path.exists():
             return
-        reader = vtk.vtkXMLRectilinearGridReader()
-        reader.SetFileName(str(path))
-        reader.Update()
-        grid = reader.GetOutput()
+        try:
+            reader = _make_reader(vtk, path)
+            reader.SetFileName(str(path))
+            reader.Update()
+            grid = reader.GetOutput()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "VTK", f"Could not read {path.name}:\n{e}")
+            return
         if grid is None or grid.GetNumberOfPoints() == 0:
-            QMessageBox.warning(self, "VTK", f"Could not read {path.name}.")
+            QMessageBox.warning(
+                self,
+                "VTK",
+                f"Could not read {path.name} ({path.suffix} not supported, or file empty).",
+            )
             return
         self._grid = grid
         pd = grid.GetPointData()
+        # pick a scalar: prefer our own "magnitude", else the active / first array
+        name = None
         if pd.GetArray("magnitude") is not None:
-            pd.SetActiveScalars("magnitude")
-        scal = grid.GetPointData().GetScalars()
-        rng = scal.GetRange() if scal else (0.0, 1.0)
+            name = "magnitude"
+        elif pd.GetScalars() is not None:
+            name = pd.GetScalars().GetName()
+        elif pd.GetNumberOfArrays() > 0:
+            name = pd.GetArrayName(0)
+        self._scalar_name = name
+        if name:
+            pd.SetActiveScalars(name)
+            rng = pd.GetArray(name).GetRange()
+        else:
+            rng = (0.0, 0.0)
         self._scalar_range = (float(rng[0]), float(rng[1]))
         self.slider.setEnabled(self._scalar_range[1] > self._scalar_range[0])
         if self._ensure_render_window():
@@ -214,8 +248,12 @@ class VtkFieldViewer(QWidget):
     def _log_title(self, path: Path) -> None:
         n = self._grid.GetNumberOfPoints() if self._grid else 0
         rng = self._scalar_range
-        self.lbl_level.setText(f"|field| {rng[0]:.3g} … {rng[1]:.3g}  ({n} pts)")
-        print(f"VTK viewer: loaded {path} ({n} points)")
+        name = getattr(self, "_scalar_name", None)
+        if name and rng[1] > rng[0]:
+            self.lbl_level.setText(f"{name} {rng[0]:.3g} … {rng[1]:.3g}  ({n} pts)")
+        else:
+            self.lbl_level.setText(f"{n} points")
+        print(f"VTK viewer: loaded {path} ({n} points, scalar={name})")
 
     def _on_slider(self, _v: int) -> None:
         self._refresh_display()
@@ -232,20 +270,31 @@ class VtkFieldViewer(QWidget):
         vtk = self._vtk
         self._renderer.RemoveAllViewProps()
 
-        if self.chk_surface.isChecked() and self._scalar_range[1] > self._scalar_range[0]:
-            contour = vtk.vtkContourFilter()
-            contour.SetInputData(self._grid)
-            contour.SetInputArrayToProcess(0, 0, 0, 0, "magnitude")
-            contour.SetValue(0, self._iso_value())
-            contour.Update()
-            mapper = vtk.vtkPolyDataMapper()
-            mapper.SetInputConnection(contour.GetOutputPort())
-            mapper.SetScalarModeToUsePointFieldData()
-            mapper.SelectColorArray("magnitude")
-            mapper.SetScalarRange(*self._scalar_range)
-            actor = vtk.vtkActor()
-            actor.SetMapper(mapper)
-            self._renderer.AddActor(actor)
+        name = getattr(self, "_scalar_name", None)
+        has_scal = bool(name) and self._scalar_range[1] > self._scalar_range[0]
+
+        if self.chk_surface.isChecked():
+            if has_scal:
+                contour = vtk.vtkContourFilter()
+                contour.SetInputData(self._grid)
+                contour.SetInputArrayToProcess(0, 0, 0, 0, name)
+                contour.SetValue(0, self._iso_value())
+                contour.Update()
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputConnection(contour.GetOutputPort())
+                mapper.SetScalarModeToUsePointFieldData()
+                mapper.SelectColorArray(name)
+                mapper.SetScalarRange(*self._scalar_range)
+                actor = vtk.vtkActor()
+                actor.SetMapper(mapper)
+                self._renderer.AddActor(actor)
+            else:
+                # no scalar array: just show the dataset surface
+                dm = vtk.vtkDataSetMapper()
+                dm.SetInputData(self._grid)
+                a = vtk.vtkActor()
+                a.SetMapper(dm)
+                self._renderer.AddActor(a)
 
         if self.chk_outline.isChecked():
             outline = vtk.vtkOutlineFilter()

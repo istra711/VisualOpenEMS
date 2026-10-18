@@ -487,7 +487,8 @@ Buttons
   • "Export project dumps → VTK": converts every dump in the current project's
     simulation/ folder (*.h5, excluding nf2ff_*) into <project>/vtk/*.vtr and
     loads the first one.
-  • "Open .vtr…": open an already-converted VTK file.
+  • "Open .vtr…": open any VTK file — .vtr, .vti, .vtu, .vtp, .vts (XML) or a
+    legacy .vtk (e.g. a ParaView example); the reader is picked by extension.
   • "Iso-surface" / "Outline": show the |field| iso-surface and the domain box.
   • "Iso-level" slider: move the iso-value between the min and max of |field|.
   • "Reset view": fit the camera to the data. Mouse: rotate (left), pan

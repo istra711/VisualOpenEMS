@@ -25,7 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   VTK's render window hard-crashes without a display. `build_exe.py` no longer
   excludes `vtk` (and collects its binaries) so the bundled EXE includes the
   viewer. Tests: `tests/test_vtk_export.py` (converter round-trip) +
-  `tests/vtk_viewer_smoke.py` (conversion + viewer load).
+  `tests/vtk_viewer_smoke.py` (conversion + viewer load). The viewer's
+  "Open…" reader is **format-agnostic** — it picks the reader from the
+  extension (.vtr/.vti/.vtu/.vtp/.vts XML or legacy .vtk), so ParaView example
+  files open too; the scalar shown is "magnitude" if present, else the active /
+  first point array.
   Also: **new field dumps default to the geometry bbox** (`_on_add_dump` /
   `_default_dump_box`) instead of a zero-size `[0,0,0]`→`[0,0,0]` box — a
   single-point dump produced an empty `.vtr`; the exporter now skips such dumps

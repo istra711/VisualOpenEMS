@@ -60,6 +60,35 @@ def main() -> int:
     assert v._renderer is None
     print("  viewer loaded grid:", v._grid.GetNumberOfPoints(), "points")
 
+    # the reader is format-agnostic: a .vtu (ParaView-style) also loads
+    import numpy as np
+    import vtk
+    from vtk.util import numpy_support as ns
+
+    pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], float)
+    ug = vtk.vtkUnstructuredGrid()
+    vp = vtk.vtkPoints()
+    for p in pts:
+        vp.InsertNextPoint(*p)
+    ug.SetPoints(vp)
+    tet = vtk.vtkTetra()
+    for i in range(4):
+        tet.GetPointIds().SetId(i, i)
+    ug.InsertNextCell(tet.GetCellType(), tet.GetPointIds())
+    arr = ns.numpy_to_vtk(np.linspace(1, 4, 4), deep=True)
+    arr.SetName("temperature")
+    ug.GetPointData().SetScalars(arr)
+    vtu = td / "u.vtu"
+    w = vtk.vtkXMLUnstructuredGridWriter()
+    w.SetFileName(str(vtu))
+    w.SetInputData(ug)
+    w.Write()
+
+    v.load(vtu)
+    assert v._grid.GetNumberOfPoints() == 4
+    assert v._scalar_name == "temperature", v._scalar_name
+    print("  .vtu (non-.vtr) loaded, scalar:", v._scalar_name)
+
     print("VTK VIEWER SMOKE PASS")
     return 0
 
