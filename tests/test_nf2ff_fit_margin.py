@@ -13,6 +13,8 @@ import pytest
 
 from app.meshing.bounds import (
     domain_air_margin_units,
+    nf2ff_box_center,
+    nf2ff_center_offset,
     nf2ff_fit_box,
     nf2ff_fit_margin_units,
 )
@@ -97,4 +99,32 @@ def test_fit_box_is_symmetric_for_symmetric_source():
     start, stop = nf2ff_fit_box(lo, hi, margin=40.0)
     for i in range(3):
         assert start[i] == pytest.approx(-stop[i])
+
+
+# --- NF2FF box/center consistency (the source may be arbitrarily asymmetric) ---
+
+
+def test_box_center_of_symmetric_box_is_zero():
+    assert nf2ff_box_center([-62.5, -62.5, -88.5], [62.5, 62.5, 88.5]) == [0.0, 0.0, 0.0]
+
+
+def test_center_offset_flags_stale_reference():
+    # A box (symmetric about the geometry) whose stored center is left over from
+    # an old asymmetric fit: this is exactly the dipole bug.
+    start, stop = [-77.9, -77.9, -103.9], [77.9, 77.9, 103.9]
+    assert nf2ff_center_offset(start, stop, [0.0, 0.0, 0.0]) == pytest.approx(0.0)
+    assert nf2ff_center_offset(start, stop, [0.0, 0.0, 6.15]) == pytest.approx(6.15)
+
+
+def test_center_offset_does_not_need_source_symmetry():
+    # A genuinely asymmetric source (arms on one side only) is fine as long as
+    # the box is centred on its own geometry — the check is box geometry only.
+    lo = [0.0, 0.0, 0.0]
+    hi = [4.0, 4.0, 29.0]
+    start, stop = nf2ff_fit_box(lo, hi, margin=60.0)
+    center = nf2ff_box_center(start, stop)
+    assert center == pytest.approx([2.0, 2.0, 14.5])
+    assert nf2ff_center_offset(start, stop, center) == pytest.approx(0.0)
+    # the geometry center equals the box center (equal margins)
+    assert center == pytest.approx([0.5 * (lo[i] + hi[i]) for i in range(3)])
 
