@@ -77,6 +77,11 @@ def dump_to_vtr(h5_path: Path | str, out_path: Path | str | None = None) -> Path
         nx, ny, nz = field.shape[1], field.shape[2], field.shape[3]
     else:
         nx, ny, nz = field.shape[-3], field.shape[-2], field.shape[-1]
+    if nx * ny * nz <= 1:
+        raise ValueError(
+            f"{h5_path.name}: dump is a single point — set a box (Edit Dump: "
+            "start != stop) and run again"
+        )
     if (x.size, y.size, z.size) != (nx, ny, nz):
         raise ValueError(
             f"{h5_path.name}: mesh {x.size}x{y.size}x{z.size} does not match "

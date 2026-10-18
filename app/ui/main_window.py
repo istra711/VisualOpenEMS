@@ -2934,10 +2934,43 @@ class MainWindow(QMainWindow):
         self._refresh_ports()
         self._log(f"Port removed: {p.name}")
 
+    def _default_dump_box(self):
+        """A non-degenerate default field-dump box: geometry bbox + ~10 % margin.
+
+        A dump defaulting to [0,0,0]→[0,0,0] is a single point and produces an
+        empty result — so seed the dialog with the structure's extent instead.
+        """
+        import math
+
+        from app.meshing.bounds import cartesian_primitive_bbox
+
+        lo = [math.inf] * 3
+        hi = [-math.inf] * 3
+        for pr in self.primitives or []:
+            bb = cartesian_primitive_bbox(pr)
+            if bb is None:
+                continue
+            for i in range(3):
+                lo[i] = min(lo[i], float(bb[0][i]))
+                hi[i] = max(hi[i], float(bb[1][i]))
+        if not all(math.isfinite(v) for v in lo):
+            return None
+        span = max(hi[i] - lo[i] for i in range(3)) or 1.0
+        pad = 0.1 * span
+        return [lo[i] - pad for i in range(3)], [hi[i] + pad for i in range(3)]
+
     def _on_add_dump(self) -> None:
+        from app.models.project import DumpDef
         from app.ui.geometry_editors import DumpDialog
 
-        dlg = DumpDialog(self, coord_system=self.project.mesh.coord_system)
+        seed = None
+        box = self._default_dump_box()
+        if box is not None:
+            f0 = float(getattr(self.project.mesh, "target_frequency", 0) or 2.45e9)
+            seed = DumpDef(
+                name="Et", quantity="E", start=box[0], stop=box[1], frequency=f0
+            )
+        dlg = DumpDialog(self, dump=seed, coord_system=self.project.mesh.coord_system)
         if dlg.exec() and dlg.result:
             d = dlg.result
             self.project.dumps = [x for x in self.project.dumps if x.name != d.name]
