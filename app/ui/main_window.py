@@ -551,12 +551,11 @@ class MainWindow(QMainWindow):
         # FDTD engine progress (energy / end criteria) — updated from the
         # openEMS stdout lines as they arrive (see _append_log_on_gui).
         self._engine_progress = EngineProgress()
-        # Two NARROW bars stacked vertically (half the old width each).
+        # Two bars SIDE BY SIDE in the status bar (TS, then energy).
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.progress.setFixedWidth(110)
-        self.progress.setFixedHeight(14)
+        self.progress.setFixedWidth(150)
         self.progress.setTextVisible(True)
         self.progress.setVisible(False)
         self.progress.setToolTip("Timestep progress (TS / max TS)")
@@ -566,24 +565,18 @@ class MainWindow(QMainWindow):
         self.progress_energy = QProgressBar()
         self.progress_energy.setRange(0, 100)
         self.progress_energy.setValue(0)
-        self.progress_energy.setFixedWidth(110)
-        self.progress_energy.setFixedHeight(14)
+        self.progress_energy.setFixedWidth(150)
         self.progress_energy.setTextVisible(True)
         self.progress_energy.setVisible(False)
         self.progress_energy.setToolTip(
             "Residual-energy convergence: 0% = energy at start (0 dB), "
             "100% = end criteria reached (minimum energy in dB)"
         )
-        self._progress_box = QWidget()
-        _vbox = QVBoxLayout(self._progress_box)
-        _vbox.setContentsMargins(0, 0, 0, 0)
-        _vbox.setSpacing(1)
-        _vbox.addWidget(self.progress)
-        _vbox.addWidget(self.progress_energy)
         self.lbl_engine = QLabel("")
         self.lbl_engine.setVisible(False)
         self.status.addPermanentWidget(self.lbl_engine)
-        self.status.addPermanentWidget(self._progress_box)
+        self.status.addPermanentWidget(self.progress)
+        self.status.addPermanentWidget(self.progress_energy)
         # Larger default window so the mesh viewer is usable
         self.resize(1440, 900)
 
