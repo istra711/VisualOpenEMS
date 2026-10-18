@@ -123,6 +123,21 @@ def generate_mesh(
     # stretched) to the hard lambda/10 limit the validator enforces.
     cap_max_cell_size(CSX, mesh, targets)
 
+    # Snapshot the auto grid (before the manual overrides) so the Mesh Editor
+    # can re-apply edits to the *existing* mesh without re-running easyMesh.
+    try:
+        import numpy as _np
+
+        _g = CSX.GetGrid()
+        auto_lines: dict[str, list[float]] = {}
+        for _d, _name in enumerate(("x", "y", "z")):
+            _arr = _np.asarray(_g.GetLines(_d), dtype=float)
+            if _arr.size:
+                auto_lines[_name] = [float(v) for v in _arr]
+        setup["auto_mesh_lines"] = auto_lines
+    except Exception as e:  # noqa: BLE001
+        print(f"  auto-grid snapshot skipped: {e}")
+
     # Manual Mesh-Editor overrides LAST, so user-placed lines are not smoothed
     # away again by easyMesh / the cap. Removals first, then additions.
     try:

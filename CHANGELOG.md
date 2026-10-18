@@ -107,6 +107,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   focus — the previous `QShortcut` needed the list itself focused). The
   "Add by click in slice" checkbox is gone (add-on-click is the default now).
 
+- **Mesh Editor edits the existing mesh; "Rebuild from scratch" + "Build Mesh"
+  label** (`app/meshing/easy_wrapper.py`, `app/meshing/build_task.py`,
+  `app/meshing/manual_mesh.py`, `app/ui/mesh_viewer.py`, `app/ui/main_window.py`):
+  adding/removing a line now re-derives the grid from the **last auto mesh** +
+  the overrides (cached via `MeshBuildResult.auto_mesh_lines` /
+  `MeshViewer.set_auto_grid`) and updates the current mesh in place — no
+  easyMesh re-run, no view reset ("always use the existing mesh"). A new
+  **Rebuild from scratch…** button discards all manual lines after a
+  confirmation dialog and rebuilds with easyMesh. The meshing action is renamed
+  from the unwieldy "Build CSX + Mesh + Validate" to **"Build Mesh"** (button +
+  Ctrl+M menu, help updated). `manual_mesh.apply_lines_axis` is the shared pure
+  add/remove step. `tests/menu_smoke.py` updated.
+
 - **NF2FF "egg" pattern was a stale box `center`, not the box shape**
   (`app/meshing/bounds.py`, `app/simulation/script_gen.py`): the far-field sphere
   is expanded around `project.nf2ff.center`, so the box must be centred on that

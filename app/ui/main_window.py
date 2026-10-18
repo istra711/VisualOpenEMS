@@ -78,13 +78,9 @@ class MainWindow(QMainWindow):
         # background mesh build (worker thread) state
         self._mesh_building = False
         self._mesh_thread = None
-        # auto (background) rebuild triggered by Mesh-Editor edits; preserves
-        # the visible view instead of resetting it
+        # reserved: Mesh-Editor edits are applied to the existing mesh directly
+        # (no full rebuild), so no auto-build timer is needed anymore
         self._auto_mesh_build = False
-        self._mesh_edit_timer = QTimer(self)
-        self._mesh_edit_timer.setSingleShot(True)
-        self._mesh_edit_timer.setInterval(400)
-        self._mesh_edit_timer.timeout.connect(self._auto_rebuild_mesh)
         # multi-excitation driver state (Simulation → Run All Ports)
         self._multi_plans: list | None = None
         self._multi_pos: int = 0
@@ -378,7 +374,7 @@ class MainWindow(QMainWindow):
         form.addRow("Coordinate system", self.cmb_coords)
         top.addLayout(form)
         top.addStretch(1)
-        self.btn_build_mesh = QPushButton("Build CSX + Mesh + Validate")
+        self.btn_build_mesh = QPushButton("Build Mesh")
         top.addWidget(self.btn_build_mesh)
         mv.addLayout(top)
 
@@ -397,6 +393,7 @@ class MainWindow(QMainWindow):
         viewer_layout.setContentsMargins(0, 0, 0, 0)
         self.mesh_viewer = MeshGeometryViewer(work_dir=self.settings.work_path())
         self.mesh_viewer.mesh_edited.connect(self._on_mesh_edited)
+        self.mesh_viewer.rebuild_requested.connect(self._on_rebuild_scratch)
         viewer_layout.addWidget(self.mesh_viewer)
         self.mesh_viewer_tab_index = tabs.addTab(viewer_tab, "Mesh Viewer")
 
@@ -726,7 +723,7 @@ class MainWindow(QMainWindow):
         add_action(gmenu, "Fit NF2FF to Geometry", slot=self._on_fit_nf2ff)
 
         mmenu = bar.addMenu("Mes&h")
-        add_action(mmenu, "Build CSX + Mesh + Validate", btn=self.btn_build_mesh, shortcut="Ctrl+M")
+        add_action(mmenu, "Build Mesh", btn=self.btn_build_mesh, shortcut="Ctrl+M")
         mmenu.addSeparator()
         add_action(
             mmenu,
@@ -832,7 +829,7 @@ class MainWindow(QMainWindow):
         self._ensure_mesh_viewer_content()
 
     def _on_mesh_edited(self) -> None:
-        """Mesh Editor edit -> rebuild the mesh in the background (debounced)."""
+        """Mesh Editor edit — applied to the existing mesh (no rebuild)."""
         mesh = getattr(self.project, "mesh", None)
         if mesh is None:
             return
@@ -840,25 +837,38 @@ class MainWindow(QMainWindow):
         rem = getattr(mesh, "manual_mesh_lines_removed", None) or {}
         na = sum(len(v or []) for v in add.values())
         nr = sum(len(v or []) for v in rem.values())
-        self._log(f"Mesh editor: {na} manual line(s), {nr} removed — rebuilding…")
-        self._mesh_edit_timer.start()
+        self._log(
+            f"Mesh editor: {na} added, {nr} removed (applied to the current mesh; "
+            "click Build Mesh to save csx.xml)"
+        )
 
-    def _auto_rebuild_mesh(self) -> None:
-        """Rebuild the mesh after an editor edit, keeping the visible view.
-
-        Runs the normal background Build-Mesh thread but flags it as automatic:
-        the viewer keeps its view type, slice plane and zoom (the edit just
-        disappears from the grid) and no tab is forced to the front.
-        """
-        if getattr(self, "_mesh_building", False):
-            self._mesh_edit_timer.start()  # retry once the running build finishes
+    def _on_rebuild_scratch(self) -> None:
+        """Discard all manual lines and rebuild the mesh from scratch."""
+        mesh = getattr(self.project, "mesh", None)
+        if mesh is None:
             return
-        self._auto_mesh_build = True
-        try:
-            self._on_build_mesh()
-        except Exception as e:  # noqa: BLE001
-            self._auto_mesh_build = False
-            self._log(f"Mesh editor auto-rebuild failed: {e}")
+        from PySide6.QtWidgets import QMessageBox
+
+        add = getattr(mesh, "manual_mesh_lines", None) or {}
+        rem = getattr(mesh, "manual_mesh_lines_removed", None) or {}
+        na = sum(len(v or []) for v in add.values())
+        nr = sum(len(v or []) for v in rem.values())
+        if na or nr:
+            resp = QMessageBox.warning(
+                self,
+                "Rebuild from scratch",
+                f"This discards ALL manual mesh lines ({na} added, {nr} removed) "
+                "and rebuilds the mesh with easyMesh.\n\nContinue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return
+        mesh.manual_mesh_lines = None
+        mesh.manual_mesh_lines_removed = None
+        self.mesh_viewer.set_auto_grid(None)
+        self._log("Mesh editor: manual lines cleared — rebuilding from scratch…")
+        self._on_build_mesh()
 
     def _open_work_folder(self) -> None:
         try:
@@ -1550,7 +1560,7 @@ class MainWindow(QMainWindow):
         self._refresh_ports()
         self.geom_info.setPlainText(
             "Patch antenna rebuilt from Sim Params dialog values.\n"
-            "Press 'Build CSX + Mesh + Validate' then 'Run Simulation'."
+            "Press 'Build Mesh' then 'Run Simulation'."
         )
         self._log(
             f"Patch geometry applied: W={kwargs['patch_width']} L={kwargs['patch_length']} "
@@ -1817,7 +1827,7 @@ class MainWindow(QMainWindow):
         """Load the CSX recorded in the project JSON into the Mesh Viewer.
 
         Prefers the last simulation's mesh (``csx_xml``), falls back to the
-        mesh built by *Build CSX + Mesh + Validate* (``mesh_xml``).
+        mesh built by *Build Mesh* (``mesh_xml``).
         """
         rec = self.project.results or {}
         # recorded mesh -> fixed locations (new project folder, legacy
@@ -3398,6 +3408,7 @@ class MainWindow(QMainWindow):
                 ports=self.project.ports,
                 nf2ff=self.project.nf2ff,
             )
+            self.mesh_viewer.set_auto_grid(result.auto_mesh_lines)
             self.mesh_viewer.set_csx(CSX, keep_view=auto)
             self._mesh_sig = self._mesh_signature()
             self._sync_scene_info()

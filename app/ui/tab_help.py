@@ -87,11 +87,13 @@ Mesh editor (right-hand panel) — manual mesh lines
     Ctrl (toggle); Del / Backspace removes the selection.
   • Right-click in the plot area opens a menu: toggle the Mesh editor, pop the
     viewer out (like the Antenna / S-Params viewers), reset the view.
-  • Edits are stored in the project (MeshSpec) and applied AFTER easyMesh — so
-    they survive automatic meshing. Pending edits are overlaid on the slice
-    (green dashed = will be added, red dotted = will be removed).
-  • Click "Build Mesh" to apply; the result is validated (cell sizes / grading /
-    CFL) like any mesh. "Reset axis" / "Reset all" clears the overrides.
+  • Edits are applied to the CURRENT mesh immediately (the grid is re-derived
+    from the last auto mesh + your overrides — no easyMesh re-run, the view is
+    not reset), and stored in the project, so they survive everything.
+  • Click "Build Mesh" (Ctrl+M) to rebuild from scratch and save csx.xml (the
+    result is validated: cell sizes / grading / CFL): the overrides are applied
+    again on the fresh auto mesh. "Rebuild from scratch…" discards ALL manual
+    lines (with a confirmation) and rebuilds with easyMesh.
   • Robustness: the overrides store absolute coordinates while easyMesh rebuilds
     the grid each time. A removal therefore drops the grid line NEAREST the
     stored coordinate (within a local-cell tolerance), so a slightly changed mesh
@@ -251,7 +253,7 @@ Buttons
 
 Notes
   • Second click on the menu entry re-uses the same window (it re-syncs).
-  • Build CSX + Mesh + Validate (Ctrl+M / Mesh menu) reads the project, so
+  • Build Mesh (Ctrl+M / Mesh menu) reads the project, so
     Apply first, then Build. The build runs in a background thread — the UI
     stays responsive, the button is disabled until it finishes and the log
     panel shows progress.

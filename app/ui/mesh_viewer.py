@@ -199,6 +199,9 @@ class MeshGeometryViewer(QWidget):
     #: emitted when the user changes the manual mesh-line overrides (the caller
     #: may refresh the scene info / mark the mesh stale for a rebuild).
     mesh_edited = Signal()
+    #: emitted by "Rebuild from scratch" — the caller clears the overrides and
+    #: runs a full (easyMesh) build, discarding the manual lines.
+    rebuild_requested = Signal()
 
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -210,6 +213,9 @@ class MeshGeometryViewer(QWidget):
         self._nf2ff = None
         self._sel_line: tuple[str, float] | None = None  # highlighted editor row
         self._selected_lines: list[tuple[str, float]] = []  # (axis, coord) highlighted
+        # auto grid (per axis) before manual overrides — lets editor edits be
+        # re-applied to the EXISTING mesh without re-running easyMesh
+        self._auto_mesh: dict | None = None
         self._editor_panel = None
         self._split = None
         self._build_ui()
@@ -343,6 +349,7 @@ class MeshGeometryViewer(QWidget):
         self.btn_edit_restore.clicked.connect(self._editor_restore_selected)
         self.btn_edit_reset_axis.clicked.connect(lambda: self._editor_reset(None))
         self.btn_edit_reset_all.clicked.connect(self._editor_reset_all)
+        self.btn_edit_rebuild.clicked.connect(self.rebuild_requested.emit)
 
         self._on_view_changed(0)
         self._refresh_editor()
@@ -398,6 +405,13 @@ class MeshGeometryViewer(QWidget):
         row5.addWidget(self.btn_edit_reset_all)
         v.addLayout(row5)
 
+        self.btn_edit_rebuild = QPushButton("Rebuild from scratch…")
+        self.btn_edit_rebuild.setToolTip(
+            "Discard ALL manual lines and rebuild the mesh with easyMesh from\n"
+            "scratch (asks for confirmation)."
+        )
+        v.addWidget(self.btn_edit_rebuild)
+
         lbl = QLabel(
             "Edit lines here (add / select / remove) — or click in the slice:\n"
             "a click in free space adds a line, a click on a line selects it\n"
@@ -449,7 +463,37 @@ class MeshGeometryViewer(QWidget):
     def _has(lst, c: float) -> bool:
         return any(abs(float(v) - float(c)) < 1e-6 for v in (lst or []))
 
-    def _emit_mesh_edited(self) -> None:
+    def set_auto_grid(self, auto: dict | None) -> None:
+        """Cache the auto grid (per axis, before manual overrides) from a build.
+
+        With it, an editor edit is applied to the EXISTING mesh by re-deriving
+        the grid from ``auto`` + the overrides — no easyMesh re-run.
+        """
+        self._auto_mesh = dict(auto) if auto else None
+
+    def _apply_editor_change(self) -> None:
+        """Apply the override set to the CURRENT mesh (no full rebuild)."""
+        mesh = self._mesh_spec()
+        if mesh is not None and self._csx is not None and self._auto_mesh:
+            try:
+                from app.meshing.manual_mesh import apply_lines_axis
+
+                g = self._csx.GetGrid()
+                adds = self._lines_dict(mesh, "manual_mesh_lines", create=False)
+                rems = self._lines_dict(mesh, "manual_mesh_lines_removed", create=False)
+                for d, name in enumerate(("x", "y", "z")):
+                    base = self._auto_mesh.get(name)
+                    if not base:
+                        continue
+                    new_lines, _ = apply_lines_axis(
+                        base,
+                        [float(v) for v in adds.get(name, []) or []],
+                        [float(v) for v in rems.get(name, []) or []],
+                    )
+                    g.SetLines(d, [float(v) for v in new_lines])
+            except Exception as e:  # noqa: BLE001
+                print(f"mesh editor incremental apply failed: {e}")
+        self._refresh_editor()
         try:
             self._redraw()
         except Exception:  # noqa: BLE001
@@ -508,7 +552,7 @@ class MeshGeometryViewer(QWidget):
         if not self._has(adds.get(ax, []), c):
             adds.setdefault(ax, []).append(c)
         self._refresh_editor()
-        self._emit_mesh_edited()
+        self._apply_editor_change()
 
     def _editor_remove_selected(self) -> None:
         mesh = self._mesh_spec()
@@ -525,7 +569,7 @@ class MeshGeometryViewer(QWidget):
             elif not self._has(rems.get(ax, []), c):
                 rems.setdefault(ax, []).append(c)
         self._refresh_editor()
-        self._emit_mesh_edited()
+        self._apply_editor_change()
 
     def _editor_restore_selected(self) -> None:
         mesh = self._mesh_spec()
@@ -538,7 +582,7 @@ class MeshGeometryViewer(QWidget):
             c = float(item.data(Qt.ItemDataRole.UserRole))
             rems[ax] = [v for v in rems.get(ax, []) if not self._has([c], v)]
         self._refresh_editor()
-        self._emit_mesh_edited()
+        self._apply_editor_change()
 
     def _editor_reset(self, axis: str | None) -> None:
         mesh = self._mesh_spec()
@@ -551,7 +595,7 @@ class MeshGeometryViewer(QWidget):
             if axis in d:
                 d.pop(axis, None)
         self._refresh_editor()
-        self._emit_mesh_edited()
+        self._apply_editor_change()
 
     def _editor_reset_all(self) -> None:
         mesh = self._mesh_spec()
@@ -560,7 +604,7 @@ class MeshGeometryViewer(QWidget):
         mesh.manual_mesh_lines = None
         mesh.manual_mesh_lines_removed = None
         self._refresh_editor()
-        self._emit_mesh_edited()
+        self._apply_editor_change()
 
     def _effective_lines(self, axis_name: str) -> list[float]:
         """Grid lines as shown in the editor list: built (easyMesh) + pending adds."""

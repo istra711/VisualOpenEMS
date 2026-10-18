@@ -27,6 +27,8 @@ class MeshBuildResult:
     lines: list[str] = field(default_factory=list)
     csx: object = None
     fdtd: object = None
+    #: auto grid (per axis) BEFORE the manual Mesh-Editor overrides were applied
+    auto_mesh_lines: dict = field(default_factory=dict)
 
     @property
     def text(self) -> str:
@@ -305,4 +307,7 @@ def build_mesh_and_validate(
         lines.append(f"(csx xml export failed: {e})")
 
     _log("Mesh build finished")
-    return MeshBuildResult(lines=lines, csx=CSX, fdtd=FDTD)
+    auto_grid = setup.get("auto_mesh_lines") if isinstance(setup, dict) else None
+    return MeshBuildResult(
+        lines=lines, csx=CSX, fdtd=FDTD, auto_mesh_lines=auto_grid or {}
+    )
