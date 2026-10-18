@@ -56,7 +56,7 @@ def main() -> int:
     assert not win.progress_energy.isHidden(), "energy bar not shown after engine lines"
     assert win._engine_progress.target_db == 50.0, win._engine_progress.target_db
     assert win.progress_energy.value() == 52, win.progress_energy.value()
-    assert "Energy" in win.progress_energy.format(), win.progress_energy.format()
+    assert win.progress_energy.format() == "E 52%", win.progress_energy.format()
 
     win._reset_engine_progress()
     assert win.progress.isHidden(), "reset must hide the bar"

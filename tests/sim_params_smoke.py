@@ -46,7 +46,7 @@ def main() -> int:
 
     # Override parameters via form
     win.sim_params.spn_max_ts.setValue(120_000)
-    win.sim_params.spn_end_criteria.setValue(1e-4)
+    win.sim_params.spn_end_criteria.setValue(-40.0)  # dB -> linear 1e-4
     assert int(win.sim_params.spn_num_threads.value()) == int(
         win.project.sim.num_threads or 0
     )

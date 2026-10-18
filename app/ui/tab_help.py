@@ -208,7 +208,9 @@ Tips
   • PML on the radiation sides;PEC often fine on ground.
   • Auto air margin = λ/4 at the STOP frequency (not geometry-based) — uncheck it
     if you need a fixed, reproducible domain size.
-  • Change max_timesteps / end_criteria here before a long run.
+  • Change max_timesteps / end_criteria here before a long run. The end
+    criterion is entered in dB (0 dB = energy at start; the run stops when the
+    residual energy has dropped by this much, e.g. -50 dB = linear 1e-5).
   • Threads (numThreads): 0 = Auto (all cores). Set e.g. 4 to leave cores free
     or to limit CPU load on shared machines — passed to FDTD.Run(numThreads=N).
 
