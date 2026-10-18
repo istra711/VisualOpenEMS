@@ -29,7 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Open…" reader is **format-agnostic** — it picks the reader from the
   extension (.vtr/.vti/.vtu/.vtp/.vts XML or legacy .vtk), so ParaView example
   files open too; the scalar shown is "magnitude" if present, else the active /
-  first point array.
+  first point array. The default representation is **Surface** (the dataset
+  coloured by the scalar, with a colour bar — like ParaView); Iso-surface and
+  Wireframe are selectable.
   Also: **new field dumps default to the geometry bbox** (`_on_add_dump` /
   `_default_dump_box`) instead of a zero-size `[0,0,0]`→`[0,0,0]` box — a
   single-point dump produced an empty `.vtr`; the exporter now skips such dumps
