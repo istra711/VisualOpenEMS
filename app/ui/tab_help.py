@@ -83,7 +83,10 @@ Mesh editor (right-hand panel) — manual mesh lines
   • The list shows the current lines: blank = from easyMesh, "+" (green) = added
     by you, "−" (red) = an auto line you removed. Select a row and
     "Remove selected" (drop a '+', or delete an auto line) /
-    "Restore selected" (undo a removal).
+    "Restore selected" (undo a removal). Select several with Shift (range) or
+    Ctrl (toggle); Del / Backspace removes the selection.
+  • Right-click in the plot area opens a menu: toggle the Mesh editor, pop the
+    viewer out (like the Antenna / S-Params viewers), reset the view.
   • Edits are stored in the project (MeshSpec) and applied AFTER easyMesh — so
     they survive automatic meshing. Pending edits are overlaid on the slice
     (green dashed = will be added, red dotted = will be removed).

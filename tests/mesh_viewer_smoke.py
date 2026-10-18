@@ -483,6 +483,22 @@ def main() -> int:
         assert viewer._sel_line is not None and viewer._sel_line[0] == "x", viewer._sel_line
         print("  click-select a line in the slice: OK")
 
+        # multi-selection + Del-style removal of several lines at once
+        viewer.chk_click_add.setChecked(False)
+        viewer.cmb_edit_axis.setCurrentText("z")
+        viewer.spn_edit_line.setValue(12.5)
+        viewer._editor_add()
+        viewer.spn_edit_line.setValue(-12.5)
+        viewer._editor_add()
+        for _i in range(viewer.lst_edit_lines.count()):
+            if viewer.lst_edit_lines.item(_i).text().startswith("+"):
+                viewer.lst_edit_lines.item(_i).setSelected(True)
+        assert len(viewer._selected_lines) >= 2, viewer._selected_lines
+        viewer._editor_remove_selected()
+        _adds = viewer._project.mesh.manual_mesh_lines or {}
+        assert not any(v for v in _adds.values()), _adds
+        print("  multi-select + delete several lines: OK")
+
         print("MESH VIEWER SMOKE PASS")
         return 0
     except Exception:

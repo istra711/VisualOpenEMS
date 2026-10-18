@@ -79,7 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the visible view: `set_csx(keep_view=True)` keeps the view type, slice plane
   and zoom, and no tab is forced to the front — the edited line simply vanishes.
   Regression checks in `tests/mesh_viewer_smoke.py` (visibility, selection
-  highlight, `keep_view` plane preservation).
+  highlight, `keep_view` plane preservation). The line list supports
+  **multi-selection** (Shift/Ctrl) with Delete/Backspace removing the whole
+  selection, a **single left-click** on a line in the slice selects it (axis
+  combo follows), and a **right-click** menu toggles the editor and pops the
+  viewer out.
 
 - **NF2FF "egg" pattern was a stale box `center`, not the box shape**
   (`app/meshing/bounds.py`, `app/simulation/script_gen.py`): the far-field sphere
