@@ -114,8 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the overrides (cached via `MeshBuildResult.auto_mesh_lines` /
   `MeshViewer.set_auto_grid`) and updates the current mesh in place — no
   easyMesh re-run, no view reset ("always use the existing mesh"). A new
-  **Rebuild from scratch…** button discards all manual lines after a
-  confirmation dialog and rebuilds with easyMesh. The meshing action is renamed
+  **Rebuild from scratch…** button (also a **Mesh menu** item) discards all
+  manual lines after a confirmation dialog and rebuilds with easyMesh. The meshing action is renamed
   from the unwieldy "Build CSX + Mesh + Validate" to **"Build Mesh"** (button +
   Ctrl+M menu, help updated). `manual_mesh.apply_lines_axis` is the shared pure
   add/remove step. `tests/menu_smoke.py` updated.
