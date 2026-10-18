@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Two stacked status-bar progress bars (TS + energy) and dB end criteria**
+- **Two status-bar progress bars (TS + energy, side by side) and dB end criteria**
   (`app/simulation/progress.py`, `app/ui/main_window.py`, `app/ui/sim_params.py`):
   the run's stopping condition is the residual-energy end criterion (EndCriteria),
-  not the timestep budget. The status bar now shows **two narrow bars stacked
-  vertically** (half the old width each): a **TS** bar (timesteps/max) and an
+  not the timestep budget. The status bar now shows **two bars side by side**:
+  a **TS** bar (timesteps/max) and an
   **energy** bar in **percent** — 0 % = energy at start (0 dB), 100 % = the end
   criterion / minimum energy reached. `EngineProgress.energy_percent` /
   `energy_text` + `target_db` (set per run from `sim.end_criteria`).
