@@ -81,6 +81,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tests no longer overwrite the user's `app_settings.json`**
+  (`app/paths.py:settings_path`): smoke/pytest runs used the real settings file;
+  `MainWindow.save()` on close then wrote the test's temp work dir (and port
+  defaults) back, clobbering the user's configuration. When the running script
+  is a test/smoke (`…/tests/…` or pytest) a throwaway file in the temp dir is
+  used instead.
+
 - **"Run failed: [WinError 87]" — robust subprocess launch**
   (`app/winproc.py`, `app/simulation/runner.py`): the hidden-console flags
   (`STARTUPINFO` + `CREATE_NO_WINDOW`) can make `CreateProcess` fail with
