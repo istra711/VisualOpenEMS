@@ -278,6 +278,20 @@ def build_mesh_and_validate(
         coord_system=mesh.coord_system,
     )
     lines.extend(report_to_lines(report))
+    manual = setup.get("manual_mesh_lines") if isinstance(setup, dict) else None
+    if manual:
+        lines.append("")
+        lines.append("Manual mesh lines (Mesh Editor):")
+        for _k in sorted(manual):
+            _s = manual[_k]
+            lines.append(f"  {_k}: +{_s['added']} / -{_s['removed']}")
+            if _s.get("drift", 0.0) > 0.0:
+                lines.append(f"    (removal snapped by up to {_s['drift']:.4g} to the nearest line)")
+            for _c in _s.get("missed", []):
+                lines.append(
+                    f"    WARNING: no grid line near {_c:.4g} to remove "
+                    "(did the mesh change?)"
+                )
     lines.append("")
     lines.append("Mesh setup:")
     lines.append(json.dumps(setup, indent=2, default=str))

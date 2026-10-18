@@ -35,14 +35,15 @@ def test_added_line_is_inserted():
     csx = _csx()
     mesh = SimpleNamespace(manual_mesh_lines={"x": [5.0]})
     stats = apply_manual_mesh_lines(csx, mesh)
-    assert stats == {"x": 1}
+    assert stats["x"]["added"] == 1
     assert 5.0 in _lines(csx, 0)
 
 
 def test_removed_auto_line_is_dropped():
     csx = _csx()
     mesh = SimpleNamespace(manual_mesh_lines_removed={"z": [0.0]})
-    apply_manual_mesh_lines(csx, mesh)
+    stats = apply_manual_mesh_lines(csx, mesh)
+    assert stats["z"]["removed"] == 1
     assert 0.0 not in _lines(csx, 2)
 
 
@@ -50,8 +51,31 @@ def test_duplicate_add_is_ignored():
     csx = _csx()
     mesh = SimpleNamespace(manual_mesh_lines={"y": [1.0, 1.0, 7.0]})
     stats = apply_manual_mesh_lines(csx, mesh)
-    assert stats == {"y": 1}  # 1.0 already on the grid, only 7.0 is new
+    assert stats["y"]["added"] == 1  # 1.0 already on the grid, only 7.0 is new
     assert _lines(csx, 1).count(1.0) == 1
+
+
+def test_removal_snaps_to_nearest_line_when_mesh_moved():
+    # a slightly changed auto mesh shifts the line; the removal must still hit
+    # the nearest grid line instead of becoming a silent no-op
+    csx = _csx()
+    g = csx.GetGrid()
+    g.SetLines(0, [-30.0, -1.05, 0.05, 1.05, 30.0])  # shifted by ~0.05
+    mesh = SimpleNamespace(manual_mesh_lines_removed={"x": [0.0]})
+    stats = apply_manual_mesh_lines(csx, mesh)
+    assert stats["x"]["removed"] == 1
+    assert stats["x"]["missed"] == []
+    assert stats["x"]["drift"] == pytest.approx(0.05, abs=1e-9)
+    assert 0.05 not in _lines(csx, 0)  # the nearest line went away
+    assert -1.05 in _lines(csx, 0)
+
+
+def test_removal_reports_miss_when_no_line_near():
+    csx = _csx()  # x lines only at -30,-1,0,1,30
+    mesh = SimpleNamespace(manual_mesh_lines_removed={"x": [500.0]})
+    stats = apply_manual_mesh_lines(csx, mesh)
+    assert stats["x"]["removed"] == 0
+    assert stats["x"]["missed"] == [500.0]
 
 
 def test_remove_then_add_same_coord():
