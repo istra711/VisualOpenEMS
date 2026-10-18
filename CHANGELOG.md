@@ -96,6 +96,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts (and the snap `drift`), instead of silently producing a different mesh.
   Tests in `tests/test_manual_mesh.py` (nearest-line snap, miss report).
 
+- **Mesh Editor interaction: click in a slice adds a line; Del removes the
+  selection** (`app/ui/mesh_viewer.py`): a left-click in **free space** now adds
+  a line at that coordinate (previously you had to tick "Add by click"); a click
+  **on** a line selects it only within a **narrow band** (~0.6 % of the axis),
+  and **Shift+click** always adds (place several in a row). The double-click
+  view reset no longer inserts a stray line (click debounce). The line list keeps
+  its Shift/Ctrl multi-selection and now removes the whole selection with
+  **Del/Backspace** via an event filter (works regardless of which child has
+  focus — the previous `QShortcut` needed the list itself focused). The
+  "Add by click in slice" checkbox is gone (add-on-click is the default now).
+
 - **NF2FF "egg" pattern was a stale box `center`, not the box shape**
   (`app/meshing/bounds.py`, `app/simulation/script_gen.py`): the far-field sphere
   is expanded around `project.nf2ff.center`, so the box must be centred on that

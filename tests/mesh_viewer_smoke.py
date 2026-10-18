@@ -477,14 +477,33 @@ def main() -> int:
         xl = _np.sort(_np.asarray(mesh_lines_from_csx(viewer._csx)["x"], float))
         target = float(xl[len(xl) // 2])
         ev = _types.SimpleNamespace(
-            button=1, inaxes=viewer.fig_slice.axes[0], xdata=target, ydata=0.0
+            button=1, key=None, inaxes=viewer.fig_slice.axes[0], xdata=target, ydata=0.0
         )
+        viewer._last_click_t = 0.0  # bypass the double-click debounce
         viewer._on_slice_click(ev)
         assert viewer._sel_line is not None and viewer._sel_line[0] == "x", viewer._sel_line
         print("  click-select a line in the slice: OK")
 
+        # a click in free space ADDS a line (no snap band there)
+        viewer.cmb_edit_axis.setCurrentText("x")
+        # pick a coordinate a full band away from any x line
+        span = float(_np.max(xl) - _np.min(xl))
+        free = None
+        for cand in _np.linspace(float(_np.min(xl)), float(_np.max(xl)), 2000):
+            if _np.min(_np.abs(xl - cand)) > 0.01 * span:
+                free = float(cand)
+                break
+        if free is not None:
+            ev2 = _types.SimpleNamespace(
+                button=1, key=None, inaxes=viewer.fig_slice.axes[0], xdata=free, ydata=0.0
+            )
+            viewer._last_click_t = 0.0
+            viewer._on_slice_click(ev2)
+            _adds = (viewer._project.mesh.manual_mesh_lines or {}).get("x", [])
+            assert any(abs(v - free) < 1e-6 for v in _adds), (free, _adds)
+            print("  click in free space adds a line: OK")
+
         # multi-selection + Del-style removal of several lines at once
-        viewer.chk_click_add.setChecked(False)
         viewer.cmb_edit_axis.setCurrentText("z")
         viewer.spn_edit_line.setValue(12.5)
         viewer._editor_add()
@@ -495,8 +514,8 @@ def main() -> int:
                 viewer.lst_edit_lines.item(_i).setSelected(True)
         assert len(viewer._selected_lines) >= 2, viewer._selected_lines
         viewer._editor_remove_selected()
-        _adds = viewer._project.mesh.manual_mesh_lines or {}
-        assert not any(v for v in _adds.values()), _adds
+        _zadds = (viewer._project.mesh.manual_mesh_lines or {}).get("z", [])
+        assert not _zadds, _zadds
         print("  multi-select + delete several lines: OK")
 
         print("MESH VIEWER SMOKE PASS")

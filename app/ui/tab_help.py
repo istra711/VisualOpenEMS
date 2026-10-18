@@ -74,12 +74,12 @@ Navigation
   • Slice slider — move the cutting plane (snaps to the nearest mesh line on the slice axis).
 
 Mesh editor (right-hand panel) — manual mesh lines
-  • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line
-    there — or tick "Add by click in slice" and click in a slice view (only when
-    the chosen axis is one of the two in-plane axes).
-  • With "Add by click" OFF, a single left-click on a grid line in a slice
-    selects that line in the editor (and switches the axis to match); the
-    selected line is highlighted orange.
+  • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line.
+  • In a slice: a single left-click in FREE space adds a line there (on the
+    editor axis; if that axis is the slice normal, the first in-plane axis is
+    used); a click ON a line (within a narrow band, ~0.6 % of the axis) selects
+    that line instead — highlighted orange. Shift+click always adds, so you can
+    place several lines in a row. The axis combo follows the click.
   • The list shows the current lines: blank = from easyMesh, "+" (green) = added
     by you, "−" (red) = an auto line you removed. Select a row and
     "Remove selected" (drop a '+', or delete an auto line) /
