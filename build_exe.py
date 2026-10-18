@@ -67,6 +67,8 @@ def main() -> int:
         # native bindings used at runtime (openEMS / CSXCAD wheels):
         "--collect-binaries=CSXCAD",
         "--collect-binaries=openEMS",
+        # VTK viewer: bundle VTK's shared libraries (needed by the VTK tab)
+        "--collect-binaries=vtk",
         "--collect-submodules=openEMS",
         "--collect-submodules=CSXCAD",
         # the WinPython env ships PyQt5 next to PySide6 — PyInstaller refuses
@@ -82,7 +84,8 @@ def main() -> int:
     excludes = [
         # heavy unused scientific / AI stacks
         "torch", "torchvision", "torchaudio",
-        "cv2", "vtk", "osgeo", "sklearn", "skimage", "statsmodels",
+        # NOTE: vtk is intentionally NOT excluded — the VTK viewer needs it.
+        "cv2", "osgeo", "sklearn", "skimage", "statsmodels",
         "numba", "llvmlite", "blis", "cvxopt",
         "pyarrow", "dask", "xarray", "zarr", "numcodecs", "fsspec",
         "netCDF4", "pyproj", "h5netcdf", "tables",

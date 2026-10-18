@@ -532,6 +532,13 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.antenna_viewer, "Antenna")
         self.antenna_tab_index = tabs.indexOf(self.antenna_viewer)
 
+        # VTK tab: field dumps (.h5) -> VTK (.vtr) + embedded 3D view
+        from app.ui.vtk_viewer import VtkFieldViewer
+
+        self.vtk_viewer = VtkFieldViewer(work_dir=self.settings.work_path())
+        tabs.addTab(self.vtk_viewer, "VTK")
+        self.vtk_tab_index = tabs.indexOf(self.vtk_viewer)
+
         # Per-tab help: toolbar button (current tab) + Help on each page
         from app.ui.tab_help import inject_help_button, show_tab_help
 
@@ -802,6 +809,15 @@ class MainWindow(QMainWindow):
         smenu.addSeparator()
         add_action(smenu, "Antenna Pattern Viewer", btn=self.btn_antenna)
         add_action(smenu, "Pop-out Antenna Graph", btn=self.btn_antenna_popout)
+        smenu.addSeparator()
+        add_action(smenu, "VTK Viewer (field dumps)", slot=self._on_show_vtk)
+        add_action(
+            smenu,
+            "Export field dumps to VTK\u2026",
+            slot=self._on_export_vtk,
+            tip="Convert the project's field dumps (simulation/*.h5) to VTK (.vtr) "
+            "in <project>/vtk and open them in the VTK viewer",
+        )
 
         vmenu = bar.addMenu("&View")
         for title, idx in self._tab_title_map.items():
@@ -1038,6 +1054,12 @@ class MainWindow(QMainWindow):
         # opening the Antenna tab shows the current project's pattern
         if _index == getattr(self, "antenna_tab_index", -1):
             self._refresh_antenna_viewer()
+        # opening the VTK tab points it at the current project's work dir
+        if _index == getattr(self, "vtk_tab_index", -1):
+            try:
+                self.vtk_viewer.set_work_dir(self.settings.work_path())
+            except Exception:  # noqa: BLE001
+                pass
         try:
             self.btn_help.setText(f"Help: {title}")
             self.btn_help.setToolTip(f"Open help for the {title} tab")
@@ -1341,6 +1363,29 @@ class MainWindow(QMainWindow):
         self._refresh_antenna_viewer()
         self.antenna_viewer.popout_graph()
         self._log("Antenna pattern viewer opened")
+
+    def _on_show_vtk(self) -> None:
+        """Switch to the VTK tab (its work dir follows the current project)."""
+        try:
+            self.vtk_viewer.set_work_dir(self.settings.work_path())
+        except Exception:  # noqa: BLE001
+            pass
+        if getattr(self, "vtk_tab_index", -1) >= 0:
+            self.tabs.setCurrentIndex(self.vtk_tab_index)
+        self._log("VTK viewer opened")
+
+    def _on_export_vtk(self) -> None:
+        """Convert the project's field dumps to VTK and show them."""
+        try:
+            self.vtk_viewer.set_work_dir(self.settings.work_path())
+        except Exception:  # noqa: BLE001
+            pass
+        if getattr(self, "vtk_tab_index", -1) >= 0:
+            self.tabs.setCurrentIndex(self.vtk_tab_index)
+        try:
+            self.vtk_viewer.export_and_load()
+        except Exception as e:  # noqa: BLE001 — never crash the GUI
+            self._log(f"VTK export failed: {e}")
 
     def _refresh_materials(self) -> None:
         self.mat_list.clear()

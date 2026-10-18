@@ -83,6 +83,9 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - **Antenna Viewer** — 3D gain pattern, E/H cuts (Az/El), directivity, gain, radiation efficiency; H-plane/HPBW analysis; pop-out plot windows
 - **NF2FF Summary** — gain/directivity/efficiency plot per frequency
 - **Field Viewer** — 3D field slices with per-axis navigation
+- **VTK Viewer** — convert the HDF5 field dumps to VTK rectilinear grids
+  (`.vtr`) and inspect them in an embedded 3D view (iso-surface of |field|,
+  outline, axes); the `.vtr` files open in ParaView too
 - All viewers support export to PNG
 
 ### Workflow Automation

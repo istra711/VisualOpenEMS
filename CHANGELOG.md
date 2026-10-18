@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Field dumps → VTK (.vtr) + an embedded VTK 3D viewer**
+  (`app/postproc/vtk_export.py`, `app/ui/vtk_viewer.py`, `app/ui/main_window.py`,
+  `app/ui/tab_help.py`): a new **VTK** tab (Simulation menu → *VTK Viewer* /
+  *Export field dumps to VTK…*) converts the openEMS HDF5 field dumps
+  (`simulation/*.h5`, excluding `nf2ff_*`) into VTK **rectilinear grids**
+  `<project>/vtk/*.vtr` with the vector **`field`** (real part) and the scalar
+  **`magnitude`** = |field| as point data, and shows them in a 3D view embedded
+  via VTK's Qt interactor (`QVTKRenderWindowInteractor`). UI: iso-surface of
+  |field| with a level slider, domain outline, orientation axes, reset view;
+  "Open .vtr…" for existing files. The `.vtr` files also open in ParaView.
+  Dumps that are empty/degenerate (e.g. a single point — `start == stop`) are
+  skipped with a hint. On a headless/offscreen session OpenGL is unavailable, so
+  the embedded 3D view is disabled gracefully (the files are still written) —
+  VTK's render window hard-crashes without a display. `build_exe.py` no longer
+  excludes `vtk` (and collects its binaries) so the bundled EXE includes the
+  viewer. Tests: `tests/test_vtk_export.py` (converter round-trip) +
+  `tests/vtk_viewer_smoke.py` (conversion + viewer load).
+
 ## [0.5.0] - 2026-10-18
 
 ### Added
