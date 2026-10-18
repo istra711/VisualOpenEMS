@@ -79,7 +79,9 @@ Mesh editor (right-hand panel) — manual mesh lines
     editor axis; if that axis is the slice normal, the first in-plane axis is
     used); a click ON a line (within a narrow band, ~0.6 % of the axis) selects
     that line instead — highlighted orange. Shift+click always adds, so you can
-    place several lines in a row. The axis combo follows the click.
+    place several lines in a row. The axis combo follows the click. A click near
+    a geometry edge (within ~1 % of the axis) snaps the NEW line exactly onto
+    that edge (primitive AABB faces + ports).
   • The list shows the current lines: blank = from easyMesh, "+" (green) = added
     by you, "−" (red) = an auto line you removed. Select a row and
     "Remove selected" (drop a '+', or delete an auto line) /

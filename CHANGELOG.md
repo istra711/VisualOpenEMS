@@ -85,6 +85,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   combo follows), and a **right-click** menu toggles the editor, deletes the
   selected line(s) (like Del) and pops the viewer out.
 
+- **Mesh Editor snaps a new line onto geometry edges**
+  (`app/ui/mesh_viewer.py`): clicking to add a line now snaps the coordinate
+  onto the nearest geometry edge (primitive AABB faces from the CSX infos +
+  port start/stop) when the click is within ~1 % of the axis span — so a line
+  can be placed exactly on a feature edge (useful when easyMesh left no line
+  there). `_edge_coords` / `_snap_to_edge`; `mesh_viewer_smoke` covers it.
+
 - **Mesh Editor overrides are robust to a changed auto mesh**
   (`app/meshing/manual_mesh.py`, `app/meshing/easy_wrapper.py`,
   `app/meshing/build_task.py`): the overrides are absolute coordinates but the
