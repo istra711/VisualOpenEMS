@@ -15,8 +15,9 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -206,6 +208,7 @@ class MeshGeometryViewer(QWidget):
         self._ports: list = []
         self._nf2ff = None
         self._sel_line: tuple[str, float] | None = None  # highlighted editor row
+        self._selected_lines: list[tuple[str, float]] = []  # (axis, coord) highlighted
         self._editor_panel = None
         self._split = None
         self._build_ui()
@@ -332,7 +335,7 @@ class MeshGeometryViewer(QWidget):
 
         # Mesh editor
         self.chk_editor.toggled.connect(self._on_editor_toggled)
-        self.lst_edit_lines.currentItemChanged.connect(self._on_editor_selection)
+        self.lst_edit_lines.itemSelectionChanged.connect(self._on_editor_selection)
         self.cmb_edit_axis.currentIndexChanged.connect(self._refresh_editor)
         self.btn_edit_add.clicked.connect(self._editor_add)
         self.btn_edit_remove.clicked.connect(self._editor_remove_selected)
@@ -367,12 +370,20 @@ class MeshGeometryViewer(QWidget):
         v.addLayout(row2)
 
         self.lst_edit_lines = QListWidget()
+        self.lst_edit_lines.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.lst_edit_lines.setToolTip(
             "Current lines on the chosen axis.  '+' = added by you, '-' = removed\n"
-            "by you (auto line), blank = from easyMesh. Select a row to remove /\n"
-            "restore it."
+            "by you (auto line), blank = from easyMesh. Select rows (Shift/Ctrl for\n"
+            "several) to remove / restore; Del removes the selection."
         )
         v.addWidget(self.lst_edit_lines, 1)
+        # Del / Backspace removes the selected line(s) while the list has focus
+        for _key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            _sc = QShortcut(QKeySequence(_key), self.lst_edit_lines)
+            _sc.setContext(Qt.ShortcutContext.WidgetShortcut)
+            _sc.activated.connect(self._editor_remove_selected)
 
         row3 = QHBoxLayout()
         self.btn_edit_remove = QPushButton("Remove selected")
@@ -410,13 +421,14 @@ class MeshGeometryViewer(QWidget):
         if checked:
             self._refresh_editor()
 
-    def _on_editor_selection(self, current, _previous=None) -> None:
-        """Remember the highlighted line so the slice can emphasise it."""
-        if current is None:
-            self._sel_line = None
-        else:
-            c = float(current.data(Qt.ItemDataRole.UserRole))
-            self._sel_line = (self.cmb_edit_axis.currentText(), c)
+    def _on_editor_selection(self, *_args) -> None:
+        """Remember the highlighted line(s) so the slice can emphasise them."""
+        ax = self.cmb_edit_axis.currentText()
+        self._selected_lines = [
+            (ax, float(it.data(Qt.ItemDataRole.UserRole)))
+            for it in self.lst_edit_lines.selectedItems()
+        ]
+        self._sel_line = self._selected_lines[0] if self._selected_lines else None
         try:
             self._redraw()
         except Exception:  # noqa: BLE001
@@ -453,6 +465,7 @@ class MeshGeometryViewer(QWidget):
         self.lst_edit_lines.blockSignals(True)
         self.lst_edit_lines.clear()
         self._sel_line = None
+        self._selected_lines = []
         mesh = self._mesh_spec()
         ax = self.cmb_edit_axis.currentText()
         built: list[float] = []
@@ -502,29 +515,31 @@ class MeshGeometryViewer(QWidget):
 
     def _editor_remove_selected(self) -> None:
         mesh = self._mesh_spec()
-        item = self.lst_edit_lines.currentItem()
-        if mesh is None or item is None:
+        items = self.lst_edit_lines.selectedItems()
+        if mesh is None or not items:
             return
         ax = self.cmb_edit_axis.currentText()
-        c = float(item.data(Qt.ItemDataRole.UserRole))
         adds = self._lines_dict(mesh, "manual_mesh_lines")
         rems = self._lines_dict(mesh, "manual_mesh_lines_removed")
-        if self._has(adds.get(ax, []), c):
-            adds[ax] = [v for v in adds.get(ax, []) if not self._has([c], v)]
-        elif not self._has(rems.get(ax, []), c):
-            rems.setdefault(ax, []).append(c)
+        for item in items:
+            c = float(item.data(Qt.ItemDataRole.UserRole))
+            if self._has(adds.get(ax, []), c):
+                adds[ax] = [v for v in adds.get(ax, []) if not self._has([c], v)]
+            elif not self._has(rems.get(ax, []), c):
+                rems.setdefault(ax, []).append(c)
         self._refresh_editor()
         self._emit_mesh_edited()
 
     def _editor_restore_selected(self) -> None:
         mesh = self._mesh_spec()
-        item = self.lst_edit_lines.currentItem()
-        if mesh is None or item is None:
+        items = self.lst_edit_lines.selectedItems()
+        if mesh is None or not items:
             return
         ax = self.cmb_edit_axis.currentText()
-        c = float(item.data(Qt.ItemDataRole.UserRole))
         rems = self._lines_dict(mesh, "manual_mesh_lines_removed")
-        rems[ax] = [v for v in rems.get(ax, []) if not self._has([c], v)]
+        for item in items:
+            c = float(item.data(Qt.ItemDataRole.UserRole))
+            rems[ax] = [v for v in rems.get(ax, []) if not self._has([c], v)]
         self._refresh_editor()
         self._emit_mesh_edited()
 
@@ -598,9 +613,32 @@ class MeshGeometryViewer(QWidget):
         self._select_row_for(coord)  # emits currentItemChanged -> highlight + redraw
         return True
 
+    def _show_context_menu(self) -> None:
+        """Right-click menu on the plot area (editor toggle + pop-out)."""
+        menu = QMenu(self)
+        act_editor = menu.addAction("Mesh editor")
+        act_editor.setCheckable(True)
+        act_editor.setChecked(bool(self.chk_editor.isChecked()))
+        act_pop = menu.addAction("Pop-out viewer…")
+        menu.addSeparator()
+        act_home = menu.addAction("Reset / Home view")
+        chosen = menu.exec(QCursor.pos())
+        if chosen is act_editor:
+            self.chk_editor.setChecked(not self.chk_editor.isChecked())
+        elif chosen is act_pop:
+            self._on_popout()
+        elif chosen is act_home:
+            try:
+                self.toolbar_slice.home()
+            except Exception:  # noqa: BLE001
+                pass
+
     def _on_slice_click(self, event) -> None:
-        """Slice click: add a line (add-mode) or select the nearest line."""
+        """Slice click: right = menu, left = add a line / select the nearest line."""
         try:
+            if event.button == 3:
+                self._show_context_menu()
+                return
             if event.button != 1 or event.inaxes is None:
                 return
             if getattr(self.toolbar_slice, "mode", ""):
@@ -1254,14 +1292,12 @@ class MeshGeometryViewer(QWidget):
 
         # Emphasise the line selected in the editor list (only when it lies in
         # this slice plane).
-        sel = getattr(self, "_sel_line", None)
-        if sel is not None and mesh_spec is not None:
-            saxis, scoord = sel
+        # Highlight ONLY the selected line(s) (no full-height/width band: a span
+        # changes the data limits under aspect='equal' -> the view jumps).
+        for saxis, scoord in getattr(self, "_selected_lines", []) or []:
             for axn, idx in ((ax_a, ia), (ax_b, ib)):
                 if axn != saxis:
                     continue
-                # Highlight ONLY the line (no full-height/width band: a span
-                # changes the data limits under aspect='equal' -> the view jumps).
                 if idx == ia:
                     ax.axvline(scoord, color="#ff9800", linewidth=2.8, zorder=7,
                                label="selected line")
