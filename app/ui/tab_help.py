@@ -292,6 +292,15 @@ Ports
     (auto) to derive both axes from the port box (propagation = longest edge, excitation
     = shortest); set them explicitly for unusual orientations. MSL ports are built after
     the mesh (the strip + port need the grid lines).
+  • Rule of thumb — which port type:
+      Antenna / wire / diode-style feed (a lumped source across a gap)
+        → Lumped port  =  CST "Discrete (Face) Port".
+      Feed on a microstrip line / planar circuit (guided mode, defined Z0)
+        → MSL port     =  CST "Waveguide / MSL Port".
+    A lumped port is a quasi-lumped source (S-params referenced to its Resistance);
+    an MSL port names the guided mode at the line cross-section (S-params
+    referenced to the line impedance). Use the MSL port only where a real line
+    with a defined characteristic impedance exists.
   • Remove Port — delete the selected entry.
   • FreeCAD PORT_in1_start/stop or openems_port_* properties are imported automatically.
   • Settings → Port defaults — type, R, excite, mesh dirs used when FreeCAD omits them
