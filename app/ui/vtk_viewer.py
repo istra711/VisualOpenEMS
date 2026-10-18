@@ -14,6 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -78,9 +79,16 @@ class VtkFieldViewer(QWidget):
             "VTK (.vtr) in <project>/vtk and load the first one."
         )
         self.btn_export.clicked.connect(self.export_and_load)
-        self.chk_surface = QCheckBox("Iso-surface")
-        self.chk_surface.setChecked(True)
-        self.chk_surface.toggled.connect(self._refresh_display)
+        bar.addWidget(QLabel("Representation"))
+        self.cmb_rep = QComboBox()
+        self.cmb_rep.addItems(["Surface", "Iso-surface", "Wireframe"])
+        self.cmb_rep.setCurrentText("Surface")  # ParaView-like default
+        self.cmb_rep.setToolTip(
+            "Surface = the dataset's surface coloured by the scalar (like ParaView).\n"
+            "Iso-surface = a contour of the scalar (use the Iso-level slider).\n"
+            "Wireframe = the surface edges."
+        )
+        self.cmb_rep.currentIndexChanged.connect(self._refresh_display)
         self.chk_outline = QCheckBox("Outline")
         self.chk_outline.setChecked(True)
         self.chk_outline.toggled.connect(self._refresh_display)
@@ -88,7 +96,7 @@ class VtkFieldViewer(QWidget):
         self.btn_reset.clicked.connect(self._reset_camera)
         bar.addWidget(self.btn_open)
         bar.addWidget(self.btn_export)
-        bar.addWidget(self.chk_surface)
+        bar.addWidget(self.cmb_rep)
         bar.addWidget(self.chk_outline)
         bar.addStretch(1)
         bar.addWidget(self.btn_reset)
@@ -264,7 +272,7 @@ class VtkFieldViewer(QWidget):
             return lo
         return lo + (hi - lo) * (self.slider.value() / 1000.0)
 
-    def _refresh_display(self) -> None:
+    def _refresh_display(self, *_args) -> None:
         if self._renderer is None or self._grid is None:
             return
         vtk = self._vtk
@@ -272,29 +280,46 @@ class VtkFieldViewer(QWidget):
 
         name = getattr(self, "_scalar_name", None)
         has_scal = bool(name) and self._scalar_range[1] > self._scalar_range[0]
+        rep = self.cmb_rep.currentText() if hasattr(self, "cmb_rep") else "Surface"
+        # the iso slider only matters for the contour representation
+        self.slider.setEnabled(rep == "Iso-surface" and has_scal)
 
-        if self.chk_surface.isChecked():
+        if rep == "Iso-surface" and has_scal:
+            contour = vtk.vtkContourFilter()
+            contour.SetInputData(self._grid)
+            contour.SetInputArrayToProcess(0, 0, 0, 0, name)
+            contour.SetValue(0, self._iso_value())
+            contour.Update()
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(contour.GetOutputPort())
+            mapper.SetScalarModeToUsePointFieldData()
+            mapper.SelectColorArray(name)
+            mapper.SetScalarRange(*self._scalar_range)
+        else:
+            # Surface / Wireframe: the dataset itself, coloured by the scalar
+            dm = vtk.vtkDataSetMapper()
+            dm.SetInputData(self._grid)
             if has_scal:
-                contour = vtk.vtkContourFilter()
-                contour.SetInputData(self._grid)
-                contour.SetInputArrayToProcess(0, 0, 0, 0, name)
-                contour.SetValue(0, self._iso_value())
-                contour.Update()
-                mapper = vtk.vtkPolyDataMapper()
-                mapper.SetInputConnection(contour.GetOutputPort())
-                mapper.SetScalarModeToUsePointFieldData()
-                mapper.SelectColorArray(name)
-                mapper.SetScalarRange(*self._scalar_range)
-                actor = vtk.vtkActor()
-                actor.SetMapper(mapper)
-                self._renderer.AddActor(actor)
+                dm.SetScalarModeToUsePointFieldData()
+                dm.SelectColorArray(name)
+                dm.SetScalarRange(*self._scalar_range)
+                dm.ScalarVisibilityOn()
             else:
-                # no scalar array: just show the dataset surface
-                dm = vtk.vtkDataSetMapper()
-                dm.SetInputData(self._grid)
-                a = vtk.vtkActor()
-                a.SetMapper(dm)
-                self._renderer.AddActor(a)
+                dm.ScalarVisibilityOff()
+            if rep == "Wireframe":
+                dm.SetRepresentationToWireframe()
+            mapper = dm
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        self._renderer.AddActor(actor)
+
+        # ParaView-style colour bar when a scalar is shown
+        if has_scal:
+            bar = vtk.vtkScalarBarActor()
+            bar.SetLookupTable(actor.GetMapper().GetLookupTable())
+            bar.SetTitle(name)
+            bar.SetNumberOfLabels(5)
+            self._renderer.AddActor2D(bar)
 
         if self.chk_outline.isChecked():
             outline = vtk.vtkOutlineFilter()

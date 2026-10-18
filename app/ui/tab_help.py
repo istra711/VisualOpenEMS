@@ -489,8 +489,10 @@ Buttons
     loads the first one.
   • "Open .vtr…": open any VTK file — .vtr, .vti, .vtu, .vtp, .vts (XML) or a
     legacy .vtk (e.g. a ParaView example); the reader is picked by extension.
-  • "Iso-surface" / "Outline": show the |field| iso-surface and the domain box.
-  • "Iso-level" slider: move the iso-value between the min and max of |field|.
+  • Representation: "Surface" (default — the dataset coloured by the scalar,
+    like ParaView), "Iso-surface" (a contour of the scalar) or "Wireframe".
+  • "Outline": domain box. "Iso-level" slider: contour level (Iso-surface only).
+  • A colour bar shows the scalar range.
   • "Reset view": fit the camera to the data. Mouse: rotate (left), pan
     (middle/shift), zoom (wheel).
 
