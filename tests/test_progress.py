@@ -88,6 +88,34 @@ def test_end_criteria_reached_is_converged():
     assert "converged" in p.text()
 
 
+def test_energy_percent_tracks_the_criterion():
+    p = EngineProgress()
+    p.target_db = 50.0  # -50 dB end criterion
+    p.feed(_MAX_LINE)
+    p.feed(_STEP_LINE)  # 0 dB
+    assert p.energy_percent == 0
+    p.feed(_MID_LINE)  # -25.91 dB -> ~52 %
+    assert p.energy_percent == 52
+    p.feed(_OK_LINE)  # end criteria reached
+    assert p.energy_percent == 100
+
+
+def test_energy_percent_without_target_is_zero():
+    p = EngineProgress()
+    p.feed(_MID_LINE)
+    assert p.energy_db == -25.91
+    assert p.target_db is None
+    assert p.energy_percent == 0
+    assert p.energy_text() == "Energy -26 dB"
+
+
+def test_energy_text_with_target_is_clamped_example():
+    p = EngineProgress()
+    p.target_db = 50.0
+    p.feed(_MID_LINE)
+    assert p.energy_text() == "Energy -26 / -50 dB"
+
+
 def test_reset_clears_state():
     p = EngineProgress()
     p.feed(_MAX_LINE)

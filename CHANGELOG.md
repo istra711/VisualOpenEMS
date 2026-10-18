@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Second status-bar progress bar for the residual energy / convergence**
+  (`app/simulation/progress.py`, `app/ui/main_window.py`): the run's stopping
+  condition is the residual-energy end criterion (EndCriteria), not the timestep
+  budget, so there is now a separate **Energy** bar next to the TS bar. It fills
+  as the energy drops toward `-10·log10(end_criteria)` dB (e.g. 1e-5 → -50 dB),
+  shows the level (`Energy -25 / -50 dB`) and snaps to 100 % when the end
+  criteria is reached. `EngineProgress.energy_percent` / `energy_text` +
+  `target_db` (set per run from `sim.end_criteria`). Tests in
+  `tests/test_progress.py` + `progress_smoke.py`.
+
 - **Mesh Editor — manual mesh lines (Mesh Viewer)**
   (`app/meshing/manual_mesh.py`, `app/models/project.py` `MeshSpec.manual_mesh_lines`
   / `manual_mesh_lines_removed`, `app/meshing/easy_wrapper.py`, `app/ui/mesh_viewer.py`):

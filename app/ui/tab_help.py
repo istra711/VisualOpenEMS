@@ -223,9 +223,13 @@ Run script (toolbar: Script…)
   • Run an edited script by hand:  <simulation python> work/<project>/project_run.py
 
 Progress (status bar)
-  • During a run the status bar shows a progress bar + TS/energy label parsed
-    from the openEMS output: "TS <done>/<max>", residual "Energy <db> dB",
-    elapsed time, and "converged" / "max TS reached". Resets on each run.
+  • During a run the status bar shows TWO bars + a TS/energy label parsed from
+    the openEMS output, plus elapsed time and "converged" / "max TS reached".
+    – TS bar: timesteps done / max timesteps.
+    – Energy bar: residual-energy convergence toward the end criterion
+      (EndCriteria, e.g. 1e-5 → -50 dB) — the run's actual stopping condition,
+      which the timestep count alone does not decide.
+    Both reset on each run.
 
 Run All Ports (Simulation menu → Ctrl+Shift+R)
   • One FDTD run per port (each port excited once) → the complete S-matrix for
