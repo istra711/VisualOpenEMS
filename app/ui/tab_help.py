@@ -309,8 +309,11 @@ NF2FF
   • Enable NF2FF box — far-field box for pattern results.
   • Edit / Fit NF2FF to Geometry — box around the antenna. Fit keeps an equal
     margin on all six faces (symmetric about the geometry) so the far-field
-    pattern is not tilted/egg-shaped; in antenna mode the margin is
-    NF2FF box × λ(f_start).
+    pattern is not tilted/egg-shaped, and sets the evaluation centre to the box
+    centre (nf2ff.center = (start+stop)/2) — an off-centre reference distorts
+    the pattern even with a symmetric box. In antenna mode the margin is
+    NF2FF box × λ(f_start). (Only one box: the FDTD domain, with the NF2FF box
+    inside it; the box must stay inside the domain.)
 
 Tips
   • Port vector direction must cross the intended gap (feed) and be meshed.
@@ -415,6 +418,10 @@ Tips
   • No data → run the simulation first with NF2FF enabled.
   • If Prad ~ 0 or Dmax looks wrong, the NF2FF box is likely clamped outside
     the domain — Fit NF2FF to Geometry, rebuild, and re-run.
+  • If the pattern is tilted / "egg"-shaped or Dmax is too high, the NF2FF box
+    centre is off: the evaluation sphere must be centred on the box, i.e.
+    nf2ff.center = (start+stop)/2. Re-run "Fit NF2FF to Geometry" (the run also
+    warns and snaps a stale centre back). See Antenna Simulation → NF2FF box.
   • Summary PNG (nf2ff_summary.png) is written next to nf2ff.json.
 """,
     "Antenna Simulation": """ANTENNA SIMULATION — settings that keep FDTD results trustworthy
@@ -497,6 +504,20 @@ design frequency.
      just an energy/field probe, not a far-field surface, so tight is fine.
    • The box must enclose ALL sources and keep all six faces; a box that is
      too small (or clamped to a PEC domain face) yields Prad≈0 or a wrong Dmax.
+   • Centre rule (important): openEMS expands the far field on a sphere around
+     nf2ff.center. That centre MUST equal the box centre (start+stop)/2 —
+     otherwise the surface integral is evaluated off-centre and the pattern
+     comes out distorted even though the plot looks fine (a dipole then reads
+     e.g. Dmax 3.3 dBi / 45° beamwidth instead of 2.1 dBi / 78°).
+     "Fit NF2FF to Geometry" sets the centre to the box centre; a run warns and
+     snaps it back if a project still carries a stale centre.
+   • Equal margins: give the box the SAME stand-off on all six faces (centred
+     on the geometry). A one-sided box sits close to the structure on the near
+     faces (reactive near field) and tilts the pattern. This is a recommendation
+     (fit does it for you); the centre rule above is the hard requirement.
+   • Only one box: the FDTD domain (with its PML) and, inside it, the NF2FF box.
+     The NF2FF box must stay clearly inside the domain — too close to the PML
+     and reflections contaminate the pattern.
 
 General FDTD limitations to keep in mind
    • Cost and memory — the whole 3D volume (antenna + free space) is
