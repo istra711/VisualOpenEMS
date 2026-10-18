@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QCursor, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -379,11 +380,9 @@ class MeshGeometryViewer(QWidget):
             "several) to remove / restore; Del removes the selection."
         )
         v.addWidget(self.lst_edit_lines, 1)
-        # Del / Backspace removes the selected line(s) while the list has focus
-        for _key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            _sc = QShortcut(QKeySequence(_key), self.lst_edit_lines)
-            _sc.setContext(Qt.ShortcutContext.WidgetShortcut)
-            _sc.activated.connect(self._editor_remove_selected)
+        # Del / Backspace removes the selected line(s) — via an event filter so
+        # it works regardless of which child has the focus.
+        self.lst_edit_lines.installEventFilter(self)
 
         row3 = QHBoxLayout()
         self.btn_edit_remove = QPushButton("Remove selected")
@@ -392,20 +391,18 @@ class MeshGeometryViewer(QWidget):
         row3.addWidget(self.btn_edit_restore)
         v.addLayout(row3)
 
-        row4 = QHBoxLayout()
-        self.chk_click_add = QCheckBox("Add by click in slice")
         self.btn_edit_reset_axis = QPushButton("Reset axis")
         self.btn_edit_reset_all = QPushButton("Reset all")
-        row4.addWidget(self.chk_click_add)
-        v.addLayout(row4)
         row5 = QHBoxLayout()
         row5.addWidget(self.btn_edit_reset_axis)
         row5.addWidget(self.btn_edit_reset_all)
         v.addLayout(row5)
 
         lbl = QLabel(
-            "Edits are saved in the project (MeshSpec). Click Build Mesh to "
-            "apply them to the grid; they survive automatic meshing."
+            "Edit lines here (add / select / remove) — or click in the slice:\n"
+            "a click in free space adds a line, a click on a line selects it\n"
+            "(Shift+click always adds). Edits are saved in the project and\n"
+            "applied after automatic meshing; Build Mesh applies them to the grid."
         )
         lbl.setWordWrap(True)
         lbl.setStyleSheet("color:#666;")
@@ -584,34 +581,42 @@ class MeshGeometryViewer(QWidget):
                 self.lst_edit_lines.setCurrentRow(i)
                 return
 
-    def _select_line_near(self, event, view: str) -> bool:
-        """Select the mesh line nearest the click (in-plane axes). True if hit."""
+    def _axis_span(self, axis_name: str) -> float:
         area = get_sim_area(self._csx) if self._csx is not None else None
+        idx = {"x": 0, "y": 1, "z": 2}[axis_name]
+        if area is not None:
+            lo, hi = self._axis_limits(area, idx)
+            if hi > lo:
+                return float(hi - lo)
+        lines = self._effective_lines(axis_name)
+        return float(max(lines) - min(lines)) if len(lines) >= 2 else 0.0
+
+    def _handle_slice_click(self, event, shift: bool) -> None:
+        """A left click on the slice: select a line in a narrow band, else add."""
+        view = _slice_key(self.cmb_view.currentText())
+        if view is None:
+            return
         ax_a, ax_b, _normal = _SLICE_AXES[view]
-        best: tuple[float, str, float] | None = None
-        for axn, val in ((ax_a, event.xdata), (ax_b, event.ydata)):
-            if val is None:
-                continue
-            lines = self._effective_lines(axn)
-            if not lines:
-                continue
-            idx = {"x": 0, "y": 1, "z": 2}[axn]
-            if area is not None:
-                lo, hi = self._axis_limits(area, idx)
-                span = (hi - lo) if hi > lo else 1.0
-            else:
-                span = max(lines) - min(lines) or 1.0
-            arr = np.asarray(lines, float)
-            j = int(np.argmin(np.abs(arr - float(val))))
-            frac = abs(float(arr[j]) - float(val)) / span
-            if best is None or frac < best[0]:
-                best = (frac, axn, float(arr[j]))
-        if best is None or best[0] > 0.02:  # 2 % of the axis span tolerance
-            return False
-        axn, coord = best[1], best[2]
-        self.cmb_edit_axis.setCurrentText(axn)  # refreshes the list
-        self._select_row_for(coord)  # emits currentItemChanged -> highlight + redraw
-        return True
+        axis = self.cmb_edit_axis.currentText()
+        if axis not in (ax_a, ax_b):
+            axis = ax_a  # the editor axis is the slice normal -> use an in-plane one
+            self.cmb_edit_axis.setCurrentText(axis)
+        val = event.xdata if axis == ax_a else event.ydata
+        if val is None:
+            return
+        val = float(val)
+        # Snap to an existing line only within a NARROW band (0.6 % of the axis
+        # span) -> selects it; anywhere else adds a new line. Shift bypasses it.
+        if not shift:
+            lines = self._effective_lines(axis)
+            if lines:
+                arr = np.asarray(lines, float)
+                j = int(np.argmin(np.abs(arr - val)))
+                band = 0.006 * self._axis_span(axis)
+                if band > 0.0 and abs(float(arr[j]) - val) <= band:
+                    self._select_row_for(float(arr[j]))
+                    return
+        self._editor_add(val)
 
     def _show_context_menu(self) -> None:
         """Right-click menu on the plot area (editor toggle + pop-out)."""
@@ -634,7 +639,7 @@ class MeshGeometryViewer(QWidget):
                 pass
 
     def _on_slice_click(self, event) -> None:
-        """Slice click: right = menu, left = add a line / select the nearest line."""
+        """Slice click: right = menu; left = add a line / select one on a line."""
         try:
             if event.button == 3:
                 self._show_context_menu()
@@ -643,25 +648,23 @@ class MeshGeometryViewer(QWidget):
                 return
             if getattr(self.toolbar_slice, "mode", ""):
                 return  # pan/zoom active — leave the click to the toolbar
-            view = _slice_key(self.cmb_view.currentText())
-            if view is None:
+            # A double-click resets the view; count it as one click, not two adds.
+            now = time.monotonic()
+            if now - getattr(self, "_last_click_t", 0.0) < 0.25:
+                self._last_click_t = now
                 return
-            ax_a, ax_b, _normal = _SLICE_AXES[view]
-            if self.chk_click_add.isChecked():
-                axis = self.cmb_edit_axis.currentText()
-                if axis == ax_a and event.xdata is not None:
-                    self._editor_add(float(event.xdata))
-                elif axis == ax_b and event.ydata is not None:
-                    self._editor_add(float(event.ydata))
-                else:
-                    self._log_click_hint("add: choose an in-plane axis (the slice normal cannot be picked)")
-                return
-            self._select_line_near(event, view)  # silent on miss
+            self._last_click_t = now
+            self._handle_slice_click(event, shift=(event.key == "shift"))
         except Exception as e:  # noqa: BLE001 — never crash on a stray click
             print(f"mesh editor click error: {e}")
 
-    def _log_click_hint(self, msg: str) -> None:
-        print(f"mesh editor: {msg}")
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        """Del / Backspace on the editor list removes the selected line(s)."""
+        if obj is self.lst_edit_lines and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                self._editor_remove_selected()
+                return True
+        return super().eventFilter(obj, event)
 
     def _on_popout(self) -> None:
         """Open a large detached window with the current scene."""
