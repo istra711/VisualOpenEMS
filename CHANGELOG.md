@@ -81,6 +81,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Run script created imported metal primitives as a dielectric**
+  (`app/simulation/script_gen.py:get_or_create_prop`): a primitive whose
+  material is not in `project.materials` (e.g. the FreeCAD importer's
+  `"copper"`) fell through to `AddMaterial(epsilon=1.0)` — a dielectric, not
+  PEC. easyMesh then lost the metal-edge refinement, so the port no longer sat
+  on a mesh line and validation aborted with `port_alignment: x=0 is not on a
+  mesh line` (exit 2). The fallback now mirrors `build_task._prop_for`:
+  `copper`/`pec`/`ground` → `AddMetal`.
+
 - **Tests no longer overwrite the user's `app_settings.json`**
   (`app/paths.py:settings_path`): smoke/pytest runs used the real settings file;
   `MainWindow.save()` on close then wrote the test's temp work dir (and port
