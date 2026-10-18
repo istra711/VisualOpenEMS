@@ -352,7 +352,14 @@ def get_or_create_prop(CSX, mat_name: str, materials):
                 kwargs["kappa"] = m.kappa
             return CSX.AddMaterial(m.name, **kwargs)
         return CSX.AddMaterial(m.name, epsilon=1.0)
-    return CSX.AddMaterial(mat_name, epsilon=1.0)
+    # Fallback for primitives that reference a material NOT in project.materials
+    # (e.g. the importer uses "copper"). These are metals — creating them as a
+    # dielectric (epsilon=1) loses the PEC and easyMesh's metal-edge refinement
+    # (the port then no longer sits on a mesh line). Mirror builder._prop_for.
+    mate = str(mat_name or "copper")
+    if mate in ("copper", "pec", "ground") or "copper" in mate or "ground" in mate:
+        return CSX.AddMetal(mate)
+    return CSX.AddMaterial(mate, epsilon=1.0)
 
 
 def get_domain_box(CSX):
