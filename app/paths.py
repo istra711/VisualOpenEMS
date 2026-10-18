@@ -17,6 +17,7 @@ fine for the normal workflow.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -36,7 +37,19 @@ def app_root() -> Path:
 
 
 def settings_path() -> Path:
-    """Location of app_settings.json (next to the EXE when frozen)."""
+    """Location of app_settings.json (next to the EXE when frozen).
+
+    When the running script is a test/smoke under ``<root>/tests`` a throwaway
+    file in the temp dir is used instead, so tests never overwrite the user's
+    real settings (loading + MainWindow.save() round-trips used to clobber it).
+    """
     if is_frozen():
         return Path(sys.executable).resolve().parent / "app_settings.json"
+    try:
+        argv0 = Path(sys.argv[0]).resolve()
+        is_test = argv0.parent.name == "tests" or "pytest" in str(argv0).lower()
+        if is_test:
+            return Path(tempfile.gettempdir()) / "openems_gui_test_settings.json"
+    except Exception:  # noqa: BLE001
+        pass
     return app_root() / "app_settings.json"
