@@ -92,6 +92,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can be placed exactly on a feature edge (useful when easyMesh left no line
   there). `_edge_coords` / `_snap_to_edge`; `mesh_viewer_smoke` covers it.
 
+- **"New Scene (no mesh)" — build the mesh by hand**
+  (`app/meshing/build_task.py` `build_scene_csx` / `build_mesh=False`,
+  `app/ui/main_window.py` `_on_prepare_scene`, Mesh menu): builds the CSX with
+  geometry, ports and boundary but runs **NO easyMesh** — the grid is set to the
+  domain box (geometry bbox + air margin) only, so the Mesh Viewer shows the
+  geometry, the FDTD domain and the NF2FF box on an empty grid. The domain-corner
+  grid is the editor's base, so manual lines build the grid up visibly; nothing
+  is written to disk. Menu item "New Scene (no mesh)…"; `menu_smoke` checks it.
+
 - **Mesh Editor: no mesh lines outside the domain**
   (`app/ui/mesh_viewer.py`, `app/meshing/manual_mesh.py`): the coordinate spin is
   limited to the FDTD domain range, and a click or typed value outside it is
