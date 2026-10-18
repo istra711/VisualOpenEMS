@@ -82,6 +82,9 @@ Mesh editor (right-hand panel) — manual mesh lines
     place several lines in a row. The axis combo follows the click. A click near
     a geometry edge (within ~1 % of the axis) snaps the NEW line exactly onto
     that edge (primitive AABB faces + ports).
+  • Lines can only be placed INSIDE the FDTD domain: the coordinate spin is
+    limited to the domain range and a click/value outside is clamped to the
+    domain edge (an out-of-domain line is also ignored on build).
   • The list shows the current lines: blank = from easyMesh, "+" (green) = added
     by you, "−" (red) = an auto line you removed. Select a row and
     "Remove selected" (drop a '+', or delete an auto line) /

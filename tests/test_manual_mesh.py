@@ -55,6 +55,16 @@ def test_duplicate_add_is_ignored():
     assert _lines(csx, 1).count(1.0) == 1
 
 
+def test_add_outside_domain_is_ignored():
+    csx = _csx()  # x lines only within [-30, 30]
+    mesh = SimpleNamespace(manual_mesh_lines={"x": [500.0, 5.0]})
+    stats = apply_manual_mesh_lines(csx, mesh)
+    assert stats["x"]["added"] == 1  # only the in-domain 5.0
+    assert stats["x"]["outside"] == [500.0]
+    assert 500.0 not in _lines(csx, 0)
+    assert 5.0 in _lines(csx, 0)
+
+
 def test_removal_snaps_to_nearest_line_when_mesh_moved():
     # a slightly changed auto mesh shifts the line; the removal must still hit
     # the nearest grid line instead of becoming a silent no-op

@@ -92,6 +92,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can be placed exactly on a feature edge (useful when easyMesh left no line
   there). `_edge_coords` / `_snap_to_edge`; `mesh_viewer_smoke` covers it.
 
+- **Mesh Editor: no mesh lines outside the domain**
+  (`app/ui/mesh_viewer.py`, `app/meshing/manual_mesh.py`): the coordinate spin is
+  limited to the FDTD domain range, and a click or typed value outside it is
+  clamped to the domain edge (`_domain_range` / `_clamp_to_domain`). As a safety
+  net the kernel (`apply_lines_axis`) ignores any add outside the auto-grid
+  extent (= the meshed domain) and reports it (`stats["outside"]`), surfaced as a
+  WARNING in the mesh report. Tests in `tests/test_manual_mesh.py` +
+  `mesh_viewer_smoke`.
+
 - **Mesh Editor overrides are robust to a changed auto mesh**
   (`app/meshing/manual_mesh.py`, `app/meshing/easy_wrapper.py`,
   `app/meshing/build_task.py`): the overrides are absolute coordinates but the

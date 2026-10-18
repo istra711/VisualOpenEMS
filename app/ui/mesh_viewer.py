@@ -509,6 +509,12 @@ class MeshGeometryViewer(QWidget):
         self._selected_lines = []
         mesh = self._mesh_spec()
         ax = self.cmb_edit_axis.currentText()
+        # constrain the coordinate spin to the domain (no lines outside it)
+        _rng = self._domain_range(ax)
+        if _rng is not None:
+            self.spn_edit_line.setRange(_rng[0], _rng[1])
+        else:
+            self.spn_edit_line.setRange(-1e6, 1e6)
         built: list[float] = []
         if self._csx is not None:
             try:
@@ -539,12 +545,40 @@ class MeshGeometryViewer(QWidget):
             self.lst_edit_lines.addItem(item)
         self.lst_edit_lines.blockSignals(False)
 
+    def _domain_range(self, axis_name: str) -> tuple[float, float] | None:
+        """FDTD domain extent [lo, hi] on one axis, or None if unknown."""
+        if self._csx is None:
+            return None
+        try:
+            area = get_sim_area(self._csx)
+        except Exception:  # noqa: BLE001
+            return None
+        if area is None:
+            return None
+        idx = _AXIS[axis_name]
+        lo, hi = float(area[0][idx]), float(area[1][idx])
+        return (lo, hi) if hi > lo else None
+
+    def _clamp_to_domain(self, axis_name: str, c: float) -> float:
+        """Keep a new line inside the FDTD domain (no lines outside it)."""
+        rng = self._domain_range(axis_name)
+        if rng is None:
+            return c
+        cc = min(max(c, rng[0]), rng[1])
+        if abs(cc - c) > 1e-9:
+            print(
+                f"mesh editor: {c:.4g} is outside the domain "
+                f"[{rng[0]:.4g}, {rng[1]:.4g}] on {axis_name} — clamped to {cc:.4g}"
+            )
+        return cc
+
     def _editor_add(self, coord: float | None = None) -> None:
         mesh = self._mesh_spec()
         if mesh is None:
             return
         ax = self.cmb_edit_axis.currentText()
         c = float(self.spn_edit_line.value() if coord is None else coord)
+        c = self._clamp_to_domain(ax, c)
         self.spn_edit_line.setValue(c)
         adds = self._lines_dict(mesh, "manual_mesh_lines")
         rems = self._lines_dict(mesh, "manual_mesh_lines_removed")
