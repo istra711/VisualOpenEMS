@@ -550,27 +550,80 @@ class MeshGeometryViewer(QWidget):
         self._refresh_editor()
         self._emit_mesh_edited()
 
+    def _effective_lines(self, axis_name: str) -> list[float]:
+        """Grid lines as shown in the editor list: built (easyMesh) + pending adds."""
+        built: list[float] = []
+        if self._csx is not None:
+            try:
+                built = [float(v) for v in np.asarray(mesh_lines_from_csx(self._csx)[axis_name], float)]
+            except Exception:  # noqa: BLE001
+                built = []
+        mesh = self._mesh_spec()
+        adds = self._lines_dict(mesh, "manual_mesh_lines", create=False).get(axis_name, []) if mesh else []
+        return sorted(set(built) | {float(v) for v in adds})
+
+    def _select_row_for(self, coord: float) -> None:
+        for i in range(self.lst_edit_lines.count()):
+            v = float(self.lst_edit_lines.item(i).data(Qt.ItemDataRole.UserRole))
+            if abs(v - coord) < 1e-6:
+                self.lst_edit_lines.setCurrentRow(i)
+                return
+
+    def _select_line_near(self, event, view: str) -> bool:
+        """Select the mesh line nearest the click (in-plane axes). True if hit."""
+        area = get_sim_area(self._csx) if self._csx is not None else None
+        ax_a, ax_b, _normal = _SLICE_AXES[view]
+        best: tuple[float, str, float] | None = None
+        for axn, val in ((ax_a, event.xdata), (ax_b, event.ydata)):
+            if val is None:
+                continue
+            lines = self._effective_lines(axn)
+            if not lines:
+                continue
+            idx = {"x": 0, "y": 1, "z": 2}[axn]
+            if area is not None:
+                lo, hi = self._axis_limits(area, idx)
+                span = (hi - lo) if hi > lo else 1.0
+            else:
+                span = max(lines) - min(lines) or 1.0
+            arr = np.asarray(lines, float)
+            j = int(np.argmin(np.abs(arr - float(val))))
+            frac = abs(float(arr[j]) - float(val)) / span
+            if best is None or frac < best[0]:
+                best = (frac, axn, float(arr[j]))
+        if best is None or best[0] > 0.02:  # 2 % of the axis span tolerance
+            return False
+        axn, coord = best[1], best[2]
+        self.cmb_edit_axis.setCurrentText(axn)  # refreshes the list
+        self._select_row_for(coord)  # emits currentItemChanged -> highlight + redraw
+        return True
+
     def _on_slice_click(self, event) -> None:
-        """Add a manual line at a clicked coordinate (editor 'add by click')."""
+        """Slice click: add a line (add-mode) or select the nearest line."""
         try:
-            if not self.chk_click_add.isChecked() or event.button != 1:
+            if event.button != 1 or event.inaxes is None:
                 return
-            if event.inaxes is None:
-                return
+            if getattr(self.toolbar_slice, "mode", ""):
+                return  # pan/zoom active — leave the click to the toolbar
             view = _slice_key(self.cmb_view.currentText())
             if view is None:
                 return
             ax_a, ax_b, _normal = _SLICE_AXES[view]
-            axis = self.cmb_edit_axis.currentText()
-            if axis == ax_a and event.xdata is not None:
-                coord = float(event.xdata)
-            elif axis == ax_b and event.ydata is not None:
-                coord = float(event.ydata)
-            else:
-                return  # the editor axis is the slice normal — not pickable here
-            self._editor_add(coord)
+            if self.chk_click_add.isChecked():
+                axis = self.cmb_edit_axis.currentText()
+                if axis == ax_a and event.xdata is not None:
+                    self._editor_add(float(event.xdata))
+                elif axis == ax_b and event.ydata is not None:
+                    self._editor_add(float(event.ydata))
+                else:
+                    self._log_click_hint("add: choose an in-plane axis (the slice normal cannot be picked)")
+                return
+            self._select_line_near(event, view)  # silent on miss
         except Exception as e:  # noqa: BLE001 — never crash on a stray click
             print(f"mesh editor click error: {e}")
+
+    def _log_click_hint(self, msg: str) -> None:
+        print(f"mesh editor: {msg}")
 
     def _on_popout(self) -> None:
         """Open a large detached window with the current scene."""
