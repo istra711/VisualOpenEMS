@@ -111,6 +111,29 @@ def nf2ff_fit_box(
     return start, stop
 
 
+def nf2ff_box_center(start: list[float], stop: list[float]) -> list[float]:
+    """Geometric centre of an NF2FF box ``(start, stop)``."""
+    return [0.5 * (float(start[i]) + float(stop[i])) for i in range(3)]
+
+
+def nf2ff_center_offset(
+    start: list[float], stop: list[float], center: list[float] | None
+) -> float:
+    """Max |``center`` − box centre| over the three axes (drawing units).
+
+    openEMS expands the recorded box faces onto a far-field sphere centred at
+    ``nf2ff.center``; the box must be centred on that same point, otherwise the
+    surface integral is evaluated off-centre and the pattern comes out distorted
+    (e.g. a dipole Dmax 2.1 → 3.3 dBi, a 45° instead of 78° beamwidth). This is a
+    pure box-geometry check — it needs no knowledge of the geometry (the source
+    may be arbitrarily asymmetric).
+    """
+    c = nf2ff_box_center(start, stop)
+    if not center:
+        return max(abs(c[i]) for i in range(3))
+    return max(abs(float(center[i]) - c[i]) for i in range(3))
+
+
 def nf2ff_fit_margin_units(mesh: Any, sim: Any, boundary: Any, targets: Any) -> float:
     """Distance from the geometry bbox to the NF2FF box, in drawing units.
 

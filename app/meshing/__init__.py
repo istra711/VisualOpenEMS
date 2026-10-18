@@ -1,6 +1,8 @@
 from app.meshing.bounds import (
     cartesian_primitive_bbox,
     domain_air_margin_units,
+    nf2ff_box_center,
+    nf2ff_center_offset,
     nf2ff_fit_box,
     nf2ff_fit_margin_units,
 )
@@ -23,6 +25,8 @@ __all__ = [
     "domain_air_margin_units",
     "nf2ff_fit_box",
     "nf2ff_fit_margin_units",
+    "nf2ff_box_center",
+    "nf2ff_center_offset",
     "enhance_csx",
     "enhance_fdtd",
     "apply_boundary",

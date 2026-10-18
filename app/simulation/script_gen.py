@@ -166,6 +166,7 @@ from app.models.project import Project
 from app.meshing.easy_wrapper import enhance_csx, enhance_fdtd, apply_boundary, generate_mesh
 from app.meshing.polar import ensure_polar_primitive
 from app.meshing.rules import compute_targets
+from app.meshing.bounds import nf2ff_box_center, nf2ff_center_offset
 from app.meshing.validators import validate_mesh, report_to_lines
 from app.postproc import fields as fld
 from app.postproc import nf2ff as nf
@@ -755,6 +756,22 @@ def main() -> int:
             nf_stop[_ny] = _e
         if _snapped:
             print(f"NF2FF box snapped to grid lines: {nf_start} -> {nf_stop}")
+        # The far-field sphere is centred on project.nf2ff.center; the box must be
+        # centred on that same point, otherwise the surface integral is evaluated
+        # off-centre and the pattern comes out distorted (a dipole went from
+        # Dmax 2.1 / 78 deg to 3.3 dBi / 45 deg with center z=6.15). This is the
+        # common stale-state bug after the old asymmetric "Fit". Snap to the box
+        # centre — an off-centre reference is never wanted.
+        _box_center = nf2ff_box_center(nf_start, nf_stop)
+        _c = [float(x) for x in (getattr(project.nf2ff, "center", None) or [0.0, 0.0, 0.0])]
+        _off = nf2ff_center_offset(nf_start, nf_stop, _c)
+        if _off > 1e-6:
+            print(
+                f"WARNING: NF2FF center {_c} != box center {_box_center} "
+                f"(off by {_off:.3g}); an off-centre reference distorts the far "
+                f"field -> using the box center"
+            )
+            project.nf2ff.center = _box_center
         # Force all six faces: FDTD.CreateNF2FFBox derives directions/mirror from
         # the *domain* boundary types (PEC/PMC face -> skip + mirrored copy),
         # which is only correct for a box pinned to the domain edges — and the
