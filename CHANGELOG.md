@@ -127,6 +127,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ctrl+M menu, help updated). `manual_mesh.apply_lines_axis` is the shared pure
   add/remove step. `tests/menu_smoke.py` updated.
 
+- **Delete Mesh (Mesh menu)** (`app/ui/main_window.py` `_on_delete_mesh`,
+  `app/ui/mesh_viewer.py` `clear_mesh`): a new **Delete Mesh…** menu item clears
+  the Mesh Viewer and removes the stored `csx.xml` / `mesh_preview.png` from the
+  project folder, after a confirmation dialog. The project, geometry and manual
+  lines are untouched; the automatic re-mesh on opening the viewer is suppressed
+  until the next explicit Build Mesh. `menu_smoke` checks the entry.
+
 - **NF2FF "egg" pattern was a stale box `center`, not the box shape**
   (`app/meshing/bounds.py`, `app/simulation/script_gen.py`): the far-field sphere
   is expanded around `project.nf2ff.center`, so the box must be centred on that
