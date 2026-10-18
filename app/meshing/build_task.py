@@ -294,6 +294,10 @@ def build_mesh_and_validate(
                     f"    WARNING: no grid line near {_c:.4g} to remove "
                     "(did the mesh change?)"
                 )
+            for _c in _s.get("outside", []):
+                lines.append(
+                    f"    WARNING: manual line at {_c:.4g} is outside the domain — ignored"
+                )
     lines.append("")
     lines.append("Mesh setup:")
     lines.append(json.dumps(setup, indent=2, default=str))

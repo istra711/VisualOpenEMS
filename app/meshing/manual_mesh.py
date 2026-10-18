@@ -80,13 +80,27 @@ def apply_lines_axis(
             removed += 1
         else:
             missed.append(c)
+    # No manual line may sit OUTSIDE the meshed domain (= the auto grid extent,
+    # which spans geometry + PML). Ignore such adds instead of extending the grid.
+    lo = float(np.min(lines)) if lines.size else None
+    hi = float(np.max(lines)) if lines.size else None
     added = 0
+    outside: list[float] = []
     for c in add:
+        if lines.size and (c < lo - _TOL or c > hi + _TOL):
+            outside.append(c)
+            continue
         if lines.size and float(np.min(np.abs(lines - c))) <= _TOL:
             continue
         lines = np.append(lines, c)
         added += 1
-    return lines, {"added": added, "removed": removed, "missed": missed, "drift": drift}
+    return lines, {
+        "added": added,
+        "removed": removed,
+        "missed": missed,
+        "outside": outside,
+        "drift": drift,
+    }
 
 
 def apply_manual_mesh_lines(

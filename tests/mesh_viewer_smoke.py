@@ -529,6 +529,19 @@ def main() -> int:
         ) < 1e-9  # far away -> unchanged
         print("  geometry-edge snapping: OK")
 
+        # no mesh lines outside the domain
+        _dr = viewer._domain_range("z")
+        if _dr is not None:
+            _lo, _hi = _dr
+            assert abs(viewer._clamp_to_domain("z", _lo - 1000.0) - _lo) < 1e-9
+            assert abs(viewer._clamp_to_domain("z", _hi + 1000.0) - _hi) < 1e-9
+            viewer.cmb_edit_axis.setCurrentText("z")
+            viewer._editor_reset_all()
+            viewer._editor_add(_hi + 1000.0)  # clamped into the domain
+            _zadds = (viewer._project.mesh.manual_mesh_lines or {}).get("z", [])
+            assert _zadds and all(_lo - 1e-6 <= v <= _hi + 1e-6 for v in _zadds), _zadds
+            print("  no lines outside the domain (clamp): OK")
+
         print("MESH VIEWER SMOKE PASS")
         return 0
     except Exception:

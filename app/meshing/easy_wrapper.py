@@ -154,6 +154,11 @@ def generate_mesh(
                         f"  WARNING: manual line removal on {k} found no matching "
                         f"grid line (did the mesh change?) near {c:.4g}"
                     )
+                for c in s.get("outside", []):
+                    print(
+                        f"  WARNING: manual line on {k} at {c:.4g} is outside the "
+                        f"domain — ignored"
+                    )
                 if s.get("drift", 0.0) > 0.0:
                     print(
                         f"  note: manual removal on {k} snapped by up to "
