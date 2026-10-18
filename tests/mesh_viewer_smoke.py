@@ -460,6 +460,14 @@ def main() -> int:
         assert viewer._editor_panel.isHidden() is True
         print("  mesh editor panel visibility + selection highlight: OK")
 
+        # set_csx(keep_view=True) keeps the slice plane (auto background rebuild)
+        viewer.cmb_view.setCurrentText("XY slice")
+        mid = 0.5 * (viewer.spn_plane.minimum() + viewer.spn_plane.maximum())
+        viewer.spn_plane.setValue(mid)  # spin rounds to 4 decimals
+        viewer.set_csx(viewer._csx, keep_view=True)
+        assert abs(viewer.spn_plane.value() - mid) < 1e-3, (viewer.spn_plane.value(), mid)
+        print("  set_csx keep_view preserves the plane: OK")
+
         print("MESH VIEWER SMOKE PASS")
         return 0
     except Exception:

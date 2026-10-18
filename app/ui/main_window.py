@@ -78,6 +78,13 @@ class MainWindow(QMainWindow):
         # background mesh build (worker thread) state
         self._mesh_building = False
         self._mesh_thread = None
+        # auto (background) rebuild triggered by Mesh-Editor edits; preserves
+        # the visible view instead of resetting it
+        self._auto_mesh_build = False
+        self._mesh_edit_timer = QTimer(self)
+        self._mesh_edit_timer.setSingleShot(True)
+        self._mesh_edit_timer.setInterval(400)
+        self._mesh_edit_timer.timeout.connect(self._auto_rebuild_mesh)
         # multi-excitation driver state (Simulation → Run All Ports)
         self._multi_plans: list | None = None
         self._multi_pos: int = 0
@@ -825,7 +832,7 @@ class MainWindow(QMainWindow):
         self._ensure_mesh_viewer_content()
 
     def _on_mesh_edited(self) -> None:
-        """The Mesh Editor changed the manual line overrides (pending rebuild)."""
+        """Mesh Editor edit -> rebuild the mesh in the background (debounced)."""
         mesh = getattr(self.project, "mesh", None)
         if mesh is None:
             return
@@ -833,10 +840,25 @@ class MainWindow(QMainWindow):
         rem = getattr(mesh, "manual_mesh_lines_removed", None) or {}
         na = sum(len(v or []) for v in add.values())
         nr = sum(len(v or []) for v in rem.values())
-        self._log(
-            f"Mesh editor: {na} manual line(s) added, {nr} removed — "
-            "click Build Mesh to apply to the grid."
-        )
+        self._log(f"Mesh editor: {na} manual line(s), {nr} removed — rebuilding…")
+        self._mesh_edit_timer.start()
+
+    def _auto_rebuild_mesh(self) -> None:
+        """Rebuild the mesh after an editor edit, keeping the visible view.
+
+        Runs the normal background Build-Mesh thread but flags it as automatic:
+        the viewer keeps its view type, slice plane and zoom (the edit just
+        disappears from the grid) and no tab is forced to the front.
+        """
+        if getattr(self, "_mesh_building", False):
+            self._mesh_edit_timer.start()  # retry once the running build finishes
+            return
+        self._auto_mesh_build = True
+        try:
+            self._on_build_mesh()
+        except Exception as e:  # noqa: BLE001
+            self._auto_mesh_build = False
+            self._log(f"Mesh editor auto-rebuild failed: {e}")
 
     def _open_work_folder(self) -> None:
         try:
@@ -3268,7 +3290,8 @@ class MainWindow(QMainWindow):
         ):
             self._log("Mesh build already running — ignored.")
             return
-        self._ensure_log_visible("mesh build")
+        if not getattr(self, "_auto_mesh_build", False):
+            self._ensure_log_visible("mesh build")
         self._sync_project_from_form()
         try:
             self._ensure_patch_primitives()
@@ -3341,6 +3364,8 @@ class MainWindow(QMainWindow):
         Must run on the GUI thread — matplotlib preview, the Mesh Viewer CSX
         swap and the retired-object bookkeeping are not worker-safe.
         """
+        auto = bool(getattr(self, "_auto_mesh_build", False))
+        self._auto_mesh_build = False
         lines = list(result.lines)
 
         # Backend-safe PNG export (does not switch matplotlib backend).
@@ -3373,13 +3398,14 @@ class MainWindow(QMainWindow):
                 ports=self.project.ports,
                 nf2ff=self.project.nf2ff,
             )
-            self.mesh_viewer.set_csx(CSX)
+            self.mesh_viewer.set_csx(CSX, keep_view=auto)
             self._mesh_sig = self._mesh_signature()
             self._sync_scene_info()
-            # Switch to the viewer tab so the user sees the new mesh
-            idx = getattr(self, "mesh_viewer_tab_index", None)
-            if idx is not None and idx >= 0:
-                self.tabs.setCurrentIndex(idx)
+            if not auto:
+                # Switch to the viewer tab so the user sees the new mesh
+                idx = getattr(self, "mesh_viewer_tab_index", None)
+                if idx is not None and idx >= 0:
+                    self.tabs.setCurrentIndex(idx)
         except Exception as e:  # noqa: BLE001 — viewer must not block mesh build
             lines.append(f"(viewer update failed: {e})")
 

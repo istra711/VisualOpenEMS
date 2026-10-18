@@ -469,12 +469,14 @@ class MeshGeometryViewer(QWidget):
             if mesh
             else []
         )
-        vals = sorted(set(built) | {float(v) for v in adds} | {float(v) for v in rems})
+        # Show the *effective* grid: current built lines (from easyMesh) plus
+        # pending additions; a removal disappears once the rebuild dropped it.
+        vals = sorted(set(built) | {float(v) for v in adds})
         for v in vals:
             if self._has(adds, v):
                 prefix, color = "+", "#2e7d32"
-            elif self._has(rems, v):
-                prefix, color = "−", "#c62828"
+            elif self._has(built, v) and self._has(rems, v):
+                prefix, color = "−", "#c62828"  # pending removal (still on grid)
             else:
                 prefix, color = " ", "#333333"
             item = QListWidgetItem(f"{prefix} {v:.4f}")
@@ -638,16 +640,65 @@ class MeshGeometryViewer(QWidget):
         bind_wheel_zoom(self.canvas_cells)
 
     # ----------------------------------------------------------- data input
-    def set_csx(self, csx) -> None:
-        """Store CSX, recreate canvases, and refresh all plots."""
+    def set_csx(self, csx, keep_view: bool = False) -> None:
+        """Store CSX, recreate canvases, and refresh all plots.
+
+        ``keep_view`` preserves the current view type, slice plane and zoom
+        across the canvas rebuild (used by the automatic background mesh
+        rebuild so an edit does not reset what the user is looking at).
+        """
+        state = self._capture_view_state() if keep_view else None
         self._csx = csx
         try:
             self._recreate_canvases()
-            self._refresh()
+            if state is not None:
+                self._restore_view_state(state)
+            else:
+                self._refresh()
             self._update_controls_enabled()
             self._refresh_editor()
         except Exception as e:  # noqa: BLE001 — never crash the GUI on redraw
             print(f"mesh viewer set_csx refresh error: {e}")
+
+    def _capture_view_state(self) -> dict:
+        """Snapshot the visible view (type, plane, zoom) across a rebuild."""
+        return {
+            "view": self.cmb_view.currentText(),
+            "plane": float(self.spn_plane.value()),
+            "slice": self._figure_limits(self.fig_slice),
+            "cells": self._figure_limits(self.fig_cells),
+        }
+
+    def _restore_view_state(self, state: dict) -> None:
+        """Re-apply a :meth:`_capture_view_state` snapshot after set_csx()."""
+        self.cmb_view.blockSignals(True)
+        self.cmb_view.setCurrentText(state.get("view", "XY slice"))
+        self.cmb_view.blockSignals(False)
+        self.spn_plane.blockSignals(True)
+        self.spn_plane.setValue(float(state.get("plane", 0.0)))
+        self.spn_plane.blockSignals(False)
+        self._update_plane_range(reset=False)
+        self._update_info()
+        view = state.get("view", "XY slice")
+        key = _slice_key(view)
+        try:
+            if key is not None:
+                self.plot_tabs.setCurrentIndex(0)
+                self._draw_slice(key)
+            elif view == "Overview":
+                self.plot_tabs.setCurrentIndex(0)
+                self._draw_overview()
+            else:
+                self.plot_tabs.setCurrentIndex(1)
+                self._draw_cells()
+            self._drawn_view = view
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer restore view error: {e}")
+        self._apply_figure_limits(self.fig_slice, state.get("slice"))
+        self._apply_figure_limits(self.fig_cells, state.get("cells"))
+        for c in (self.canvas_slice, self.canvas_cells):
+            if c is not None:
+                c.draw_idle()
 
     def set_project_context(
         self,
@@ -1122,22 +1173,31 @@ class MeshGeometryViewer(QWidget):
             adds = self._lines_dict(mesh_spec, "manual_mesh_lines", create=False)
             rems = self._lines_dict(mesh_spec, "manual_mesh_lines_removed", create=False)
             for axn, idx in ((ax_a, ia), (ax_b, ib)):
+                g = np.asarray(mesh.get(axn, []), dtype=float)
+
+                def _on_grid(c, g=g):
+                    return g.size > 0 and float(np.min(np.abs(g - c))) <= 1e-6
+
                 for c in adds.get(axn, []) or []:
                     c = float(c)
+                    if _on_grid(c):
+                        continue  # already applied -> a normal grid line by now
                     if idx == ia:
                         ax.axvline(c, color="#2e7d32", linestyle="--", linewidth=1.2,
-                                   alpha=0.9, label="manual line")
+                                   alpha=0.9, label="manual line (pending)")
                     else:
                         ax.axhline(c, color="#2e7d32", linestyle="--", linewidth=1.2,
-                                   alpha=0.9, label="manual line")
+                                   alpha=0.9, label="manual line (pending)")
                 for c in rems.get(axn, []) or []:
                     c = float(c)
+                    if not _on_grid(c):
+                        continue  # applied -> the line is already gone
                     if idx == ia:
                         ax.axvline(c, color="#c62828", linestyle=":", linewidth=1.2,
-                                   alpha=0.9, label="removed line")
+                                   alpha=0.9, label="removed line (pending)")
                     else:
                         ax.axhline(c, color="#c62828", linestyle=":", linewidth=1.2,
-                                   alpha=0.9, label="removed line")
+                                   alpha=0.9, label="removed line (pending)")
 
         # Emphasise the line selected in the editor list (only when it lies in
         # this slice plane).
