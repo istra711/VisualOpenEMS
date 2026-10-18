@@ -216,6 +216,10 @@ class MeshGeometryViewer(QWidget):
         # auto grid (per axis) before manual overrides — lets editor edits be
         # re-applied to the EXISTING mesh without re-running easyMesh
         self._auto_mesh: dict | None = None
+        # scene caches from the last built CSX so geometry / ports / NF2FF / the
+        # domain stay visible after the mesh grid is deleted
+        self._scene_infos: list = []
+        self._scene_area = None
         self._editor_panel = None
         self._split = None
         self._build_ui()
@@ -969,14 +973,23 @@ class MeshGeometryViewer(QWidget):
         self._update_controls_enabled()
 
     def clear_mesh(self) -> None:
-        """Remove the current mesh: drop scene data AND wipe the figures."""
-        self.clear()
-        self._safe_clear_fig(self.fig_slice, self.canvas_slice)
-        self._safe_clear_fig(self.fig_cells, self.canvas_cells)
+        """Remove the mesh GRID but keep geometry / ports / NF2FF / domain.
+
+        Geometry and the domain are cached from the last build (_collect_scene),
+        so after the mesh is deleted the viewer still draws the structure, the
+        ports, the NF2FF box and the domain outline — only the mesh grid goes.
+        """
+        self._csx = None
+        self._auto_mesh = None
+        self._selected_lines = []
+        self._sel_line = None
+        self._update_controls_enabled()
+        self._update_info()
         try:
             self._refresh_editor()
         except Exception:  # noqa: BLE001
             pass
+        self._redraw()
 
     @staticmethod
     def _safe_clear_fig(fig, canvas) -> None:
@@ -1001,7 +1014,8 @@ class MeshGeometryViewer(QWidget):
 
     def _update_controls_enabled(self) -> None:
         """Plane spinbox + slider: only meaningful with a CSX and a slice view."""
-        active = _slice_key(self.cmb_view.currentText()) is not None and self._csx is not None
+        has_scene = self._csx is not None or self._scene_area is not None
+        active = _slice_key(self.cmb_view.currentText()) is not None and has_scene
         self.spn_plane.setEnabled(active)
         self.slider.setEnabled(active)
         self.slider_mesh.setEnabled(active and self.chk_mesh.isChecked())
@@ -1019,13 +1033,11 @@ class MeshGeometryViewer(QWidget):
 
     def _on_plane_changed(self, value: float) -> None:
         # keep slider roughly in sync (0..1000 maps to the domain range)
-        if self._csx is None:
-            return
         key = _slice_key(self.cmb_view.currentText())
         if key is None:
             return
         normal = _SLICE_AXES[key][2]
-        area = get_sim_area(self._csx)
+        area = self._grid_area()
         if area is not None:
             lo, hi = area[0][_AXIS[normal]], area[1][_AXIS[normal]]
             if hi > lo:
@@ -1036,13 +1048,11 @@ class MeshGeometryViewer(QWidget):
         self._redraw()
 
     def _on_slider(self, pos: int) -> None:
-        if self._csx is None:
-            return
         key = _slice_key(self.cmb_view.currentText())
         if key is None:
             return
         normal = _SLICE_AXES[key][2]
-        area = get_sim_area(self._csx)
+        area = self._grid_area()
         if area is None:
             return
         lo, hi = float(area[0][_AXIS[normal]]), float(area[1][_AXIS[normal]])
@@ -1145,7 +1155,7 @@ class MeshGeometryViewer(QWidget):
         if key is None:
             return
         normal = _SLICE_AXES[key][2]
-        area = get_sim_area(self._csx)
+        area = self._grid_area()
         if area is None:
             return
         lo, hi = float(area[0][_AXIS[normal]]), float(area[1][_AXIS[normal]])
@@ -1166,7 +1176,7 @@ class MeshGeometryViewer(QWidget):
     def _nearest_mesh_line(self, normal: str, value: float) -> float:
         """Snap the plane value to the closest mesh line on the slice normal."""
         try:
-            lines = np.asarray(mesh_lines_from_csx(self._csx)[normal], dtype=float)
+            lines = np.asarray(self._grid_mesh()[normal], dtype=float)
             if lines.size == 0:
                 return value
             return float(lines[np.argmin(np.abs(lines - value))])
@@ -1183,7 +1193,7 @@ class MeshGeometryViewer(QWidget):
     def _update_info(self) -> None:
         lines: list[str] = []
         lines.append("=== Mesh ===")
-        mesh = mesh_lines_from_csx(self._csx)
+        mesh = self._grid_mesh()
         from app.meshing.polar import axis_labels
 
         _labels = dict(zip("xyz", axis_labels(self._coord_system())))
@@ -1201,7 +1211,7 @@ class MeshGeometryViewer(QWidget):
             )
         if self._coord_system() == "cylindrical":
             lines.append("  (cylindrical: ρ/φ/z — φ stored in radians 0..2π)")
-        area = get_sim_area(self._csx)
+        area = self._grid_area()
         if area is not None:
             lines.append(
                 f"  Domain: [{area[0][0]:.3g}, {area[0][1]:.3g}, {area[0][2]:.3g}] → "
@@ -1209,7 +1219,7 @@ class MeshGeometryViewer(QWidget):
             )
         lines.append("")
         lines.append("=== Primitives (CSX) ===")
-        infos = iter_primitive_infos(self._csx, coord_system=self._coord_system())
+        infos = self._grid_infos()
         if not infos:
             lines.append("  (none)")
         for info in infos:
@@ -1254,8 +1264,8 @@ class MeshGeometryViewer(QWidget):
         return getattr(self, "_info_text", "")
 
     def _redraw(self) -> None:
-        if self._csx is None:
-            return
+        if self._csx is None and self._scene_area is None and not self._scene_infos:
+            return  # nothing to show at all
         try:
             view = self.cmb_view.currentText()
             key = _slice_key(view)
@@ -1306,11 +1316,49 @@ class MeshGeometryViewer(QWidget):
             ax.set_ylim(ylim)
 
     def _collect_scene(self):
-        """Return (mesh_lines, prim_infos, ports, nf2ff, area)."""
-        mesh = mesh_lines_from_csx(self._csx)
-        infos = iter_primitive_infos(self._csx, coord_system=self._coord_system())
-        area = get_sim_area(self._csx)
-        return mesh, infos, self._ports, self._nf2ff, area
+        """Return (mesh_lines, prim_infos, ports, nf2ff, area).
+
+        Without a built CSX (mesh deleted) the cached geometry / domain from the
+        last build is used, so geometry, ports, NF2FF and the domain stay visible
+        while the mesh grid is gone.
+        """
+        if self._csx is not None:
+            mesh = mesh_lines_from_csx(self._csx)
+            infos = iter_primitive_infos(self._csx, coord_system=self._coord_system())
+            area = get_sim_area(self._csx)
+            self._scene_infos = list(infos)
+            self._scene_area = area
+            return mesh, infos, self._ports, self._nf2ff, area
+        empty = {"x": np.asarray([]), "y": np.asarray([]), "z": np.asarray([])}
+        return empty, list(self._scene_infos), self._ports, self._nf2ff, self._scene_area
+
+    # Cached-scene accessors: fall back to the last build when the mesh grid has
+    # been deleted (_csx is None), so geometry / ports / NF2FF / domain survive.
+    def _grid_mesh(self) -> dict:
+        if self._csx is not None:
+            try:
+                return mesh_lines_from_csx(self._csx)
+            except Exception:  # noqa: BLE001
+                pass
+        return {"x": np.asarray([]), "y": np.asarray([]), "z": np.asarray([])}
+
+    def _grid_area(self):
+        if self._csx is not None:
+            try:
+                return get_sim_area(self._csx)
+            except Exception:  # noqa: BLE001
+                return None
+        return self._scene_area
+
+    def _grid_infos(self) -> list:
+        if self._csx is not None:
+            try:
+                return list(
+                    iter_primitive_infos(self._csx, coord_system=self._coord_system())
+                )
+            except Exception:  # noqa: BLE001
+                return list(self._scene_infos)
+        return list(self._scene_infos)
 
     @staticmethod
     def _outside_names(infos, area) -> set[str]:
@@ -1704,7 +1752,7 @@ class MeshGeometryViewer(QWidget):
         self.canvas_slice.draw_idle()
 
     def _draw_cells(self) -> None:
-        mesh = mesh_lines_from_csx(self._csx)
+        mesh = self._grid_mesh()
         if self.fig_cells is None or self.canvas_cells is None:
             self._recreate_canvases()
         self.fig_cells.clf()
