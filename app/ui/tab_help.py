@@ -73,6 +73,21 @@ Navigation
   • Pop-out — open the viewer in a large separate window (1200×800).
   • Slice slider — move the cutting plane (snaps to the nearest mesh line on the slice axis).
 
+Mesh editor (right-hand panel) — manual mesh lines
+  • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line
+    there — or tick "Add by click in slice" and click in a slice view (only when
+    the chosen axis is one of the two in-plane axes).
+  • The list shows the current lines: blank = from easyMesh, "+" (green) = added
+    by you, "−" (red) = an auto line you removed. Select a row and
+    "Remove selected" (drop a '+', or delete an auto line) /
+    "Restore selected" (undo a removal).
+  • Edits are stored in the project (MeshSpec) and applied AFTER easyMesh — so
+    they survive automatic meshing. Pending edits are overlaid on the slice
+    (green dashed = will be added, red dotted = will be removed).
+  • Click "Build Mesh" to apply; the result is validated (cell sizes / grading /
+    CFL) like any mesh. "Reset axis" / "Reset all" clears the overrides.
+  • Cartesian meshes only; a very small manual cell shrinks the CFL timestep.
+
 Frames (overview + slices)
   • Black dashed — FDTD domain (geometry + air margin, on mesh lines); size it on
     Sim Params → Boundary conditions (see that tab's help).

@@ -389,6 +389,7 @@ class MainWindow(QMainWindow):
         viewer_layout = QVBoxLayout(viewer_tab)
         viewer_layout.setContentsMargins(0, 0, 0, 0)
         self.mesh_viewer = MeshGeometryViewer(work_dir=self.settings.work_path())
+        self.mesh_viewer.mesh_edited.connect(self._on_mesh_edited)
         viewer_layout.addWidget(self.mesh_viewer)
         self.mesh_viewer_tab_index = tabs.addTab(viewer_tab, "Mesh Viewer")
 
@@ -822,6 +823,20 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self.tabs.setCurrentIndex(idx)
         self._ensure_mesh_viewer_content()
+
+    def _on_mesh_edited(self) -> None:
+        """The Mesh Editor changed the manual line overrides (pending rebuild)."""
+        mesh = getattr(self.project, "mesh", None)
+        if mesh is None:
+            return
+        add = getattr(mesh, "manual_mesh_lines", None) or {}
+        rem = getattr(mesh, "manual_mesh_lines_removed", None) or {}
+        na = sum(len(v or []) for v in add.values())
+        nr = sum(len(v or []) for v in rem.values())
+        self._log(
+            f"Mesh editor: {na} manual line(s) added, {nr} removed — "
+            "click Build Mesh to apply to the grid."
+        )
 
     def _open_work_folder(self) -> None:
         try:

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mesh Editor — manual mesh lines (Mesh Viewer)**
+  (`app/meshing/manual_mesh.py`, `app/models/project.py` `MeshSpec.manual_mesh_lines`
+  / `manual_mesh_lines_removed`, `app/meshing/easy_wrapper.py`, `app/ui/mesh_viewer.py`):
+  the Mesh Viewer's right-hand panel can now freely add grid lines per axis,
+  edit them, and delete auto lines. Pick an axis, type a coordinate and *Add
+  line*, or tick *Add by click in slice* and click in a slice view. The list tags
+  every line (`+` added / `−` removed / blank = easyMesh) and supports
+  Remove/Restore selected, Reset axis / Reset all. Overrides are stored in the
+  project and applied app-side **after** easyMesh + the cap, so they survive
+  automatic meshing and are not smoothed away; pending edits are overlaid on the
+  slice (green dashed = add, red dotted = remove). Click *Build Mesh* to apply
+  (the result is validated as usual). Cartesian only. Pure tests in
+  `tests/test_manual_mesh.py`; verified end-to-end on the dipole (a manual
+  `z=13.5` line is present, a removed `z=1.0` line is gone).
+
 - **Antenna simulation mode now OVERRIDES the mesh resolution at f_max**
   (`app/models/project.py:Project.effective_mesh`, `SimSpec.antenna_cells_per_wavelength`,
   `app/ui/sim_params.py`, `app/meshing/build_task.py`, `app/simulation/script_gen.py`):

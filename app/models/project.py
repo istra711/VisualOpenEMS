@@ -148,6 +148,12 @@ class MeshSpec:
     cells_per_wavelength: float = 10.0
     num_lines: int = 5  # extra mesh lines per edge gap
     dirs: str = "xyz"  # mesh axes: xyz|xy|xz|yz|x|y|z
+    # Manual mesh lines (Mesh Editor): per-axis coordinates (drawing units) to
+    # ADD on top of the easyMesh-generated grid, and auto lines to REMOVE.
+    # Applied app-side AFTER easyMesh (and the cap), so a user edit wins. Keys
+    # x/y/z. Cartesian only; None/empty = plain automatic mesh.
+    manual_mesh_lines: dict[str, list[float]] | None = None
+    manual_mesh_lines_removed: dict[str, list[float]] | None = None
     # Graded refinement on the vacuum/dielectric side of metal (PEC) faces:
     # finest cell at the interface (min_cellsize), growing by max_grading_ratio
     # into the surrounding air/dielectric. Applied app-side after easyMesh

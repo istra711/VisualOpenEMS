@@ -6,6 +6,7 @@ from app.meshing.bounds import (
     nf2ff_fit_box,
     nf2ff_fit_margin_units,
 )
+from app.meshing.manual_mesh import apply_manual_mesh_lines
 from app.meshing.easy_wrapper import (
     apply_boundary,
     cap_max_cell_size,
@@ -32,6 +33,7 @@ __all__ = [
     "apply_boundary",
     "generate_mesh",
     "cap_max_cell_size",
+    "apply_manual_mesh_lines",
     "validate_mesh",
     "MeshReport",
     "save_mesh_preview",
