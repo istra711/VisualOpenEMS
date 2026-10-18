@@ -618,6 +618,46 @@ class MeshGeometryViewer(QWidget):
         adds = self._lines_dict(mesh, "manual_mesh_lines", create=False).get(axis_name, []) if mesh else []
         return sorted(set(built) | {float(v) for v in adds})
 
+    def _edge_coords(self, axis_name: str) -> list[float]:
+        """Geometry-edge coordinates on one axis (primitive AABB faces + ports).
+
+        Used to snap a newly clicked line exactly onto a geometry edge.
+        """
+        idx = _AXIS[axis_name]
+        vals: list[float] = []
+        if self._csx is not None:
+            try:
+                for info in iter_primitive_infos(
+                    self._csx, coord_system=self._coord_system()
+                ):
+                    try:
+                        vals.append(float(info.start[idx]))
+                        vals.append(float(info.stop[idx]))
+                    except Exception:  # noqa: BLE001
+                        continue
+            except Exception:  # noqa: BLE001
+                pass
+        for p in self._ports:
+            st = getattr(p, "start", None) or (p.get("start") if isinstance(p, dict) else None)
+            sp = getattr(p, "stop", None) or (p.get("stop") if isinstance(p, dict) else None)
+            for v in (st, sp):
+                if v:
+                    try:
+                        vals.append(float(v[idx]))
+                    except Exception:  # noqa: BLE001
+                        continue
+        return sorted({round(v, 9) for v in vals})
+
+    def _snap_to_edge(self, axis_name: str, val: float, band_frac: float = 0.01) -> float:
+        """Snap ``val`` to the nearest geometry edge within a narrow band."""
+        edges = self._edge_coords(axis_name)
+        if not edges:
+            return val
+        span = self._axis_span(axis_name)
+        band = band_frac * span if span > 0 else 0.0
+        e = min(edges, key=lambda c: abs(c - val))
+        return e if (band > 0.0 and abs(e - val) <= band) else val
+
     def _select_row_for(self, coord: float) -> None:
         for i in range(self.lst_edit_lines.count()):
             v = float(self.lst_edit_lines.item(i).data(Qt.ItemDataRole.UserRole))
@@ -660,6 +700,8 @@ class MeshGeometryViewer(QWidget):
                 if band > 0.0 and abs(float(arr[j]) - val) <= band:
                     self._select_row_for(float(arr[j]))
                     return
+        # Snap a newly added line onto a geometry edge when the click is near one.
+        val = self._snap_to_edge(axis, val)
         self._editor_add(val)
 
     def _show_context_menu(self) -> None:

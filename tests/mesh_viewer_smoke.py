@@ -518,6 +518,17 @@ def main() -> int:
         assert not _zadds, _zadds
         print("  multi-select + delete several lines: OK")
 
+        # geometry-edge snapping: a click near an edge snaps onto it
+        _ez = viewer._edge_coords("z")
+        assert _ez, "expected geometry edges"
+        _span = viewer._axis_span("z")
+        _e = _ez[len(_ez) // 2]
+        assert abs(viewer._snap_to_edge("z", _e + 0.005 * _span) - _e) < 1e-9
+        assert abs(
+            viewer._snap_to_edge("z", _e + 0.4 * _span) - (_e + 0.4 * _span)
+        ) < 1e-9  # far away -> unchanged
+        print("  geometry-edge snapping: OK")
+
         print("MESH VIEWER SMOKE PASS")
         return 0
     except Exception:
