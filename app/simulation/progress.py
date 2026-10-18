@@ -35,6 +35,8 @@ class EngineProgress:
     elapsed: str = ""
     end_criteria_hit: bool = False
     stopped_before_criteria: bool = False
+    #: end-criteria level as a positive dB drop to reach (config, set per run)
+    target_db: float | None = None
 
     def reset(self) -> None:
         self.max_timesteps = None
@@ -98,6 +100,29 @@ class EngineProgress:
             frac = self.timestep / self.max_timesteps
             return max(0, min(100, int(round(frac * 100))))
         return 0
+
+    @property
+    def energy_percent(self) -> int:
+        """Convergence progress 0..100 from the residual energy vs the criterion.
+
+        The engine reports energy relative to the start (0 dB, decreasing). The
+        run ends when it drops by ``target_db`` (from ``end_criteria``); the bar
+        tracks the reached fraction of that drop. Falls back to 0 when the level
+        is unknown (the end-criteria line still snaps it to 100).
+        """
+        if self.end_criteria_hit:
+            return 100
+        if self.energy_db is None or not self.target_db:
+            return 0
+        frac = (-self.energy_db) / self.target_db
+        return max(0, min(100, int(round(frac * 100))))
+
+    def energy_text(self) -> str:
+        if self.energy_db is None:
+            return "Energy —"
+        if self.target_db:
+            return f"Energy {self.energy_db:.0f} / -{self.target_db:.0f} dB"
+        return f"Energy {self.energy_db:.0f} dB"
 
     @property
     def active(self) -> bool:

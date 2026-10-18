@@ -52,8 +52,15 @@ def main() -> int:
     assert "TS 173900/200000" in win.lbl_engine.text(), win.lbl_engine.text()
     assert "Energy -25.9 dB" in win.lbl_engine.text(), win.lbl_engine.text()
 
+    # second bar: residual-energy convergence toward the end criterion
+    assert not win.progress_energy.isHidden(), "energy bar not shown after engine lines"
+    assert win._engine_progress.target_db == 50.0, win._engine_progress.target_db
+    assert win.progress_energy.value() == 52, win.progress_energy.value()
+    assert "Energy" in win.progress_energy.format(), win.progress_energy.format()
+
     win._reset_engine_progress()
     assert win.progress.isHidden(), "reset must hide the bar"
+    assert win.progress_energy.isHidden(), "reset must hide the energy bar"
 
     win.close()
     print("PROGRESS SMOKE OK")

@@ -554,13 +554,26 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.progress.setFixedWidth(220)
+        self.progress.setFixedWidth(200)
         self.progress.setTextVisible(True)
         self.progress.setVisible(False)
+        self.progress.setToolTip("Timestep progress (TS / max TS)")
+        # Second bar: residual-energy convergence toward the end criteria — the
+        # run's actual stopping condition, which the timestep count alone misses.
+        self.progress_energy = QProgressBar()
+        self.progress_energy.setRange(0, 100)
+        self.progress_energy.setValue(0)
+        self.progress_energy.setFixedWidth(220)
+        self.progress_energy.setTextVisible(True)
+        self.progress_energy.setVisible(False)
+        self.progress_energy.setToolTip(
+            "Residual-energy convergence toward the end criteria (EndCriteria)"
+        )
         self.lbl_engine = QLabel("")
         self.lbl_engine.setVisible(False)
         self.status.addPermanentWidget(self.lbl_engine)
         self.status.addPermanentWidget(self.progress)
+        self.status.addPermanentWidget(self.progress_energy)
         # Larger default window so the mesh viewer is usable
         self.resize(1440, 900)
 
@@ -1053,11 +1066,21 @@ class MainWindow(QMainWindow):
             pass
 
     def _reset_engine_progress(self) -> None:
-        """Clear the FDTD engine progress bar (called when a run starts)."""
+        """Clear the FDTD engine progress bars (called when a run starts)."""
+        import math
+
         self._engine_progress.reset()
-        self.progress.setValue(0)
-        self.progress.setFormat("")
-        self.progress.setVisible(False)
+        ec = 0.0
+        try:
+            ec = float(getattr(self.project.sim, "end_criteria", 0.0) or 0.0)
+        except Exception:  # noqa: BLE001
+            ec = 0.0
+        # end criterion as a positive dB drop to reach (energy ratio -> 10*log10)
+        self._engine_progress.target_db = (-10.0 * math.log10(ec)) if ec > 0 else None
+        for bar in (self.progress, self.progress_energy):
+            bar.setValue(0)
+            bar.setFormat("")
+            bar.setVisible(False)
         self.lbl_engine.setText("")
         self.lbl_engine.setVisible(False)
 
@@ -1065,8 +1088,11 @@ class MainWindow(QMainWindow):
         p = self._engine_progress
         percent = p.percent
         self.progress.setValue(percent)
-        self.progress.setFormat(f"{percent}%")
+        self.progress.setFormat(f"TS {percent}%")
         self.progress.setVisible(True)
+        self.progress_energy.setValue(p.energy_percent)
+        self.progress_energy.setFormat(p.energy_text())
+        self.progress_energy.setVisible(True)
         self.lbl_engine.setText(p.text())
         self.lbl_engine.setVisible(True)
 
@@ -1077,7 +1103,7 @@ class MainWindow(QMainWindow):
         regexes line by line.
         """
         low = msg.lower()
-        if "timestep" not in low and "criteria" not in low:
+        if "timestep" not in low and "criteria" not in low and "energy" not in low:
             return
         for raw in msg.splitlines():
             line = raw.strip()
