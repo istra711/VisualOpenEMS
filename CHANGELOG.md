@@ -69,6 +69,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mesh Editor: removed line lingered; rebuild now runs in the background**
+  (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`): deleting a line left a red
+  "removed line" overlay in the slice and the entry in the list even after the
+  grid line was actually gone. The overlay and the list now show the *effective*
+  grid — a pending removal is tagged `−` and drawn while the auto line is still
+  present, and both disappear once the rebuild has dropped it. Editing a line now
+  triggers an automatic **background** rebuild (debounced, 400 ms) that preserves
+  the visible view: `set_csx(keep_view=True)` keeps the view type, slice plane
+  and zoom, and no tab is forced to the front — the edited line simply vanishes.
+  Regression checks in `tests/mesh_viewer_smoke.py` (visibility, selection
+  highlight, `keep_view` plane preservation).
+
 - **NF2FF "egg" pattern was a stale box `center`, not the box shape**
   (`app/meshing/bounds.py`, `app/simulation/script_gen.py`): the far-field sphere
   is expanded around `project.nf2ff.center`, so the box must be centred on that
