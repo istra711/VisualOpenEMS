@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   excludes `vtk` (and collects its binaries) so the bundled EXE includes the
   viewer. Tests: `tests/test_vtk_export.py` (converter round-trip) +
   `tests/vtk_viewer_smoke.py` (conversion + viewer load).
+  Also: **new field dumps default to the geometry bbox** (`_on_add_dump` /
+  `_default_dump_box`) instead of a zero-size `[0,0,0]`→`[0,0,0]` box — a
+  single-point dump produced an empty `.vtr`; the exporter now skips such dumps
+  with a clear message, and the VTK tab is pointed at the **current project
+  folder** (`<work>/<project>/simulation`), not the base work dir.
 
 ## [0.5.0] - 2026-10-18
 
