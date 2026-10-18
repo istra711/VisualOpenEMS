@@ -52,6 +52,43 @@ def _local_cell(lines: np.ndarray, c: float) -> float:
     return float(min(cands)) if cands else float(np.median(np.diff(s)))
 
 
+def apply_lines_axis(
+    lines: Any, add: list[float], rem: list[float]
+) -> tuple[np.ndarray, dict]:
+    """Apply the add/remove overrides to one axis' grid lines (pure).
+
+    Returns ``(new_lines, stats)`` with the same stats shape as
+    :func:`apply_manual_mesh_lines`. Removals drop the line NEAREST the stored
+    coordinate within a local-cell tolerance; removals with no target are
+    reported in ``stats["missed"]``.
+    """
+    lines = np.asarray(lines, dtype=float)
+    removed = 0
+    missed: list[float] = []
+    drift = 0.0
+    for c in rem:
+        if lines.size == 0:
+            missed.append(c)
+            continue
+        j = int(np.argmin(np.abs(lines - c)))
+        dist = abs(float(lines[j]) - c)
+        cell = _local_cell(lines, c)
+        tol = max(_TOL, 0.5 * cell) if cell > 0 else max(_TOL, 1e-3)
+        if dist <= tol:
+            drift = max(drift, dist)
+            lines = np.delete(lines, j)
+            removed += 1
+        else:
+            missed.append(c)
+    added = 0
+    for c in add:
+        if lines.size and float(np.min(np.abs(lines - c))) <= _TOL:
+            continue
+        lines = np.append(lines, c)
+        added += 1
+    return lines, {"added": added, "removed": removed, "missed": missed, "drift": drift}
+
+
 def apply_manual_mesh_lines(
     CSX, mesh: Any, coord_system: str = "cartesian"
 ) -> dict[str, dict]:
@@ -82,43 +119,9 @@ def apply_manual_mesh_lines(
         added_c = _coords(add, name)
         if lines.size == 0 and not added_c:
             continue
-
-        removed = 0
-        missed: list[float] = []
-        drift = 0.0
-        for c in drop:
-            if lines.size == 0:
-                missed.append(c)
-                continue
-            # Remove the line NEAREST to the stored coordinate (a slightly
-            # changed auto mesh shifts lines by up to a cell); only give up when
-            # nothing is within the local-cell tolerance.
-            j = int(np.argmin(np.abs(lines - c)))
-            dist = abs(float(lines[j]) - c)
-            cell = _local_cell(lines, c)
-            tol = max(_TOL, 0.5 * cell) if cell > 0 else max(_TOL, 1e-3)
-            if dist <= tol:
-                drift = max(drift, dist)
-                lines = np.delete(lines, j)
-                removed += 1
-            else:
-                missed.append(c)
-        if removed:
-            grid.SetLines(d, [float(v) for v in lines])
-
-        added = 0
-        for c in added_c:
-            if lines.size and float(np.min(np.abs(lines - c))) <= _TOL:
-                continue  # already on the grid
-            grid.AddLine(d, c)
-            lines = np.append(lines, c)
-            added += 1
-
-        if added or removed or missed:
-            stats[name] = {
-                "added": added,
-                "removed": removed,
-                "missed": missed,
-                "drift": drift,
-            }
+        new_lines, s = apply_lines_axis(lines, added_c, drop)
+        if s["added"] or s["removed"]:
+            grid.SetLines(d, [float(v) for v in new_lines])
+        if s["added"] or s["removed"] or s["missed"]:
+            stats[name] = s
     return stats
