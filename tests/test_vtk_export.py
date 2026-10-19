@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 from pathlib import Path
 
-from app.postproc.vtk_export import dump_to_vtr, export_dumps_to_vtk, read_dump_arrays
+from app.postproc.vtk_export import (
+    dump_series_to_vtr,
+    dump_to_vtr,
+    export_dumps_to_vtk,
+    read_dump_arrays,
+    read_dump_series,
+)
 
 
 def _make_dump(path: Path, nx=5, ny=4, nz=3) -> None:
@@ -81,6 +87,30 @@ def test_export_dir_skips_empty(tmp_path):
     out = export_dumps_to_vtk(sim)
     names = sorted(p.name for p in out)
     assert names == ["Et-E.vtr"]
+
+
+def test_time_series_export(tmp_path):
+    import h5py
+
+    p = tmp_path / "Et-E.h5"
+    nx, ny, nz = 5, 4, 3
+    with h5py.File(p, "w") as f:
+        m = f.create_group("Mesh")
+        m.create_dataset("x", data=np.linspace(0, 10, nx))
+        m.create_dataset("y", data=np.linspace(0, 6, ny))
+        m.create_dataset("z", data=np.linspace(0, 3, nz))
+        tdg = f.create_group("FieldData").create_group("TD")
+        for i in range(3):
+            tdg.create_dataset(f"t{i}", data=np.zeros((3, nx, ny, nz), dtype="float32"))
+
+    _x, _y, _z, steps = read_dump_series(p)
+    assert [lab for lab, _f in steps] == ["t0", "t1", "t2"]
+
+    paths, labels = dump_series_to_vtr(p, tmp_path / "out")
+    assert labels == ["t0", "t1", "t2"]
+    assert len(paths) == 3
+    assert (tmp_path / "out" / "Et-E_0000.vtr").exists()
+    assert (tmp_path / "out" / "Et-E.series.json").exists()
 
 
 def test_degenerate_dump_raises(tmp_path):

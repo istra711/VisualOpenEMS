@@ -46,6 +46,44 @@ def read_dump_arrays(h5_path: Path | str):
     return x, y, z, field
 
 
+def read_dump_series(h5_path: Path | str):
+    """Return ``(x, y, z, steps)`` with ``steps = [(label, field), ...]``.
+
+    Covers *all* stored steps so the viewer can animate:
+    ``FieldData/FD/f<N>_real|_imag`` (labels ``f0``, ``f1``, …, complex) and/or
+    ``FieldData/TD/t<N>`` (labels ``t0``, ``t1``, …, real).
+    """
+    import h5py
+
+    x = y = z = None
+    steps: list[tuple[str, np.ndarray]] = []
+    with h5py.File(h5_path, "r") as f:
+        mesh = f["Mesh"] if "Mesh" in f else None
+        if mesh is not None:
+            x = np.asarray(mesh["x"], dtype=float).ravel()
+            y = np.asarray(mesh["y"], dtype=float).ravel()
+            z = np.asarray(mesh["z"], dtype=float).ravel()
+        root = f["FieldData"] if "FieldData" in f else f
+        groups = [root[name] for name in root.keys()] if isinstance(root, h5py.Group) else [root]
+
+        def _num(key: str) -> int:
+            digits = "".join(c for c in key if c.isdigit())
+            return int(digits) if digits else 0
+
+        for g in groups:
+            names = list(g.keys())
+            reals = sorted((k for k in names if k.endswith("_real")), key=_num)
+            for key in reals:
+                base = key[: -len("_real")]
+                re = np.asarray(g[key])
+                field = re + 1j * np.asarray(g[base + "_imag"]) if (base + "_imag") in g else re
+                steps.append((base, field))
+            tkeys = sorted((k for k in names if k.startswith("t") and k[1:].isdigit()), key=_num)
+            for key in tkeys:
+                steps.append((key, np.asarray(g[key])))
+    return x, y, z, steps
+
+
 def _magnitude(field: np.ndarray) -> np.ndarray:
     """Vector magnitude over the leading xyz axis (or |scalar|)."""
     f = np.asarray(field)
@@ -53,6 +91,63 @@ def _magnitude(field: np.ndarray) -> np.ndarray:
         base = f.astype(complex) if np.iscomplexobj(f) else f.astype(float)
         return np.sqrt(np.sum(np.abs(base) ** 2, axis=0))
     return np.abs(f.astype(complex)) if np.iscomplexobj(f) else np.abs(f)
+
+
+def _flat(arr: np.ndarray) -> np.ndarray:
+    """VTK point order: x fastest -> Fortran order of a (nx,ny,nz) array."""
+    return np.ascontiguousarray(np.asarray(arr, dtype=float).ravel(order="F"))
+
+
+def _check_grid(h5_name: str, x, y, z, field):
+    if field is None:
+        raise ValueError(f"{h5_name}: no field data in the dump")
+    if x is None or y is None or z is None or x.size < 1 or y.size < 1 or z.size < 1:
+        raise ValueError(f"{h5_name}: no mesh in the dump")
+    comp = field.shape[0] == 3 and field.ndim == 4
+    if comp:
+        nx, ny, nz = field.shape[1], field.shape[2], field.shape[3]
+    else:
+        nx, ny, nz = field.shape[-3], field.shape[-2], field.shape[-1]
+    if nx * ny * nz <= 1:
+        raise ValueError(
+            f"{h5_name}: dump is a single point — set a box (Edit Dump: "
+            "start != stop) and run again"
+        )
+    if (x.size, y.size, z.size) != (nx, ny, nz):
+        raise ValueError(
+            f"{h5_name}: mesh {x.size}x{y.size}x{z.size} does not match "
+            f"field {nx}x{ny}x{nz}"
+        )
+    return comp, nx, ny, nz
+
+
+def _write_vtr(vtk, ns, x, y, z, field, out_path: Path) -> Path:
+    comp, nx, ny, nz = _check_grid(out_path.name, x, y, z, field)
+    grid = vtk.vtkRectilinearGrid()
+    grid.SetDimensions(nx, ny, nz)
+    grid.SetXCoordinates(ns.numpy_to_vtk(np.ascontiguousarray(x), deep=True))
+    grid.SetYCoordinates(ns.numpy_to_vtk(np.ascontiguousarray(y), deep=True))
+    grid.SetZCoordinates(ns.numpy_to_vtk(np.ascontiguousarray(z), deep=True))
+
+    scal = ns.numpy_to_vtk(_flat(_magnitude(field)), deep=True)
+    scal.SetName("magnitude")
+    grid.GetPointData().SetScalars(scal)
+    if comp:
+        re = np.real(field)
+        vec = np.column_stack([_flat(re[0]), _flat(re[1]), _flat(re[2])])
+        varr = ns.numpy_to_vtk(vec, deep=True)
+        varr.SetName("field")
+        grid.GetPointData().AddArray(varr)
+        grid.GetPointData().SetActiveVectors("field")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    writer = vtk.vtkXMLRectilinearGridWriter()
+    writer.SetFileName(str(out_path))
+    writer.SetInputData(grid)
+    writer.SetDataModeToBinary()
+    if not writer.Write():
+        raise RuntimeError(f"VTK write failed: {out_path}")
+    return out_path
 
 
 def dump_to_vtr(h5_path: Path | str, out_path: Path | str | None = None) -> Path:
@@ -67,70 +162,54 @@ def dump_to_vtr(h5_path: Path | str, out_path: Path | str | None = None) -> Path
 
     h5_path = Path(h5_path)
     x, y, z, field = read_dump_arrays(h5_path)
-    if field is None:
-        raise ValueError(f"{h5_path.name}: no field data in the dump")
-    if x is None or y is None or z is None or x.size < 1 or y.size < 1 or z.size < 1:
-        raise ValueError(f"{h5_path.name}: no mesh in the dump")
-
-    comp = field.shape[0] == 3 and field.ndim == 4
-    if comp:
-        nx, ny, nz = field.shape[1], field.shape[2], field.shape[3]
-    else:
-        nx, ny, nz = field.shape[-3], field.shape[-2], field.shape[-1]
-    if nx * ny * nz <= 1:
-        raise ValueError(
-            f"{h5_path.name}: dump is a single point — set a box (Edit Dump: "
-            "start != stop) and run again"
-        )
-    if (x.size, y.size, z.size) != (nx, ny, nz):
-        raise ValueError(
-            f"{h5_path.name}: mesh {x.size}x{y.size}x{z.size} does not match "
-            f"field {nx}x{ny}x{nz}"
-        )
-
-    def _flat(arr2d: np.ndarray) -> np.ndarray:
-        # VTK point order: x fastest -> Fortran order of (nx,ny,nz)
-        return np.ascontiguousarray(np.asarray(arr2d, dtype=float).ravel(order="F"))
-
-    grid = vtk.vtkRectilinearGrid()
-    grid.SetDimensions(nx, ny, nz)
-    grid.SetXCoordinates(ns.numpy_to_vtk(np.ascontiguousarray(x), deep=True))
-    grid.SetYCoordinates(ns.numpy_to_vtk(np.ascontiguousarray(y), deep=True))
-    grid.SetZCoordinates(ns.numpy_to_vtk(np.ascontiguousarray(z), deep=True))
-
-    mag = _magnitude(field)
-    scal = ns.numpy_to_vtk(_flat(mag), deep=True)
-    scal.SetName("magnitude")
-    grid.GetPointData().SetScalars(scal)
-
-    if comp:
-        re = np.real(field)
-        vec = np.column_stack([_flat(re[0]), _flat(re[1]), _flat(re[2])])
-        varr = ns.numpy_to_vtk(vec, deep=True)
-        varr.SetName("field")
-        grid.GetPointData().AddArray(varr)
-        grid.GetPointData().SetActiveVectors("field")
-
     if out_path is None:
         out_path = h5_path.with_suffix(".vtr")
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = vtk.vtkXMLRectilinearGridWriter()
-    writer.SetFileName(str(out_path))
-    writer.SetInputData(grid)
-    writer.SetDataModeToBinary()
-    if not writer.Write():
-        raise RuntimeError(f"VTK write failed: {out_path}")
-    return out_path
+    return _write_vtr(vtk, ns, x, y, z, field, Path(out_path))
+
+
+def dump_series_to_vtr(
+    h5_path: Path | str, out_dir: Path | str | None = None
+) -> tuple[list[Path], list[str]]:
+    """Write one ``.vtr`` per stored step (for animation) plus a sidecar.
+
+    Files: ``<stem>_0000.vtr``, ``<stem>_0001.vtr`` … and ``<stem>.series.json``
+    (the ordered step labels). Returns ``(paths, labels)``. Empty dumps raise
+    ``ValueError``.
+    """
+    import json
+
+    import vtk
+    from vtk.util import numpy_support as ns
+
+    h5_path = Path(h5_path)
+    x, y, z, steps = read_dump_series(h5_path)
+    if not steps:
+        raise ValueError(f"{h5_path.name}: no field data in the dump")
+    if out_dir is None:
+        out_dir = h5_path.parent
+    out_dir = Path(out_dir)
+    paths: list[Path] = []
+    labels: list[str] = []
+    for i, (label, field) in enumerate(steps):
+        out = out_dir / f"{h5_path.stem}_{i:04d}.vtr"
+        _write_vtr(vtk, ns, x, y, z, field, out)
+        paths.append(out)
+        labels.append(str(label))
+    (out_dir / f"{h5_path.stem}.series.json").write_text(
+        json.dumps({"labels": labels, "files": [p.name for p in paths]}, indent=2),
+        encoding="utf-8",
+    )
+    return paths, labels
 
 
 def export_dumps_to_vtk(
-    sim_dir: Path | str, out_dir: Path | str | None = None
+    sim_dir: Path | str, out_dir: Path | str | None = None, per_step: bool = False
 ) -> list[Path]:
     """Convert every field dump (``*.h5`` without ``nf2ff``) in ``sim_dir``.
 
-    Returns the written ``.vtr`` paths. Dumps that are empty/degenerate are
-    skipped (their error is printed).
+    Returns the written ``.vtr`` paths. With ``per_step`` each dump also gets one
+    ``<stem>_NNNN.vtr`` file per stored step (+ ``<stem>.series.json``) so the
+    viewer can animate. Empty/degenerate dumps are skipped (error printed).
     """
     sim_dir = Path(sim_dir)
     if out_dir is None:
@@ -141,7 +220,11 @@ def export_dumps_to_vtk(
         if "nf2ff" in h5.name.lower():
             continue
         try:
-            written.append(dump_to_vtr(h5, out_dir / (h5.stem + ".vtr")))
+            single = dump_to_vtr(h5, out_dir / (h5.stem + ".vtr"))
+            written.append(single)
+            if per_step:
+                paths, _labels = dump_series_to_vtr(h5, out_dir)
+                written.extend(paths)
         except Exception as e:  # noqa: BLE001 — keep going over the other dumps
             print(f"VTK export skipped {h5.name}: {e}")
     return written
