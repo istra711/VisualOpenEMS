@@ -120,6 +120,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   widget is no longer moved. Test in `tests/vtk_viewer_smoke.py` (pop-out,
   close via the window, assert the tab layout is unchanged).
 
+- **Field Viewer: physical time on the slider + right-click menu**
+  (`app/postproc/vtk_export.py`, `app/ui/vtk_viewer.py`): the frame's simulation
+  time is read from the openEMS HDF5 dataset attribute (`time`, seconds) and
+  shown next to the step counter in an automatic ps/ns unit (e.g. `t = 84.63 ps`);
+  frequency-domain steps show `f = 2.23 GHz` instead. `read_dump_series(...,
+  with_meta=True)` returns the per-step time/frequency and the VTK export writes
+  them into `<name>.series.json` (`times`, `frequencies`), so older sidecars
+  simply omit the label. A **right-click menu** on the controls/background offers
+  Open…, Export dumps → VTK, Pop out/Dock view and Reset view; it is suppressed
+  inside the 3D pane (VTK navigation uses the right button there). Smoke covers
+  the label formatting and the pane exclusion.
+
 - **Solver Parameters dialog** (`app/ui/solver_params.py`,
   `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,
   Simulation menu): new **Solver Parameters…** action exposing the openEMS FDTD
