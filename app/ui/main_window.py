@@ -9,7 +9,7 @@ from queue import Empty, Queue
 
 from PySide6 import QtCore
 from PySide6.QtCore import QUrl, QObject, Qt, QTimer, Signal, QThread
-from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence
+from PySide6.QtGui import QAction, QCursor, QDesktopServices, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -597,6 +598,14 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(self.lbl_engine)
         self.status.addPermanentWidget(self.progress)
         self.status.addPermanentWidget(self.progress_energy)
+        # Right-click on the bottom edge (status bar and its widgets) opens the
+        # log-area options (show/hide the log panel, pick a log tab, …).
+        for w in (self.status, self.lbl_engine, self.progress, self.progress_energy):
+            w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            w.customContextMenuRequested.connect(self._show_status_context_menu)
+        self.status.setToolTip(
+            "Right-click here for log-area options (show/hide the log panel)"
+        )
         # Larger default window so the mesh viewer is usable
         self.resize(1440, 900)
 
@@ -1281,6 +1290,63 @@ class MainWindow(QMainWindow):
     def _toggle_autoscroll(self, checked: bool) -> None:
         self._log_autoscroll = checked
         self.btn_log_autoscroll.setText("Auto-scroll: ON" if checked else "Auto-scroll: OFF")
+
+    # ----- bottom-edge (status bar) log-area menu -------------------------
+    def _build_status_menu(self) -> QMenu:
+        """Options for the log area: show/hide, log tabs, auto-scroll, tools."""
+        menu = QMenu(self)
+        act_panel = menu.addAction("Show log panel")
+        act_panel.setCheckable(True)
+        act_panel.setChecked(self.btn_log_toggle.isChecked())
+        act_panel.toggled.connect(self._set_log_panel_visible)
+
+        menu.addSeparator()
+        head = menu.addAction("Log area tab")
+        head.setEnabled(False)
+        for i in range(self.log_tabs.count()):
+            title = self.log_tabs.tabText(i)
+            act = menu.addAction(title)
+            act.setCheckable(True)
+            act.setChecked(self.log_tabs.currentIndex() == i)
+            act.triggered.connect(lambda _checked=False, k=i: self._show_log_tab(k))
+
+        menu.addSeparator()
+        act_scroll = menu.addAction("Auto-scroll")
+        act_scroll.setCheckable(True)
+        act_scroll.setChecked(self.btn_log_autoscroll.isChecked())
+        act_scroll.toggled.connect(self._set_log_autoscroll)
+
+        menu.addSeparator()
+        menu.addAction("Save log…", self._save_log)
+        menu.addAction("Pop out log…", self._pop_out_log)
+        return menu
+
+    def _show_status_context_menu(self, _pos=None) -> None:
+        """Right-click at the bottom edge → log-area menu."""
+        menu = self._build_status_menu()
+        menu.exec(QCursor.pos())
+
+    def _set_log_panel_visible(self, visible: bool) -> None:
+        """Show/hide the whole log panel (same state as the View → Log action)."""
+        visible = bool(visible)
+        if self.btn_log_toggle.isChecked() != visible:
+            self.btn_log_toggle.setChecked(visible)  # triggers _toggle_log_panel
+        else:
+            self._toggle_log_panel(visible)
+
+    def _set_log_autoscroll(self, on: bool) -> None:
+        on = bool(on)
+        if self.btn_log_autoscroll.isChecked() != on:
+            self.btn_log_autoscroll.setChecked(on)
+        else:
+            self._toggle_autoscroll(on)
+
+    def _show_log_tab(self, index: int) -> None:
+        """Show the log panel and select one of its tabs."""
+        if not (0 <= index < self.log_tabs.count()):
+            return
+        self._set_log_panel_visible(True)
+        self.log_tabs.setCurrentIndex(index)
 
     def _save_log(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

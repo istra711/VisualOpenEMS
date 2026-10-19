@@ -63,6 +63,28 @@ def main() -> int:
     assert "--- Step: standalone ---" in win.log_view.toPlainText().splitlines()
     print("[run-log] no duplicate END, standalone step OK")
 
+    # bottom-edge (status bar) right-click menu: log-area options
+    menu = win._build_status_menu()
+    labels = [a.text() for a in menu.actions() if not a.isSeparator()]
+    assert "Show log panel" in labels, labels
+    assert "Log" in labels and "Mesh Report" in labels, labels
+    assert "Auto-scroll" in labels, labels
+    assert "Pop out log…" in labels, labels
+    win._set_log_panel_visible(False)
+    assert not win.btn_log_toggle.isChecked()
+    assert win.log_panel.isHidden(), "log panel must be hidden"
+    win._set_log_panel_visible(True)
+    assert win.btn_log_toggle.isChecked()
+    assert not win.log_panel.isHidden(), "log panel must be shown again"
+    win._set_log_panel_visible(False)
+    win._show_log_tab(1)  # picking a tab also re-shows the panel
+    assert win.btn_log_toggle.isChecked() and win.log_tabs.currentIndex() == 1
+    win._set_log_autoscroll(False)
+    assert not win.btn_log_autoscroll.isChecked()
+    win._set_log_autoscroll(True)
+    assert win.btn_log_autoscroll.isChecked()
+    print("[run-log] status-bar log menu OK:", labels)
+
     win.close()
     print("RUN LOG SMOKE PASS")
     return 0
