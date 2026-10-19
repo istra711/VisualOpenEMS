@@ -26,6 +26,7 @@ Thumbs.db
 work/
 app_settings.json
 app_settings.json.bak
+vtk_messages.log
 Backup/
 .build_exe_work/
 

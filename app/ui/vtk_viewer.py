@@ -125,7 +125,60 @@ def _vtk():
     import vtkmodules.vtkInteractionStyle  # noqa: F401
     import vtkmodules.vtkRenderingFreeType  # noqa: F401
 
+    install_vtk_output_window(vtk)
     return vtk
+
+
+_vtk_output_installed = False
+
+
+def vtk_message_log_path() -> Path:
+    """Where VTK's warnings/errors are written (next to app_settings.json)."""
+    try:
+        from app.paths import settings_path
+
+        return Path(settings_path()).parent / "vtk_messages.log"
+    except Exception:  # noqa: BLE001
+        import tempfile
+
+        return Path(tempfile.gettempdir()) / "vtk_messages.log"
+
+
+def install_vtk_output_window(vtk, path: Path | None = None) -> Path:
+    """Write VTK messages to a file instead of VTK's pop-up output window.
+
+    In a windowed app (no console — notably the bundled EXE) VTK's default
+    output window is a native window that pops up on every warning. Redirecting
+    it to ``vtk_messages.log`` keeps the UI clean; the path is printed once so
+    it can still be inspected.
+    """
+    global _vtk_output_installed
+    log = Path(path) if path else vtk_message_log_path()
+    if _vtk_output_installed and path is None:
+        return log
+    try:
+        ow = vtk.vtkFileOutputWindow()
+        ow.SetFileName(str(log))
+        ow.SetAppend(0)
+        vtk.vtkOutputWindow.SetInstance(ow)
+        _vtk_output_installed = True
+        print(f"VTK messages -> {log}")
+    except Exception as e:  # noqa: BLE001 — never break the viewer on this
+        print(f"Could not redirect the VTK output window: {e}")
+    return log
+
+
+def configure_marker_widget(widget, viewport=(0.0, 0.0, 0.16, 0.22)) -> None:
+    """Enable the corner orientation widget and switch its interactivity off.
+
+    The order matters: ``SetInteractive``/``InteractiveOff`` BEFORE
+    ``SetEnabled(1)`` makes VTK print "Set interactor and Enabled before
+    changing interaction" (vtkOrientationMarkerWidget.cxx) and pop up its
+    output window. Enable first, then turn the interaction off.
+    """
+    widget.SetViewport(*viewport)
+    widget.SetEnabled(1)
+    widget.InteractiveOff()
 
 
 def _make_reader(vtk, path: Path):
@@ -495,9 +548,7 @@ class VtkFieldViewer(QWidget):
                 widget = vtk.vtkOrientationMarkerWidget()
                 widget.SetOrientationMarker(axes)
                 widget.SetInteractor(self._iren)
-                widget.SetViewport(0.0, 0.0, 0.16, 0.22)
-                widget.InteractiveOff()
-                widget.SetEnabled(1)
+                configure_marker_widget(widget)
                 self._marker_axes, self._marker = axes, widget
             except Exception as e:  # noqa: BLE001 — no GL: keep the scene usable
                 print(f"Corner marker unavailable: {e}")

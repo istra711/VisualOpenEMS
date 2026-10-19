@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **VTK popped up its own "vtkOutputWindow" on the corner marker**
+  (`app/ui/vtk_viewer.py`): `_update_corner_marker` called
+  `InteractiveOff()` **before** `SetEnabled(1)`, so VTK warned "*Set interactor
+  and Enabled before changing interaction*" and — with no console (the bundled
+  EXE) — opened a native output window over the GUI. The widget is now enabled
+  first and the interaction switched off afterwards (new helper
+  `configure_marker_widget`). In addition VTK's messages are redirected to a
+  **`vtk_messages.log`** (next to `app_settings.json`, path printed once in the
+  log) via `install_vtk_output_window`, so any future VTK warning lands in that
+  file instead of a pop-up. Smoke: `tests/vtk_viewer_smoke.py` (no warning in
+  the correct order, redirect captures a deliberately wrong order).
+
 ## [0.5.1] - 2026-10-19
 
 ### Added
