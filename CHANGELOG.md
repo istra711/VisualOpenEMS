@@ -131,6 +131,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   method; **New project** clears them too. Smoke:
   `tests/project_results_reload_smoke.py` (clears + restores the field dump).
 
+  Fixed a false positive of that rule: the legacy ``<work>/<Project.name>/
+  simulation`` S-param fallback used the *saved* project name, so a project
+  whose ``name`` was a leftover like "untitled" loaded an unrelated
+  ``<work>/untitled/simulation/sparams.s1p`` even though its own results were
+  deleted. The fallback now applies only to projects that record no results at
+  all (and never for generic names). The restore log prints full paths, and
+  opening the Antenna tab no longer auto-loads the newest NF2FF of the whole
+  work dir (only this project's own).
+
 - **Auto-play defaults to OFF + configurable in Settings** (`app/settings.py`,
   `app/ui/main_window.py`, `app/ui/vtk_viewer.py`): the Field Viewer no longer
   starts the animation on its own; the "Auto-play" checkbox (and its default,

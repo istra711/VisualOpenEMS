@@ -1359,10 +1359,9 @@ class MainWindow(QMainWindow):
             None,
         )
         if target is None:
-            item = self.antenna_viewer.file_list.item(0)
-            if item is not None:
-                target = self._existing_path(item.data(Qt.ItemDataRole.UserRole))
-        if target is None:
+            # never auto-load another project's pattern (the file list still
+            # shows the whole work dir for manual browsing)
+            self._log(f"Antenna pattern: no NF2FF result for {proj_dir.name}")
             return
         try:
             self.antenna_viewer.load_path(target)
@@ -1999,16 +1998,26 @@ class MainWindow(QMainWindow):
 
     def _find_sparams_files(self, project_dir: Path, sim_dir: Path | None = None) -> list[Path]:
         """``sparams.*`` of a project — new ``<project>/sparams`` layout first,
-        then the legacy ``<project>/simulation`` location and the old
-        name-based ``<work>/<Project.name>/simulation`` folder."""
+        then ``<project>/simulation``.
+
+        The old name-based ``<work>/<Project.name>/simulation`` folder is only
+        used for projects that record no results at all: a stale/generic
+        ``Project.name`` (e.g. "untitled") must never pull in another project's
+        data when the real results were deleted.
+        """
         dirs = [Path(project_dir) / "sparams"]
         if sim_dir is not None:
             dirs.append(Path(sim_dir))
         dirs.append(Path(project_dir) / "simulation")
-        legacy = self.settings.work_path() / (
-            str(self.project.name or "").strip() or "project"
-        )
-        dirs.append(legacy / "simulation")
+        rec = dict(self.project.results or {})
+        legacy_name = str(self.project.name or "").strip()
+        if (
+            not rec.get("project_dir")
+            and not rec.get("sim_dir")
+            and not rec.get("sparams")
+            and legacy_name.lower() not in ("", "untitled", "project")
+        ):
+            dirs.append(self.settings.work_path() / legacy_name / "simulation")
         for d in dirs:
             for pat in ("sparams.s*p", "sparams.json"):
                 hits = sorted(d.glob(pat))
@@ -2224,7 +2233,7 @@ class MainWindow(QMainWindow):
         if cands:
             try:
                 self.sparam_viewer.load_path(cands[-1])
-                loaded.append(f"S-params ({cands[-1].name})")
+                loaded.append(f"S-params ({cands[-1]})")
                 ok = True
             except Exception as e:  # noqa: BLE001
                 self._log(f"Could not restore S-params {cands[-1].name}: {e}")
@@ -2250,7 +2259,7 @@ class MainWindow(QMainWindow):
         if nf2ff is not None:
             try:
                 self.antenna_viewer.load_path(nf2ff)
-                loaded.append(f"NF2FF ({nf2ff.name})")
+                loaded.append(f"NF2FF ({nf2ff})")
                 ok = True
             except Exception as e:  # noqa: BLE001
                 self._log(f"Could not restore NF2FF {nf2ff.name}: {e}")
@@ -2265,7 +2274,7 @@ class MainWindow(QMainWindow):
         if series is not None:
             try:
                 self.vtk_viewer.load(series)
-                loaded.append(f"field ({series.name})")
+                loaded.append(f"field ({series})")
                 ok = True
             except Exception as e:  # noqa: BLE001
                 self._log(f"Could not restore field dump {series.name}: {e}")
