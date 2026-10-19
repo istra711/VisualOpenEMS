@@ -50,6 +50,8 @@ AXES_SCALES: tuple[tuple[str, float], ...] = (
     ("Small (0.5×)", 0.5),
     ("Medium (1×)", 1.0),
     ("Large (2×)", 2.0),
+    ("XXL (4×)", 4.0),
+    ("XXXL (8×)", 8.0),
 )
 
 #: Label font sizes offered in the axes menu.
