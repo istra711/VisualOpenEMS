@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -41,21 +42,76 @@ from app.postproc.vtk_export import dump_to_vtr, export_dumps_to_vtk  # noqa: F4
 
 _AXIS_NORMAL = {"X": (1, 0, 0), "Y": (0, 1, 0), "Z": (0, 0, 1)}
 
+#: X red / Y green / Z blue — used by the triad, its labels and the ruler.
+AXIS_COLORS = ((0.95, 0.25, 0.25), (0.30, 0.85, 0.35), (0.35, 0.55, 1.0))
 
-def axes_total_length(bounds) -> float:
+#: Size presets for the orientation triad (factor on the auto length).
+AXES_SCALES: tuple[tuple[str, float], ...] = (
+    ("Small (0.5×)", 0.5),
+    ("Medium (1×)", 1.0),
+    ("Large (2×)", 2.0),
+)
+
+#: Label font sizes offered in the axes menu.
+AXES_FONT_SIZES: tuple[int, ...] = (8, 10, 12, 14, 18, 24)
+
+#: Defaults for the axes display options (also persisted in AppSettings).
+DEFAULT_AXES: dict = {
+    "show": True,  # master switch for the triad / corner marker
+    "corner": False,  # True = ParaView-style corner widget, False = in-scene triad
+    "labels": True,  # X / Y / Z captions on the triad
+    "font": 12,  # caption font size (pt)
+    "scale": 1.0,  # triad size factor (see AXES_SCALES)
+    "ruler": False,  # numeric coordinate ticks around the dataset bounds
+}
+
+
+def axes_total_length(bounds, scale: float = 1.0) -> float:
     """Edge length of the orientation triad, derived from the dataset bounds.
 
     A fixed length (the old ``10, 10, 10``) dwarfs the metre-sized (or smaller)
     openEMS domains and dominates ``ResetCamera()``, so the field looked
-    invisible at startup until the user zoomed in deeply.
+    invisible at startup until the user zoomed in deeply. ``scale`` multiplies
+    the auto length (axes size preset).
     """
     dx = abs(float(bounds[1]) - float(bounds[0]))
     dy = abs(float(bounds[3]) - float(bounds[2]))
     dz = abs(float(bounds[5]) - float(bounds[4]))
+    try:
+        factor = float(scale)
+    except (TypeError, ValueError):
+        factor = 1.0
+    if not math.isfinite(factor) or factor <= 0.0:
+        factor = 1.0
     diag = math.sqrt(dx * dx + dy * dy + dz * dz)
     if not math.isfinite(diag) or diag <= 0.0:
-        return 1.0
-    return 0.18 * diag
+        return factor  # fallback: auto length 1.0 (times the size factor)
+    return 0.18 * diag * factor
+
+
+def style_axes_triad(
+    axes, *, show_labels: bool = True, font_size: int = 12
+) -> None:
+    """Colour and label a ``vtkAxesActor`` (X red / Y green / Z blue).
+
+    ``show_labels`` toggles the X/Y/Z captions (the colours stay either way),
+    ``font_size`` sets their point size. Shared by the in-scene triad and the
+    corner orientation marker.
+    """
+    try:
+        size = max(1, int(font_size))
+    except (TypeError, ValueError):
+        size = 12
+    axes.SetAxisLabels(1 if show_labels else 0)
+    for axis, (r, g, b) in zip(("X", "Y", "Z"), AXIS_COLORS):
+        shaft = getattr(axes, f"Get{axis}AxisShaftProperty")()
+        tip = getattr(axes, f"Get{axis}AxisTipProperty")()
+        shaft.SetColor(r, g, b)
+        tip.SetColor(r, g, b)
+        getattr(axes, f"Set{axis}AxisLabelText")(axis)
+        text = getattr(axes, f"Get{axis}AxisCaptionActor2D")().GetCaptionTextProperty()
+        text.SetColor(r, g, b)
+        text.SetFontSize(size)
 
 
 def _vtk():
@@ -94,6 +150,7 @@ class FieldViewerWindow(QMainWindow):
         self.source: VtkFieldViewer | None = source
         self.viewer = VtkFieldViewer(work_dir=source.work_dir)
         self.viewer.btn_popout.setVisible(False)  # no nested pop-outs
+        self.viewer.on_axes_changed = self._on_viewer_axes_changed
         self.setWindowTitle("Field Viewer - pop-out")
         self.resize(1000, 780)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -102,6 +159,15 @@ class FieldViewerWindow(QMainWindow):
         if source._current_path is not None:
             self.viewer.load(source._current_path)
         self.viewer._copy_state_from(source)
+
+    def _on_viewer_axes_changed(self, options: dict) -> None:
+        """Axes changed in the pop-out: mirror to the tab view + persist."""
+        src = self.source
+        if src is not None and src is not self.viewer:
+            try:
+                src.set_axes_options(options, notify=True)
+            except Exception:  # noqa: BLE001
+                pass
 
     def closeEvent(self, event) -> None:  # noqa: N802
         src = self.source
@@ -136,6 +202,11 @@ class VtkFieldViewer(QWidget):
         self._series_range = None  # global (lo, hi) so the movie does not flicker
         self._series_range_cache: dict = {}
         self._popout_win: FieldViewerWindow | None = None
+        # axes display options (menu + persisted settings)
+        self._axes = dict(DEFAULT_AXES)
+        self.on_axes_changed = None  # callback(options: dict) for persistence
+        self._marker = None  # vtkOrientationMarkerWidget (corner axes)
+        self._marker_axes = None  # its vtkAxesActor
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -345,6 +416,191 @@ class VtkFieldViewer(QWidget):
         """Apply the Settings default for the Auto-play checkbox."""
         self.chk_autoplay.setChecked(bool(on))
 
+    # ----------------------------------------------------------- axes options
+    def axes_options(self) -> dict:
+        """Current axes display options (JSON-serialisable)."""
+        return dict(self._axes)
+
+    def set_axes_options(self, options: dict | None, *, notify: bool = False) -> None:
+        """Apply axes options; unknown keys are ignored, missing ones unchanged.
+
+        ``notify=True`` calls :attr:`on_axes_changed` afterwards (used by the
+        menus so the main window can persist the choice).
+        """
+        if isinstance(options, dict):
+            for key, default in DEFAULT_AXES.items():
+                if key not in options:
+                    continue
+                value = options[key]
+                try:
+                    if key in ("show", "corner", "labels", "ruler"):
+                        value = bool(value)
+                    elif key == "font":
+                        value = max(6, min(72, int(value)))
+                    elif key == "scale":
+                        value = float(value)
+                        if not math.isfinite(value) or value <= 0.0:
+                            value = 1.0
+                    else:
+                        value = default
+                except (TypeError, ValueError):
+                    value = default
+                self._axes[key] = value
+        self._apply_axes()
+        if notify and callable(self.on_axes_changed):
+            self.on_axes_changed(self.axes_options())
+
+    def set_axes_option(self, key: str, value) -> None:
+        """Change one axes option and notify (menu slots)."""
+        self.set_axes_options({key: value}, notify=True)
+
+    def _apply_axes(self) -> None:
+        """Re-render the triad / corner marker / ruler with the current options."""
+        if self._renderer is not None and self._grid is not None:
+            self._refresh_display()
+        else:
+            self._update_corner_marker()
+            if self._iren is not None:
+                try:
+                    self._iren.GetRenderWindow().Render()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def _update_corner_marker(self) -> None:
+        """Small, fixed-size orientation axes in the lower-left corner."""
+        if self._iren is None:
+            return
+        show = bool(
+            self._axes["show"] and self._axes["corner"] and self._grid is not None
+        )
+        if show and self._marker is None:
+            try:
+                vtk = self._vtk or _vtk()
+                self._vtk = vtk
+                axes = vtk.vtkAxesActor()
+                axes.SetTotalLength(1.0, 1.0, 1.0)
+                widget = vtk.vtkOrientationMarkerWidget()
+                widget.SetOrientationMarker(axes)
+                widget.SetInteractor(self._iren)
+                widget.SetViewport(0.0, 0.0, 0.16, 0.22)
+                widget.InteractiveOff()
+                widget.SetEnabled(1)
+                self._marker_axes, self._marker = axes, widget
+            except Exception as e:  # noqa: BLE001 — no GL: keep the scene usable
+                print(f"Corner marker unavailable: {e}")
+                self._marker = None
+                self._marker_axes = None
+                return
+        if self._marker is None:
+            return
+        if show:
+            style_axes_triad(
+                self._marker_axes,
+                show_labels=bool(self._axes["labels"]),
+                font_size=int(self._axes["font"]),
+            )
+            self._marker.SetEnabled(1)
+        else:
+            self._marker.SetEnabled(0)
+
+    def _add_coordinate_ruler(self, vtk) -> None:
+        """Numeric x/y/z ticks around the dataset bounds (vtkCubeAxesActor)."""
+        cube = vtk.vtkCubeAxesActor()
+        cube.SetBounds(self._grid.GetBounds())
+        cube.SetCamera(self._renderer.GetActiveCamera())
+        cube.SetFlyModeToClosestTriad()
+        cube.SetUseTextActor3D(False)
+        cube.SetPickable(False)
+        font = int(self._axes["font"])
+        titles = ("x [m]", "y [m]", "z [m]")
+        for axis, title, color in zip(("X", "Y", "Z"), titles, AXIS_COLORS):
+            getattr(cube, f"Set{axis}Title")(title)
+            getattr(cube, f"Set{axis}LabelFormat")("%.4g")
+            label = getattr(cube, f"Get{axis}AxesLabelProperty")()
+            label.SetColor(0.9, 0.9, 0.9)
+            label.SetFontSize(font)
+            caption = getattr(cube, f"Get{axis}AxesTitleProperty")()
+            caption.SetColor(0.9, 0.9, 0.9)
+            caption.SetFontSize(font)
+            getattr(cube, f"Get{axis}AxesLinesProperty")().SetColor(*color)
+        self._renderer.AddActor(cube)
+
+    def build_axes_menu(self, parent=None) -> QMenu:
+        """Menu with all axes options (View menu + Field Viewer context menu).
+
+        The check states are refreshed in ``aboutToShow`` so several menus can
+        show the same state and stay in sync.
+        """
+        menu = QMenu("Axes", parent)
+        acts: dict = {}
+        acts["show"] = menu.addAction("Show axes")
+        acts["corner"] = menu.addAction("Corner marker (ParaView style)")
+        acts["corner"].setToolTip(
+            "Show a small orientation triad in the lower-left corner instead of "
+            "the triad inside the 3D scene."
+        )
+        acts["labels"] = menu.addAction("Labels X/Y/Z")
+        acts["labels"].setToolTip("Show the X/Y/Z captions on the axes (colours stay).")
+        acts["ruler"] = menu.addAction("Coordinate ruler (numbers)")
+        acts["ruler"].setToolTip(
+            "Numeric coordinate ticks around the dataset bounds (in metres)."
+        )
+        menu.addSeparator()
+        size_menu = menu.addMenu("Size")
+        acts["size"] = {}
+        size_group = QActionGroup(size_menu)
+        size_group.setExclusive(True)
+        for text, factor in AXES_SCALES:
+            act = size_menu.addAction(text)
+            act.setCheckable(True)
+            size_group.addAction(act)
+            acts["size"][factor] = act
+        font_menu = menu.addMenu("Label font")
+        acts["font"] = {}
+        font_group = QActionGroup(font_menu)
+        font_group.setExclusive(True)
+        for size in AXES_FONT_SIZES:
+            act = font_menu.addAction(f"{size} pt")
+            act.setCheckable(True)
+            font_group.addAction(act)
+            acts["font"][size] = act
+
+        for key in ("show", "corner", "labels", "ruler"):
+            act = acts[key]
+            act.setCheckable(True)
+            act.toggled.connect(lambda on, k=key: self.set_axes_option(k, bool(on)))
+        for factor, act in acts["size"].items():
+            act.toggled.connect(
+                lambda on, f=factor: on and self.set_axes_option("scale", f)
+            )
+        for size, act in acts["font"].items():
+            act.toggled.connect(
+                lambda on, s=size: on and self.set_axes_option("font", s)
+            )
+
+        menu._axes_actions = acts  # type: ignore[attr-defined]
+        self._sync_axes_menu(menu)
+        menu.aboutToShow.connect(lambda: self._sync_axes_menu(menu))
+        return menu
+
+    def _sync_axes_menu(self, menu) -> None:
+        acts = getattr(menu, "_axes_actions", None)
+        if not acts:
+            return
+        for key in ("show", "corner", "labels", "ruler"):
+            act = acts[key]
+            act.blockSignals(True)
+            act.setChecked(bool(self._axes[key]))
+            act.blockSignals(False)
+        for factor, act in acts["size"].items():
+            act.blockSignals(True)
+            act.setChecked(abs(float(self._axes["scale"]) - factor) < 1e-9)
+            act.blockSignals(False)
+        for size, act in acts["font"].items():
+            act.blockSignals(True)
+            act.setChecked(int(self._axes["font"]) == size)
+            act.blockSignals(False)
+
     def clear(self, message: str | None = None) -> None:
         """Drop the loaded field/series so no stale scene stays visible.
 
@@ -376,6 +632,7 @@ class VtkFieldViewer(QWidget):
         if self._renderer is not None:
             try:
                 self._renderer.RemoveAllViewProps()
+                self._update_corner_marker()  # no data -> hide the corner axes
                 self._iren.GetRenderWindow().Render()
             except Exception:  # noqa: BLE001
                 pass
@@ -436,6 +693,8 @@ class VtkFieldViewer(QWidget):
         else:
             menu.addAction("Pop out view", self.popout)
         menu.addAction("Reset view", self._reset_camera)
+        menu.addSeparator()
+        menu.addMenu(self.build_axes_menu(menu))
         menu.exec(self.mapToGlobal(pos))
 
     def _copy_state_from(self, other: "VtkFieldViewer") -> None:
@@ -453,6 +712,7 @@ class VtkFieldViewer(QWidget):
             lambda: self.spn_fps.setValue(other.spn_fps.value()),
             lambda: self.chk_loop.setChecked(other.chk_loop.isChecked()),
             lambda: self.chk_autoplay.setChecked(other.chk_autoplay.isChecked()),
+            lambda: self.set_axes_options(other.axes_options()),
         ):
             try:
                 setter()
@@ -844,12 +1104,23 @@ class VtkFieldViewer(QWidget):
 
         # Orientation triad, scaled to the dataset and placed at the lower
         # corner (a fixed-size triad used to make the field appear tiny).
-        bounds = self._grid.GetBounds()
-        axes = vtk.vtkAxesActor()
-        length = axes_total_length(bounds)
-        axes.SetTotalLength(length, length, length)
-        axes.SetPosition(bounds[0], bounds[2], bounds[4])
-        self._renderer.AddActor(axes)
+        # Options: corner marker instead of the in-scene triad, labels on/off,
+        # font size, size factor, numeric coordinate ruler.
+        if self._axes["show"] and not self._axes["corner"]:
+            bounds = self._grid.GetBounds()
+            axes = vtk.vtkAxesActor()
+            length = axes_total_length(bounds, self._axes["scale"])
+            axes.SetTotalLength(length, length, length)
+            axes.SetPosition(bounds[0], bounds[2], bounds[4])
+            style_axes_triad(
+                axes,
+                show_labels=bool(self._axes["labels"]),
+                font_size=int(self._axes["font"]),
+            )
+            self._renderer.AddActor(axes)
+        if self._axes["ruler"]:
+            self._add_coordinate_ruler(vtk)
+        self._update_corner_marker()
 
         if self._iren is not None:
             self._iren.GetRenderWindow().Render()

@@ -40,6 +40,8 @@ class AppSettings:
     # --- Field Viewer (VTK) ---
     #: start playback automatically when a time series is loaded/exported
     field_viewer_autoplay: bool = False
+    #: axes display options (see app.ui.vtk_viewer.DEFAULT_AXES)
+    field_viewer_axes: dict = field(default_factory=dict)
 
     # --- Port defaults (Settings dialog + FreeCAD import fallbacks) ---
     default_port_type: str = "lumped"  # lumped | msl | rect_waveguide

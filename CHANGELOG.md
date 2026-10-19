@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Field Viewer: configurable axes** (`app/ui/vtk_viewer.py`,
+  `app/ui/main_window.py`, `app/settings.py`, `app/ui/tab_help.py`): the
+  orientation axes are explicitly X red / Y green / Z blue, and a new
+  **View → Axes** submenu (also in the Field Viewer right-click menu) exposes
+  *Show axes*, *Corner marker (ParaView style)* (small fixed triad in the
+  lower-left corner instead of the in-scene one), *Labels X/Y/Z*, *Label font*
+  (8–24 pt), *Size* (0.5× / 1× / 2×, scales the in-scene triad) and
+  *Coordinate ruler (numbers)* (numeric x/y/z ticks in metres around the
+  dataset bounds via `vtkCubeAxesActor`). The choices persist in
+  `AppSettings.field_viewer_axes`, are applied at startup and are mirrored
+  between the Field Viewer tab and its pop-out (changes in either direction).
+  Tests: `tests/vtk_viewer_smoke.py` (colours/labels/font, menu state, ruler)
+  + `tests/menu_smoke.py` (View → Axes wiring + persistence).
+
 - **Field dumps → VTK (.vtr) + an embedded VTK 3D viewer**
   (`app/postproc/vtk_export.py`, `app/ui/vtk_viewer.py`, `app/ui/main_window.py`,
   `app/ui/tab_help.py`): a new **VTK** tab (Simulation menu → *VTK Viewer* /

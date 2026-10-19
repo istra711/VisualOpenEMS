@@ -262,12 +262,43 @@ def test_mesh_viewer_scene_info_tab() -> None:
     print("MESH VIEWER SCENE INFO TAB OK")
 
 
+def test_field_viewer_axes_menu() -> None:
+    """View → Axes: check states follow the viewer, changes persist."""
+    w = _win()
+    v = w.vtk_viewer
+    axes = None
+    for a in _menu("View").actions():
+        if _strip(a.text()) == "Axes" and a.menu() is not None:
+            axes = a.menu()
+            break
+    assert axes is not None, [_strip(a.text()) for a in _menu("View").actions()]
+    acts = axes._axes_actions
+    before = v.axes_options()
+    assert acts["show"].isChecked() == before["show"]
+    assert acts["corner"].isChecked() == before["corner"]
+    assert acts["ruler"].isChecked() == before["ruler"]
+    font_act = acts["font"].get(int(before["font"]))
+    if font_act is not None:
+        assert font_act.isChecked(), "label font check state out of sync"
+
+    acts["labels"].setChecked(not before["labels"])
+    assert v.axes_options()["labels"] is (not before["labels"])
+    assert w.settings.field_viewer_axes["labels"] is (not before["labels"])
+    from app.settings import AppSettings
+
+    assert AppSettings.load().field_viewer_axes.get("labels") is (not before["labels"])
+    acts["labels"].setChecked(before["labels"])
+    assert v.axes_options()["labels"] == before["labels"]
+    print("FIELD VIEWER AXES MENU OK")
+
+
 def main() -> int:
     failed = 0
     for t in (
         test_menu_structure_and_shortcuts,
         test_menu_action_hits_button,
         test_view_menu_switches_tabs,
+        test_field_viewer_axes_menu,
         test_sim_params_dialog,
         test_mesh_params_dialog,
         test_log_mesh_report_tab,

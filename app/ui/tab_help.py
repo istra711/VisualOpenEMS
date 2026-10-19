@@ -543,9 +543,17 @@ Buttons / controls
     again / "Dock back" / closing the window dismisses the pop-out.
   • "Outline": domain box. "Reset view": fit camera. Mouse: rotate (left),
     pan (middle/shift), zoom (wheel).
+  • Axes (View menu, submenu "Axes"; also in the right-click menu): X = red,
+    Y = green, Z = blue. "Show axes" hides/shows the orientation triad;
+    "Corner marker" puts a small ParaView-style triad in the lower-left corner
+    instead of the one inside the scene; "Labels X/Y/Z" toggles the captions
+    and "Label font" sets their size; "Size" scales the in-scene triad
+    (0.5x / 1x / 2x); "Coordinate ruler (numbers)" draws numeric x/y/z ticks
+    (in metres) around the dataset bounds. All choices are remembered across
+    sessions.
   • Right-click on the controls (not inside the 3D view) opens a menu: Open…,
-    Export dumps, Pop out view / Dock view, Reset view. Inside the 3D view the
-    right mouse button stays reserved for navigation.
+    Export dumps, Pop out view / Dock view, Reset view, Axes. Inside the 3D
+    view the right mouse button stays reserved for navigation.
   • A colour bar shows the scalar range.
 
 What it writes (per dump)
