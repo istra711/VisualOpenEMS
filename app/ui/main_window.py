@@ -550,6 +550,10 @@ class MainWindow(QMainWindow):
             bool(getattr(self.settings, "field_viewer_autoplay", False))
         )
         self.vtk_viewer.chk_autoplay.toggled.connect(self._on_field_autoplay_toggled)
+        self.vtk_viewer.set_axes_options(
+            getattr(self.settings, "field_viewer_axes", None)
+        )
+        self.vtk_viewer.on_axes_changed = self._on_field_axes_changed
         tabs.addTab(self.vtk_viewer, "Field Viewer")
         self.vtk_tab_index = tabs.indexOf(self.vtk_viewer)
 
@@ -869,6 +873,8 @@ class MainWindow(QMainWindow):
             self.menu_view_actions[title] = action
         vmenu.addSeparator()
         add_action(vmenu, "Log Panel", btn=self.btn_log_toggle, shortcut="Ctrl+L")
+        vmenu.addSeparator()
+        vmenu.addMenu(self.vtk_viewer.build_axes_menu(vmenu))
         vmenu.aboutToShow.connect(self._sync_view_menu)
 
         tmenu = bar.addMenu("&Settings")
@@ -4274,6 +4280,20 @@ class MainWindow(QMainWindow):
             self.settings.save()
         except Exception:  # noqa: BLE001 — never block playback on a write error
             pass
+
+    def _on_field_axes_changed(self, options: dict) -> None:
+        """Persist the Field Viewer axes options and mirror them to the pop-out."""
+        self.settings.field_viewer_axes = dict(options or {})
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 - never block the viewer on a write error
+            pass
+        win = getattr(getattr(self, "vtk_viewer", None), "_popout_win", None)
+        if win is not None and getattr(win, "viewer", None) is not None:
+            try:
+                win.viewer.set_axes_options(options)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _on_settings(self) -> None:
         # Settings dialog: paths + port defaults

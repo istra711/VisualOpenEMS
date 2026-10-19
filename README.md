@@ -85,7 +85,8 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - **Field Viewer** — 3D field slices with per-axis navigation
 - **VTK Viewer** — convert the HDF5 field dumps to VTK rectilinear grids
   (`.vtr`) and inspect them in an embedded 3D view (iso-surface of |field|,
-  outline, axes); the `.vtr` files open in ParaView too
+  outline, configurable axes: View → Axes for corner marker, labels/font,
+  size and a numeric coordinate ruler); the `.vtr` files open in ParaView too
 - All viewers support export to PNG
 
 ### Workflow Automation

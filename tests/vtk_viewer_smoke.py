@@ -68,7 +68,73 @@ def main() -> int:
     assert abs(axes_total_length(b) - 0.18 * diag) < 1e-12
     assert axes_total_length((0, 0, 0, 0, 0, 0)) == 1.0
     assert axes_total_length(b) < 0.05, "mm-scale data must not get a huge triad"
+    assert abs(axes_total_length(b, 2.0) - 2 * axes_total_length(b)) < 1e-12
+    assert abs(axes_total_length(b, 0.0) - axes_total_length(b)) < 1e-12
     print("  axes triad length:", axes_total_length(b))
+
+    # --- axes options: colours / labels / font / size / corner / ruler ---
+    import vtk
+
+    from app.ui.vtk_viewer import AXIS_COLORS, DEFAULT_AXES, style_axes_triad
+
+    assert v.axes_options()["corner"] is False, "in-scene triad must stay the default"
+    assert v.axes_options()["labels"] is True and v.axes_options()["font"] == 12
+
+    triad = vtk.vtkAxesActor()
+    style_axes_triad(triad, show_labels=True, font_size=18)
+    assert triad.GetAxisLabels() == 1, "labels must start visible"
+    assert triad.GetXAxisLabelText() == "X"
+    assert triad.GetXAxisCaptionActor2D().GetCaptionTextProperty().GetFontSize() == 18
+    for axis, color in zip(("X", "Y", "Z"), AXIS_COLORS):
+        shaft = getattr(triad, f"Get{axis}AxisShaftProperty")()
+        tip = getattr(triad, f"Get{axis}AxisTipProperty")()
+        assert shaft.GetColor() == color, (axis, shaft.GetColor())
+        assert tip.GetColor() == color, (axis, tip.GetColor())
+        text = getattr(triad, f"Get{axis}AxisCaptionActor2D")().GetCaptionTextProperty()
+        assert text.GetColor() == color, (axis, text.GetColor())
+    style_axes_triad(triad, show_labels=False, font_size=8)
+    assert triad.GetAxisLabels() == 0, "labels must be hidden"
+    assert triad.GetYAxisCaptionActor2D().GetCaptionTextProperty().GetFontSize() == 8
+    print("  axes colours / labels / font size OK")
+
+    v.set_axes_options({"font": "odd"})  # invalid -> default, never crashes
+    assert v.axes_options()["font"] == DEFAULT_AXES["font"]
+    v.set_axes_options({"labels": False, "font": 18, "scale": 2.0, "ruler": True, "bogus": 1})
+    opts = v.axes_options()
+    assert opts["labels"] is False and opts["font"] == 18 and opts["scale"] == 2.0
+    assert opts["ruler"] is True and "bogus" not in opts, opts
+
+    # View / context menu: check states follow the options (and vice versa)
+    menu = v.build_axes_menu()
+    acts = menu._axes_actions
+    assert acts["labels"].isChecked() is False and acts["ruler"].isChecked() is True
+    assert acts["size"][2.0].isChecked() is True
+    assert acts["font"][18].isChecked() is True
+    acts["corner"].trigger()
+    assert v.axes_options()["corner"] is True, "menu action did not change the options"
+    acts["size"][0.5].trigger()
+    assert v.axes_options()["scale"] == 0.5
+    acts["font"][14].trigger()
+    assert v.axes_options()["font"] == 14
+    v.set_axes_option("corner", False)
+    v._sync_axes_menu(menu)
+    assert acts["corner"].isChecked() is False, "menu check state out of sync"
+    print("  axes menu (View + context) OK")
+
+    # numeric coordinate ruler (a plain renderer is enough, no GL needed)
+    v.set_axes_options({"font": 20})
+    renderer = vtk.vtkRenderer()
+    v._renderer = renderer
+    v._add_coordinate_ruler(vtk)
+    cube = renderer.GetActors().GetLastActor()
+    assert [round(b, 9) for b in cube.GetBounds()] == [
+        round(b, 9) for b in v._grid.GetBounds()
+    ], (cube.GetBounds(), v._grid.GetBounds())
+    assert cube.GetXAxesLabelProperty().GetFontSize() == 20
+    assert cube.GetZAxesLinesProperty().GetColor() == AXIS_COLORS[2]
+    assert cube.GetYTitle() == "y [m]", cube.GetYTitle()
+    v._renderer = None
+    print("  coordinate ruler OK")
 
     # the reader is format-agnostic: a .vtu (ParaView-style) also loads
     import numpy as np
@@ -186,6 +252,9 @@ def main() -> int:
     assert win.viewer.parent() is win
     assert win.viewer._current_path == v._current_path
     assert win.viewer.cmb_rep.currentText() == v.cmb_rep.currentText()
+    assert win.viewer.axes_options() == v.axes_options(), "axes options not mirrored"
+    win.viewer.set_axes_option("labels", True)  # pop-out changes mirror back
+    assert v.axes_options()["labels"] is True
     # closing the window leaves the tab exactly as it was
     win.close()
     assert v._popout_win is None, "close did not reset the pop-out state"
