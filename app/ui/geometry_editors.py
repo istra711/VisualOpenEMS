@@ -643,10 +643,37 @@ class DumpDialog(QDialog):
         self._freq_unit_prev = "GHz"
         configure_freq_spin(self.spn_freq, "GHz")
         self.spn_freq.setValue(hz_to_freq(float(d.frequency or 2.45e9), "GHz"))
+        self.cmb_file_type = QComboBox()
+        for label, val in (("HDF5 (default)", 1), ("VTK (.vtr)", 0)):
+            self.cmb_file_type.addItem(label, val)
+        self.cmb_file_type.setCurrentIndex(0 if int(getattr(d, "file_type", 1)) else 1)
+        self.cmb_file_type.setToolTip(
+            "CSXCAD 'FileType': HDF5 (.h5, default) or VTK (.vtr written by openEMS)."
+        )
+        self.cmb_mode = QComboBox()
+        for label, val in (("Node (default)", 1), ("None", 0), ("Cell", 2)):
+            self.cmb_mode.addItem(label, val)
+        self.cmb_mode.setCurrentIndex({1: 0, 0: 1, 2: 2}.get(int(getattr(d, "dump_mode", 1)), 0))
+        self.cmb_mode.setToolTip(
+            "CSXCAD 'DumpMode': no / node (default) / cell interpolation."
+        )
         form.addRow("Name", self.ed_name)
         form.addRow("Quantity", self.cmb_qty)
+        form.addRow("File type", self.cmb_file_type)
+        form.addRow("Interpolation", self.cmb_mode)
         form.addRow("Frequency unit", self.cmb_freq_unit)
         form.addRow("Frequency", self.spn_freq)
+        self.ed_freqs = QLineEdit()
+        self.ed_freqs.setPlaceholderText("e.g. 2.4 GHz, 2.45 GHz — blank = use Frequency")
+        self.ed_freqs.setToolTip(
+            "Optional list of frequencies for a frequency-domain dump (overrides\n"
+            "'Frequency'). Comma-separated, each with Hz/kHz/MHz/GHz."
+        )
+        if getattr(d, "frequencies", None):
+            from app.ui.freq_units import fmt_hz
+
+            self.ed_freqs.setText(", ".join(fmt_hz(f) for f in d.frequencies))
+        form.addRow("Frequencies", self.ed_freqs)
         form.addRow(self.chk_fd)
         form.addRow(self.chk_en)
         self.spn_start = _vec3_row(form, "Start", d.start, coord_system=coord_system)
@@ -670,10 +697,20 @@ class DumpDialog(QDialog):
 
         self.cmb_freq_unit.currentTextChanged.connect(_on_unit)
 
+        def _sync_freq_enabled() -> None:
+            on = self.chk_fd.isChecked()
+            for w in (self.spn_freq, self.cmb_freq_unit, self.ed_freqs):
+                w.setEnabled(on)
+
+        self.chk_fd.toggled.connect(lambda _on: _sync_freq_enabled())
+        _sync_freq_enabled()
+
     def _accept(self) -> None:
+        from app.postproc.nf2ff import parse_freq_list
         from app.ui.freq_units import spin_hz
 
         unit = getattr(self, "_freq_unit_prev", "GHz") or "GHz"
+        freqs = parse_freq_list(self.ed_freqs.text()) or None
         self.result = DumpDef(
             name=self.ed_name.text().strip() or "dump",
             quantity=self.cmb_qty.currentText(),  # type: ignore[arg-type]
@@ -682,6 +719,9 @@ class DumpDialog(QDialog):
             frequency_domain=self.chk_fd.isChecked(),
             frequency=spin_hz(self.spn_freq, unit),
             enabled=self.chk_en.isChecked(),
+            file_type=int(self.cmb_file_type.currentData()),
+            dump_mode=int(self.cmb_mode.currentData()),
+            frequencies=freqs,
         )
         self.accept()
 
