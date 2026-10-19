@@ -187,6 +187,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/test_run_log.py` (format) + `tests/run_log_smoke.py` (sequence,
   no duplicate END).
 
+- **Bottom-edge right-click menu for the log area** (`app/ui/main_window.py`):
+  a right-click on the status bar (or on its engine/progress widgets at the
+  bottom right) opens a menu with **Show log panel** (checkable), the log-area
+  tabs (*Log*, *Mesh Report*, *Mesh Viewer Scene Info*), *Auto-scroll*,
+  *Save log…* and *Pop out log…*. Choosing a tab also re-shows a hidden panel;
+  the status bar carries a tooltip pointing at the menu.
+
 - **Auto-play defaults to OFF + configurable in Settings** (`app/settings.py`,
   `app/ui/main_window.py`, `app/ui/vtk_viewer.py`): the Field Viewer no longer
   starts the animation on its own; the "Auto-play" checkbox (and its default,
