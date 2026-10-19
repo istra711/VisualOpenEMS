@@ -284,6 +284,31 @@ def main() -> int:
     assert v._context_menu_allowed(QPoint(5, 5)), "menu blocked on the controls"
     print("  right-click gating (pane excluded) OK")
 
+    # --- video export (offscreen has no GL window -> test the pure parts) ---
+    from unittest.mock import patch
+
+    assert v.btn_video.isEnabled(), "Video… must be enabled for a series"
+    assert v._default_video_path().name == "Et-E.mp4", v._default_video_path()
+    with patch("app.ui.vtk_viewer.QMessageBox.information"):
+        assert v.export_video(td / "no_gl.mp4") is None, "export without GL must refuse"
+    assert not (td / "no_gl.mp4").exists()
+
+    img = vtk.vtkImageData()
+    img.SetDimensions(5, 3, 1)  # odd width/height
+    img.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 3)
+    buf = ns.vtk_to_numpy(img.GetPointData().GetScalars()).reshape(3, 5, 3)
+    for row in range(3):
+        buf[row, :, :] = row
+    rgb = v._image_to_rgb(img)
+    assert rgb.shape == (2, 4, 3), rgb.shape  # cropped to even dims
+    assert int(rgb[0, 0, 0]) == 2, "image must be flipped (VTK is bottom-up)"
+    assert int(rgb[1, 0, 0]) == 1
+    v._apply_frame_range("point", "magnitude", False)
+    assert v._data_range[0] <= v._data_range[1]
+    v.clear()
+    assert not v.btn_video.isEnabled(), "Video… must be disabled without a series"
+    print("  video export helpers OK")
+
     print("VTK VIEWER SMOKE PASS")
     return 0
 

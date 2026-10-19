@@ -22,6 +22,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSlider,
     QSpinBox,
@@ -244,6 +246,14 @@ class VtkFieldViewer(QWidget):
         self.chk_outline.toggled.connect(self._refresh_display)
         self.btn_reset = QPushButton("Reset view")
         self.btn_reset.clicked.connect(self._reset_camera)
+        self.btn_video = QPushButton("Video…")
+        self.btn_video.setToolTip(
+            "Render the loaded field sequence to an MP4 video with the current\n"
+            "3D settings (representation, array, colour range, axes, camera).\n"
+            "Frames per second: the \"fps\" value next to Play."
+        )
+        self.btn_video.setEnabled(False)  # needs a loaded time series
+        self.btn_video.clicked.connect(self._on_export_video)
         self.btn_popout = QPushButton("Pop out")
         self.btn_popout.setToolTip("Show the 3D view in a separate window (click again to dock).")
         self.btn_popout.clicked.connect(self.popout)
@@ -251,6 +261,7 @@ class VtkFieldViewer(QWidget):
                   QLabel("Array"), self.cmb_array, self.chk_outline):
             bar.addWidget(w)
         bar.addStretch(1)
+        bar.addWidget(self.btn_video)
         bar.addWidget(self.btn_popout)
         bar.addWidget(self.btn_reset)
         root.addLayout(bar)
@@ -628,6 +639,7 @@ class VtkFieldViewer(QWidget):
         self.lbl_time_info.setText("")
         self.lbl_sim_time.setText("")
         self._set_time_visible(False)
+        self.btn_video.setEnabled(False)
         self.cmb_array.blockSignals(True)
         self.cmb_array.clear()
         self.cmb_array.blockSignals(False)
@@ -685,6 +697,7 @@ class VtkFieldViewer(QWidget):
         menu = QMenu(self)
         menu.addAction("Open…", self._on_open)
         menu.addAction("Export project dumps → VTK", self.export_and_load)
+        menu.addAction("Save video…", self._on_export_video)
         menu.addSeparator()
         if self._popout_win is not None:
             menu.addAction("Dock view (close pop-out)", self.restore_from_popout)
@@ -780,6 +793,7 @@ class VtkFieldViewer(QWidget):
             self._set_time_visible(True)
         else:
             self._set_time_visible(False)
+        self.btn_video.setEnabled(bool(self._series) and len(self._series) > 1)
         self._populate_arrays()
         if self._ensure_render_window():
             self._refresh_display()
@@ -1231,3 +1245,214 @@ class VtkFieldViewer(QWidget):
                 text = self.format_frequency(f) or self.format_sim_time(t)
         self.lbl_sim_time.setText(text)
         self.lbl_sim_time.setVisible(bool(text) and getattr(self, "_time_controls_on", False))
+
+    # ------------------------------------------------------------ video export
+    def _default_video_path(self) -> Path:
+        """``<series>.mp4`` next to the loaded frames (``Et-E_0000`` -> Et-E)."""
+        p = self._current_path or (self._series[0] if self._series else None)
+        if p is None:
+            return Path("field.mp4")
+        p = Path(p)
+        stem = p.stem
+        m = re.match(r"(?P<base>.+)_(?P<idx>\d+)$", stem)
+        if m and self._series:
+            stem = m.group("base")
+        return p.parent / (stem + ".mp4")
+
+    def _select_array(self, loc, name) -> None:
+        for i in range(self.cmb_array.count()):
+            if self.cmb_array.itemData(i) == (loc, name):
+                self.cmb_array.setCurrentIndex(i)  # emits -> refreshes the view
+                return
+
+    @staticmethod
+    def _image_to_rgb(image):
+        """``vtkImageData`` (RGB) -> top-down, even-sized uint8 ``(h, w, 3)``."""
+        import numpy as np
+        from vtk.util import numpy_support as ns
+
+        w, h, _ = image.GetDimensions()
+        arr = ns.vtk_to_numpy(image.GetPointData().GetScalars()).reshape(h, w, -1)
+        rgb = arr[::-1, :, :3]  # VTK images are bottom-up
+        h -= h % 2  # H.264 needs even dimensions
+        w -= w % 2
+        return np.ascontiguousarray(rgb[:h, :w])
+
+    def _grab_frame_rgb(self):
+        """Render the current view and return it as an RGB numpy array."""
+        rw = self._iren.GetRenderWindow()
+        rw.Render()
+        grab = self._vtk.vtkWindowToImageFilter()
+        grab.SetInput(rw)
+        grab.ReadFrontBufferOff()  # read the back buffer (no swap needed)
+        grab.SetInputBufferTypeToRGB()
+        grab.Update()
+        return self._image_to_rgb(grab.GetOutput())
+
+    def _apply_frame_range(self, loc, name, auto: bool) -> None:
+        """Update the data range for a new frame without touching the widgets."""
+        if not name or self._grid is None:
+            return
+        data = self._grid.GetPointData() if loc == "point" else self._grid.GetCellData()
+        arr = data.GetArray(name)
+        rng = arr.GetRange() if arr else (0.0, 1.0)
+        self._data_range = (float(rng[0]), float(rng[1]))
+        if auto and self._series:
+            rng = self._series_range_for(name)
+            if rng is not None:
+                self._data_range = rng  # one fixed range for the whole video
+        self._scalar_range = self._data_range
+        self._scalar_name = name
+
+    def _on_export_video(self) -> None:
+        self.export_video()
+
+    def export_video(self, path: Path | str | None = None) -> Path | None:
+        """Render the loaded time series to an MP4 using the current view.
+
+        All display settings are used as they are (representation, array,
+        slice/iso position, colour range/scale, outline, axes, camera) plus the
+        "fps" value for the frame rate. Returns the written file (None on
+        cancel/error).
+        """
+        if self._iren is None or self._renderer is None:
+            QMessageBox.information(
+                self,
+                "Save video",
+                "The 3D view is not available (no OpenGL), so no video can be "
+                "rendered.",
+            )
+            return None
+        n = len(self._series)
+        if n < 2:
+            QMessageBox.information(
+                self,
+                "Save video",
+                "Load a time series first (multiple steps), e.g. via\n"
+                "\"Export project dumps → VTK\".",
+            )
+            return None
+
+        target = Path(path) if path else None
+        if target is None:
+            chosen, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save field video",
+                str(self._default_video_path()),
+                "MP4 video (*.mp4);;All files (*)",
+            )
+            if not chosen:
+                return None
+            target = Path(chosen)
+        if target.suffix.lower() not in (".mp4", ".m4v"):
+            target = target.with_suffix(".mp4")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(self, "Save video", f"Cannot create folder:\n{e}")
+            return None
+
+        fps = max(1, int(self.spn_fps.value()))
+        loc, name = self._array()
+        auto = self.chk_auto.isChecked()
+        manual = (self.spn_min.value(), self.spn_max.value())
+        play_on = self.btn_play.isChecked()
+        cur = self.slider_time.value()
+        self._timer.stop()
+        self.btn_play.blockSignals(True)
+        self.btn_play.setChecked(False)
+        self.btn_play.setText("▶ Play")
+        self.btn_play.blockSignals(False)
+
+        progress = QProgressDialog("Rendering field video…", "Cancel", 0, n, self)
+        progress.setWindowTitle("Save video")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        written = 0
+        writer = None
+        cancelled = False
+        try:
+            try:
+                import imageio
+            except ImportError:
+                QMessageBox.warning(
+                    self,
+                    "Save video",
+                    "Video export needs imageio + imageio-ffmpeg\n"
+                    "(pip install imageio imageio-ffmpeg).",
+                )
+                return None
+            try:
+                writer = imageio.get_writer(
+                    str(target),
+                    fps=fps,
+                    codec="libx264",
+                    quality=8,
+                    macro_block_size=1,  # keep the exact render size
+                )
+            except Exception as e:  # noqa: BLE001 — ffmpeg missing/broken
+                QMessageBox.warning(
+                    self, "Save video", f"Cannot open the video writer:\n{e}"
+                )
+                return None
+            for i, frame_path in enumerate(self._series, start=1):
+                if progress.wasCanceled():
+                    cancelled = True
+                    break
+                if not self._read_into_grid(frame_path):
+                    continue
+                self._apply_frame_range(loc, name, auto)
+                self._refresh_display()
+                writer.append_data(self._grab_frame_rgb())
+                written += 1
+                progress.setValue(i)
+                progress.setLabelText(
+                    f"Rendering field video… {i}/{n}  ({int(100 * i / n)} %)"
+                )
+                QApplication.processEvents()
+        finally:
+            progress.close()
+            if writer is not None:
+                try:
+                    writer.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            # restore the frame/array/colour the user had before the export
+            self._restore_after_export(cur, loc, name, auto, manual, play_on)
+
+        if cancelled or not written:
+            try:
+                target.unlink()
+            except OSError:
+                pass
+            if not cancelled:
+                QMessageBox.warning(self, "Save video", "No frames could be rendered.")
+            return None
+        QMessageBox.information(
+            self,
+            "Save video",
+            f"Video written:\n{target}\n\n{written} frames at {fps} fps.",
+        )
+        return target
+
+    def _restore_after_export(self, index, loc, name, auto, manual, play_on) -> None:
+        """Put the viewer back on the frame/settings it showed before export."""
+        if self._series and 0 <= index < len(self._series):
+            if self._read_into_grid(self._series[index]):
+                self._populate_arrays()
+                self._select_array(loc, name)
+                self.slider_time.blockSignals(True)
+                self.slider_time.setValue(index)
+                self.slider_time.blockSignals(False)
+                if not auto:
+                    for spn, value in ((self.spn_min, manual[0]), (self.spn_max, manual[1])):
+                        spn.blockSignals(True)
+                        spn.setValue(value)
+                        spn.blockSignals(False)
+                    self._update_color_widgets()
+                    self._refresh_display()
+                self._log_title(self._series[index])
+        if play_on and self._series:
+            self.btn_play.setChecked(True)

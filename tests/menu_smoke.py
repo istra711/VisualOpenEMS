@@ -80,6 +80,8 @@ def test_menu_structure_and_shortcuts() -> None:
         .toString()
         == "Ctrl+Shift+R"
     )
+    assert _find(_menu("Simulation"), "Export field dumps to VTK\u2026") is not None
+    assert _find(_menu("Simulation"), "Export field video (MP4)\u2026") is not None
     assert _find(_menu("View"), "Log Panel").shortcut().toString() == "Ctrl+L"
     assert _find(_menu("Help"), "Help for Current Tab").shortcut().toString() == "F1"
     assert _find(_menu("Geometry"), "Delete Selected").shortcut().toString() == "Del"

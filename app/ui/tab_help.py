@@ -537,6 +537,12 @@ Buttons / controls
     series is loaded, Auto colour uses ONE range for the whole sequence (so the
     colours don't flicker frame-to-frame); untick Auto to override.
     With Loop off the playback stops on the last frame.
+  • "Video…" (also Simulation → "Export field video (MP4)…"): renders the
+    loaded sequence to an MP4 (H.264) with the CURRENT view: representation,
+    array, slice/iso position, colour range/log scale, outline, axes and
+    camera. Frame rate = the "fps" value next to Play. Choose the file in the
+    dialog; a progress window can cancel the render. The viewer is restored to
+    the frame/settings it showed before. Needs imageio + imageio-ffmpeg.
   • "Pop out": opens a second viewer in its own window, loaded with the same
     file and mirroring representation/array/slice/colour/playback settings (also
     Simulation -> "Field Viewer (pop-out)…"). The tab keeps its view; clicking

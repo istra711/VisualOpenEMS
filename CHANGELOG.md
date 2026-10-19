@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Field Viewer: MP4 video export of field sequences** (`app/ui/vtk_viewer.py`,
+  `app/ui/main_window.py`, `build_exe.py`): a new **Video…** button (also
+  Simulation → *Export field video (MP4)…* and the viewer's right-click menu)
+  renders the loaded time series to an H.264 **MP4** with the **current view
+  settings** — representation, selected array, slice/iso position, colour range
+  and log scale, outline, axes options and camera — at the **fps** value from
+  the playback controls. Frames are grabbed from the VTK window
+  (`vtkWindowToImageFilter`, cropped to even dimensions) and encoded with
+  `imageio` + `imageio-ffmpeg`; a progress dialog shows frame *i/n* and can be
+  cancelled (partial file removed). Afterwards the viewer is restored to the
+  frame/array/colour it showed before. The button is enabled only when a series
+  is loaded. `requirements.txt` lists `vtk`, `imageio`, `imageio-ffmpeg`;
+  `build_exe.py` bundles imageio's ffmpeg (it was in the exclude list).
+  Smoke: `tests/vtk_viewer_smoke.py` (default name, no-GL refusal, top-down
+  even-sized frame conversion, button state).
+
 - **Field Viewer: configurable axes** (`app/ui/vtk_viewer.py`,
   `app/ui/main_window.py`, `app/settings.py`, `app/ui/tab_help.py`): the
   orientation axes are explicitly X red / Y green / Z blue, and a new
