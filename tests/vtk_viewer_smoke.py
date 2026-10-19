@@ -120,8 +120,8 @@ def main() -> int:
     import vtk as _vtk
 
     bar = v._make_scalar_bar(_vtk, v._lookup_table(), "field")
-    assert bar.GetMaximumWidthInPixels() == 120
-    assert bar.GetMaximumHeightInPixels() == 300
+    assert bar.GetPosition() == (0.84, 0.06), bar.GetPosition()
+    assert bar.GetPosition2() == (0.15, 0.88), bar.GetPosition2()
     assert bar.GetTitleTextProperty().GetFontSize() == 12
     assert bar.GetLabelTextProperty().GetFontSize() == 10
     assert bar.GetUnconstrainedFontSize() == 1

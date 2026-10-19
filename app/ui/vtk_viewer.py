@@ -514,9 +514,12 @@ class VtkFieldViewer(QWidget):
         bar.SetTitle(name)
         bar.SetNumberOfLabels(5)
         bar.UnconstrainedFontSizeOn()  # font size in points, not bar-relative
-        bar.SetMaximumWidthInPixels(120)
-        bar.SetMaximumHeightInPixels(300)
-        bar.SetBarRatio(0.25)
+        # Pin the bar to the right edge in normalised viewport coordinates.
+        # (MaximumWidth/HeightInPixels override the position and centre the bar,
+        # which is why it drifted into the middle of the pane.)
+        bar.SetPosition(0.84, 0.06)
+        bar.SetPosition2(0.15, 0.88)
+        bar.SetBarRatio(0.24)
         bar.GetTitleTextProperty().SetFontSize(12)
         bar.GetTitleTextProperty().SetColor(1, 1, 1)
         bar.GetLabelTextProperty().SetFontSize(10)
