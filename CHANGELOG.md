@@ -63,6 +63,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resp. the NF2FF integration box) — so a dump is never left as a single point.
   Test `tests/dump_params_smoke.py`; help updated.
 
+- **Solver Parameters dialog** (`app/ui/solver_params.py`,
+  `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,
+  Simulation menu): new **Solver Parameters…** action exposing the openEMS FDTD
+  **initialization** (OverSampling, TimeStepFactor, TimeStepMethod, MaxTime) and
+  the **Run()** options (verbose, engine, cleanup, setup_only, disable_dumps,
+  dump_statistics, debug_material/-PEC/-boxes/-operator/-CSX,
+  showProbeDiscretization, legacyHDF5Dumps, cell_constant_material), per the
+  openEMS "Simulation" concepts page. `SimSpec` gained the fields (old projects
+  load with defaults = previous behaviour); the run script passes them to
+  `openEMS(**init)` / `FDTD.Run(**run_kw)` and stops after the setup for
+  `setup_only`. Test `tests/solver_params_smoke.py`; help updated.
+
 ## [0.5.0] - 2026-10-18
 
 ### Added

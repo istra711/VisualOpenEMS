@@ -215,6 +215,17 @@ Tips
   • Threads (numThreads): 0 = Auto (all cores). Set e.g. 4 to leave cores free
     or to limit CPU load on shared machines — passed to FDTD.Run(numThreads=N).
 
+Solver Parameters… (Simulation menu)
+  • openEMS FDTD initialization + Run() options (see the openEMS "Simulation"
+    concepts page). Initialization: OverSampling, TimeStepFactor (only lowers the
+    stability timestep), TimeStepMethod (1=CFL, 3=Rennings2), Max simulated time
+    (SetMaxTime, sets the frequency resolution df=1/T). Run(): Verbose 0-3,
+    Engine (fastest/basic/sse/sse-compressed/multithreaded) and the flags
+    Cleanup, Setup only (pre-process, no run), Disable dumps, Dump statistics,
+    Debug material/-PEC/-boxes/-operator/-CSX, Show probe discretization,
+    Legacy HDF5 dumps, Cell-constant material.
+  • Threads (numThreads) live in Simulation Parameters; EndCriteria/NrTS too.
+
 Run script (toolbar: Script…)
   • Run Simulation writes work/<project>/project_run.py (plus project_copy.json,
     geometry_primitives.json) — that file is what actually runs openEMS.
