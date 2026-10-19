@@ -47,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   min-max / **Log scale** / "Rescale to data range"), and a **Time** slider +
   **Play** that animates a per-step series. The exporter now writes one
   `.vtr` per stored step (`<name>_0000.vtr …`) plus `<name>.series.json` in the
-  batch export; a single `<name>.vtr` (first step) is kept. Tests:
+  batch export; a single `<name>.vtr` (first step) is kept. The tab and the
+  menu entry are named **Field Viewer**. Tests:
   `tests/test_vtk_export.py` (+ time-series) and `tests/vtk_viewer_smoke.py`.
 
 - **Field dumps: CSXCAD AddDump parameters in the GUI** (`app/models/project.py`

@@ -20,7 +20,7 @@ TAB_ORDER = [
     "Antenna",
     "Antenna Simulation",
     "Cylindrical Mesh",
-    "VTK",
+    "Field Viewer",
     "Solver Parameters",
 ]
 
@@ -367,7 +367,7 @@ Dumps
   • Add Field Dump… — region + quantity (E, H, J, SAR, …) and the CSXCAD
     AddDump parameters:
       – File type: HDF5 (.h5, default) or VTK (.vtr written directly by
-        openEMS — handy for ParaView / the VTK tab).
+        openEMS — handy for ParaView / the Field Viewer tab).
       – Interpolation: None / Node (default) / Cell.
       – Frequency (FD dumps) or an optional Frequencies list (e.g.
         "2.4 GHz, 2.45 GHz") that overrides it.
@@ -494,7 +494,7 @@ Tips
     warns and snaps a stale centre back). See Antenna Simulation → NF2FF box.
   • Summary PNG (nf2ff_summary.png) is written next to nf2ff.json.
 """,
-    "VTK": """VTK — field dumps as a 3D VTK file (.vtr)
+    "Field Viewer": """FIELD VIEWER — field dumps as a 3D VTK file (.vtr)
 
 Turns the openEMS HDF5 field dumps into VTK rectilinear grids and shows them in
 an embedded 3D view (no external ParaView needed).
