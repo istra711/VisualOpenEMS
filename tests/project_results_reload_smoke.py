@@ -157,6 +157,41 @@ def main() -> int:
         assert win.vtk_viewer._current_path == first_vtr, win.vtk_viewer._current_path
         print("[reload] project with dumps restores the Field Viewer OK")
 
+        # --- a stale/generic project name must not pull in other results -----
+        # (a project named "untitled" with deleted results used to load
+        #  <work>/untitled/simulation/sparams.s1p from an unrelated project)
+        import tempfile
+
+        tmp_work = Path(tempfile.mkdtemp(prefix="reload_stale_"))
+        try:
+            st = AppSettings()
+            st.work_dir = str(tmp_work)
+            st.save(tmp_work / "gui_settings.json")
+            st = AppSettings.load(tmp_work / "gui_settings.json")
+            decoy_sim = tmp_work / "untitled" / "simulation"
+            decoy_sim.mkdir(parents=True, exist_ok=True)
+            _write_sparams(decoy_sim)  # decoy of an unrelated project
+
+            win_s = MainWindow(st)
+            stale_dir = tmp_work / "stale_proj"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+            stale = Project.new_default("untitled")
+            stale.results = {
+                "project_dir": str(stale_dir),
+                "sparams": str(stale_dir / "sparams" / "sparams.s1p"),  # gone
+            }
+            stale_file = stale_dir / "stale_proj.fcsim.json"
+            stale.save(stale_file)
+
+            win_s._open_project_path(stale_file)
+            assert win_s.sparam_viewer.network is None, (
+                "a stale project name must not load another project's S-params"
+            )
+            print("[reload] generic project name does not pull in <work>/untitled OK")
+            win_s.close()
+        finally:
+            shutil.rmtree(tmp_work, ignore_errors=True)
+
         win.close()
         print("PROJECT RESULTS RELOAD SMOKE PASS")
         return 0
