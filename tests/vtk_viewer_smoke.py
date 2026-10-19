@@ -37,7 +37,7 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
 
     from app.postproc.vtk_export import export_dumps_to_vtk
-    from app.ui.vtk_viewer import VtkFieldViewer
+    from app.ui.vtk_viewer import VtkFieldViewer, axes_total_length
 
     app = QApplication.instance() or QApplication(sys.argv)
 
@@ -60,6 +60,15 @@ def main() -> int:
     # offscreen: the GL render window is (correctly) not created
     assert v._renderer is None
     print("  viewer loaded grid:", v._grid.GetNumberOfPoints(), "points")
+
+    # orientation triad scales with the data (a fixed 10-unit actor dominated
+    # ResetCamera(), so the field looked empty until the user zoomed in)
+    b = (0.0, 0.10, 0.0, 0.12, -0.02, 0.15)
+    diag = ((b[1] - b[0]) ** 2 + (b[3] - b[2]) ** 2 + (b[5] - b[4]) ** 2) ** 0.5
+    assert abs(axes_total_length(b) - 0.18 * diag) < 1e-12
+    assert axes_total_length((0, 0, 0, 0, 0, 0)) == 1.0
+    assert axes_total_length(b) < 0.05, "mm-scale data must not get a huge triad"
+    print("  axes triad length:", axes_total_length(b))
 
     # the reader is format-agnostic: a .vtu (ParaView-style) also loads
     import numpy as np
