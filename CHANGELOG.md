@@ -76,6 +76,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `openEMS(**init)` / `FDTD.Run(**run_kw)` and stops after the setup for
   `setup_only`. Test `tests/solver_params_smoke.py`; help updated.
 
+### Fixed
+
+- **VTK export produced nothing for real field dumps (axis order)**
+  (`app/postproc/vtk_export.py`): openEMS stores the dump field with the spatial
+  axes REVERSED (``z, y, x``) relative to the ``Mesh/{x,y,z}`` coordinate arrays,
+  so a real dump (field ``(3, nz, ny, nx)`` vs mesh ``nx,ny,nz``) failed the
+  ``mesh does not match field`` check and was skipped — only single-point (all
+  axes 1) or synthetic same-order dumps ever converted, which is why the Field
+  Viewer showed empty/„no dumps". ``_orient_field`` now detects and transposes
+  the reversed layout (single dumps and time series); verified on
+  ``Dipol_CST_mesh_test`` (``Et-E.vtr`` 162 kB, ``Et-H.vtr`` 179 kB).
+  Test `tests/test_vtk_export.py` (+ reversed-axis).
+
 ## [0.5.0] - 2026-10-18
 
 ### Added
