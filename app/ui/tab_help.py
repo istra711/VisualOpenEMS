@@ -548,9 +548,9 @@ Buttons / controls
     "Corner marker" puts a small ParaView-style triad in the lower-left corner
     instead of the one inside the scene; "Labels X/Y/Z" toggles the captions
     and "Label font" sets their size; "Size" scales the in-scene triad
-    (0.5x / 1x / 2x); "Coordinate ruler (numbers)" draws numeric x/y/z ticks
-    (in metres) around the dataset bounds. All choices are remembered across
-    sessions.
+    (0.5x / 1x / 2x / 4x / 8x); "Coordinate ruler (numbers)" draws numeric
+    x/y/z ticks (in metres) around the dataset bounds. All choices are
+    remembered across sessions.
   • Right-click on the controls (not inside the 3D view) opens a menu: Open…,
     Export dumps, Pop out view / Dock view, Reset view, Axes. Inside the 3D
     view the right mouse button stays reserved for navigation.

@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **View → Axes** submenu (also in the Field Viewer right-click menu) exposes
   *Show axes*, *Corner marker (ParaView style)* (small fixed triad in the
   lower-left corner instead of the in-scene one), *Labels X/Y/Z*, *Label font*
-  (8–24 pt), *Size* (0.5× / 1× / 2×, scales the in-scene triad) and
+  (8–24 pt), *Size* (0.5× / 1× / 2× / XXL 4× / XXXL 8×, scales the in-scene
+  triad) and
   *Coordinate ruler (numbers)* (numeric x/y/z ticks in metres around the
   dataset bounds via `vtkCubeAxesActor`). The choices persist in
   `AppSettings.field_viewer_axes`, are applied at startup and are mirrored

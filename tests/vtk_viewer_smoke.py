@@ -114,6 +114,8 @@ def main() -> int:
     assert v.axes_options()["corner"] is True, "menu action did not change the options"
     acts["size"][0.5].trigger()
     assert v.axes_options()["scale"] == 0.5
+    acts["size"][8.0].trigger()  # XXL / XXXL presets
+    assert v.axes_options()["scale"] == 8.0
     acts["font"][14].trigger()
     assert v.axes_options()["font"] == 14
     v.set_axes_option("corner", False)
