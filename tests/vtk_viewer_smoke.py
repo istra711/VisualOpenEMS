@@ -140,6 +140,18 @@ def main() -> int:
     assert v._lookup_table().GetScale() == 0
     print("  log-scale range (0 -> min positive) OK")
 
+    # pop-out the 3D pane and dock it back
+    v.popout()
+    assert v._popout_win is not None, "pop-out window not created"
+    assert v.btn_popout.text() == "Dock view"
+    assert v._host.parent() is not None
+    win = v._popout_win
+    v.popout()  # toggle -> restore
+    assert v._popout_win is None and win.viewer is None
+    assert v.btn_popout.text() == "Pop out"
+    assert v._host.parent() is not None
+    print("  pop-out / dock OK")
+
     print("VTK VIEWER SMOKE PASS")
     return 0
 
