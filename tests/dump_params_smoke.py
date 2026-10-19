@@ -29,6 +29,7 @@ def main() -> int:
     dlg.cmb_file_type.setCurrentIndex(1)  # VTK (.vtr) -> 0
     dlg.cmb_mode.setCurrentIndex(2)  # Cell -> 2
     dlg.ed_freqs.setText("2.4 GHz, 2.45 GHz")
+    dlg.spn_sub[0].setValue(10)  # time-domain sub-sampling
     dlg._accept()
     d = dlg.result
     assert isinstance(d, DumpDef)
@@ -36,7 +37,8 @@ def main() -> int:
     assert d.dump_mode == 2, d.dump_mode
     assert d.frequencies and len(d.frequencies) == 2, d.frequencies
     assert abs(d.frequencies[0] - 2.4e9) < 1.0 and abs(d.frequencies[1] - 2.45e9) < 1.0
-    print("  dump dialog -> file_type/dump_mode/frequencies OK")
+    assert d.sub_sampling == [10, 1, 1], d.sub_sampling
+    print("  dump dialog -> file_type/dump_mode/frequencies/sub_sampling OK")
 
     # round trip through Project JSON keeps the new fields
     import tempfile

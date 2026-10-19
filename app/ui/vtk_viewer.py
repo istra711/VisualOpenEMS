@@ -321,11 +321,14 @@ class VtkFieldViewer(QWidget):
 
     def _detect_series(self, path: Path) -> None:
         self._series, self._series_labels = [], []
-        m = re.match(r"(?P<base>.+)_(?P<idx>\d{4})$", path.stem)
+        m = re.match(r"(?P<base>.+)_(?P<idx>\d+)$", path.stem)
         if not m:
             return
         base = m.group("base")
-        files = sorted(path.parent.glob(base + "_*.vtr"))
+        files = sorted(
+            path.parent.glob(base + "_*.vtr"),
+            key=lambda p: int(re.search(r"_(\d+)$", p.stem).group(1)),  # noqa: B023
+        )
         if len(files) < 2:
             return
         labels = [p.stem.rsplit("_", 1)[1] for p in files]

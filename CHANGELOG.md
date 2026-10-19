@@ -62,7 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   use the 20..22 type range. The dialog also has **"Fit to geometry"** and
   **"Use NF2FF box"** buttons that fill Start/Stop (the structure bbox + margin,
   resp. the NF2FF integration box) — so a dump is never left as a single point.
-  Test `tests/dump_params_smoke.py`; help updated.
+  Also a **Sub-sampling** (x/y/z) row (time-domain only, disabled for
+  frequency-domain) to record every Nth step — bounds the number of timesteps
+  so a **temporal** field animation stays manageable. `DumpDef` gained
+  `sub_sampling`; the run script passes it to `CSX.AddDump`. The Field Viewer
+  series detection now also accepts openEMS' non-zero-padded `.vtr` series
+  (`Et-E_0.vtr`, …) and sorts numerically. Test `tests/dump_params_smoke.py`;
+  help updated.
 
 - **Solver Parameters dialog** (`app/ui/solver_params.py`,
   `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,

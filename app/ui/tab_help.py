@@ -374,6 +374,13 @@ Dumps
     Start/Stop buttons: "Fit to geometry" (structure bbox + margin) and
     "Use NF2FF box" (reuse the NF2FF integration box) — start != stop in at
     least one axis, otherwise the dump is a single point and shows nothing.
+  • Time-domain dumps (uncheck "Frequency domain") record one dataset per
+    timestep. "Sub-sampling" (x/y/z) records every Nth step — 1 = every step
+    (huge), e.g. 10 keeps every 10th so the animation stays manageable.
+  • To SEE the temporal evolution: make a time-domain dump, Run, then open the
+    Field Viewer -> "Export project dumps to VTK" (writes one .vtr per step +
+    <name>.series.json) and use the "Time" slider / "Play". With
+    File type = VTK, openEMS writes the .vtr series directly.
 
 NF2FF
   • Enable NF2FF box — far-field box for pattern results.
