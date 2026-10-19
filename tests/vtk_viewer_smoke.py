@@ -305,6 +305,43 @@ def main() -> int:
     assert int(rgb[1, 0, 0]) == 1
     v._apply_frame_range("point", "magnitude", False)
     assert v._data_range[0] <= v._data_range[1]
+    # --- VTK messages must not pop up a window; corner marker must not warn ---
+    from app.ui.vtk_viewer import configure_marker_widget, install_vtk_output_window
+
+    msg_log = td / "vtk_messages.log"
+    install_vtk_output_window(vtk, msg_log)
+
+    keep = []  # keep the interactor/window alive (VTK does not own them here)
+    rw = vtk.vtkRenderWindow()
+    rw.AddRenderer(vtk.vtkRenderer())
+    iren = vtk.vtkRenderWindowInteractor()
+    iren.SetRenderWindow(rw)
+    keep.extend([rw, iren])
+
+    def _marker():
+        w = vtk.vtkOrientationMarkerWidget()
+        w.SetOrientationMarker(vtk.vtkAxesActor())
+        w.SetInteractor(iren)
+        return w
+
+    def _log_text() -> str:
+        if not msg_log.exists():
+            return ""
+        return msg_log.read_text(encoding="utf-8", errors="replace")
+
+    good = _marker()
+    configure_marker_widget(good)  # enable first, then disable interaction
+    assert good.GetEnabled() == 1 and good.GetInteractive() == 0
+    assert "Generic Warning" not in _log_text(), (
+        "configure_marker_widget must call SetEnabled(1) BEFORE InteractiveOff()"
+    )
+    # ... and the redirect itself works: a deliberately wrong order is captured
+    # in the log file instead of popping up a VTK output window.
+    bad = _marker()
+    bad.InteractiveOff()  # warns (interactor/Enabled not set yet)
+    assert "Generic Warning" in _log_text(), "VTK messages not redirected to a file"
+    print("  VTK message redirect + corner marker order OK")
+
     v.clear()
     assert not v.btn_video.isEnabled(), "Video… must be disabled without a series"
     print("  video export helpers OK")
