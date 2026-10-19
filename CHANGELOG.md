@@ -120,6 +120,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   widget is no longer moved. Test in `tests/vtk_viewer_smoke.py` (pop-out,
   close via the window, assert the tab layout is unchanged).
 
+- **Auto-play defaults to OFF + configurable in Settings** (`app/settings.py`,
+  `app/ui/main_window.py`, `app/ui/vtk_viewer.py`): the Field Viewer no longer
+  starts the animation on its own; the "Auto-play" checkbox (and its default,
+  remembered across sessions as `field_viewer_autoplay`) can be set in
+  **Settings → Settings… → Field Viewer**. The **Tools menu was renamed to
+  Settings**. The step counter now reads `3/153 (step 124)` instead of `(t124)`
+  so it cannot be mistaken for a time without a unit; the physical time next to
+  it always carries its unit (`t = 84.63 ps`, `t = 1.5 ns`, `f = 2.23 GHz`).
+
 - **Field Viewer: physical time on the slider + right-click menu**
   (`app/postproc/vtk_export.py`, `app/ui/vtk_viewer.py`): the frame's simulation
   time is read from the openEMS HDF5 dataset attribute (`time`, seconds) and

@@ -529,7 +529,9 @@ Buttons / controls
     (auto unit), taken from the openEMS HDF5 "time" attribute and written into
     <name>.series.json by the export (frequency-domain steps show "f = … GHz").
   • Film mode: "fps" sets the speed (1–60), "Loop" repeats the sequence,
-    "Auto-play" starts immediately after loading/exporting a series. While a
+    "Auto-play" (default OFF) starts immediately after loading/exporting a
+    series; the default can be changed in Settings → Settings… → Field Viewer
+    (toggling the checkbox here is remembered too). While a
     series is loaded, Auto colour uses ONE range for the whole sequence (so the
     colours don't flicker frame-to-frame); untick Auto to override.
     With Loop off the playback stops on the last frame.

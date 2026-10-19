@@ -536,6 +536,10 @@ class MainWindow(QMainWindow):
         from app.ui.vtk_viewer import VtkFieldViewer
 
         self.vtk_viewer = VtkFieldViewer(work_dir=self.settings.work_path())
+        self.vtk_viewer.set_autoplay_default(
+            bool(getattr(self.settings, "field_viewer_autoplay", False))
+        )
+        self.vtk_viewer.chk_autoplay.toggled.connect(self._on_field_autoplay_toggled)
         tabs.addTab(self.vtk_viewer, "Field Viewer")
         self.vtk_tab_index = tabs.indexOf(self.vtk_viewer)
 
@@ -849,7 +853,7 @@ class MainWindow(QMainWindow):
         add_action(vmenu, "Log Panel", btn=self.btn_log_toggle, shortcut="Ctrl+L")
         vmenu.aboutToShow.connect(self._sync_view_menu)
 
-        tmenu = bar.addMenu("&Tools")
+        tmenu = bar.addMenu("&Settings")
         add_action(tmenu, "Settings\u2026", btn=self.btn_settings)
 
         hmenu = bar.addMenu("&Help")
@@ -4049,6 +4053,14 @@ class MainWindow(QMainWindow):
         self.runner.abort()
         self._log("Abort requested")
 
+    def _on_field_autoplay_toggled(self, on: bool) -> None:
+        """Remember the Field Viewer Auto-play choice across sessions."""
+        self.settings.field_viewer_autoplay = bool(on)
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 — never block playback on a write error
+            pass
+
     def _on_settings(self) -> None:
         # Settings dialog: paths + port defaults
         from PySide6.QtWidgets import (
@@ -4064,7 +4076,7 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.resize(480, 460)
+        dlg.resize(480, 560)
         root = QVBoxLayout(dlg)
 
         form = QFL()
@@ -4128,6 +4140,20 @@ class MainWindow(QMainWindow):
         hint.setWordWrap(True)
         root.addWidget(hint)
 
+        # --- Field Viewer ---
+        grp_fv = QGroupBox("Field Viewer")
+        fvform = QFL(grp_fv)
+        chk_autoplay = QCheckBox("Auto-play time series after loading / exporting")
+        chk_autoplay.setChecked(
+            bool(getattr(self.settings, "field_viewer_autoplay", False))
+        )
+        chk_autoplay.setToolTip(
+            "Default state of the Field Viewer 'Auto-play' checkbox.\n"
+            "Toggle in the viewer is remembered as well."
+        )
+        fvform.addRow("", chk_autoplay)
+        root.addWidget(grp_fv)
+
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -4147,7 +4173,12 @@ class MainWindow(QMainWindow):
         self.settings.default_port_excite = bool(chk_excite.isChecked())
         self.settings.default_port_mesh_dirs = cmb_mesh.currentText()
         self.settings.default_port_direction = cmb_dir.currentText()
+        self.settings.field_viewer_autoplay = bool(chk_autoplay.isChecked())
         self.settings.save()
+        try:
+            self.vtk_viewer.set_autoplay_default(self.settings.field_viewer_autoplay)
+        except Exception:  # noqa: BLE001 — viewer may not exist in early tests
+            pass
         self.runner = SimulationRunner(self.settings, app_root=APP_ROOT)
         pd = self.settings.port_defaults()
         self._log(

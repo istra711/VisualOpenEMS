@@ -15,7 +15,7 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-MENUS = ["File", "Presets", "Geometry", "Mesh", "Simulation", "View", "Tools", "Help"]
+MENUS = ["File", "Presets", "Geometry", "Mesh", "Simulation", "View", "Settings", "Help"]
 
 _APP = None
 _WIN = None
