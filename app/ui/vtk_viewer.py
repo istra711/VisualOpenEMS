@@ -241,7 +241,11 @@ class VtkFieldViewer(QWidget):
         self.work_dir = Path(work_dir) if work_dir else None
 
     def _on_open(self) -> None:
-        start = str(self.work_dir) if self.work_dir else ""
+        start = ""
+        if self.work_dir:
+            vtk_dir = Path(self.work_dir) / "vtk"
+            # the converted files live in <project>/vtk — start there
+            start = str(vtk_dir if vtk_dir.is_dir() else self.work_dir)
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open VTK file",
