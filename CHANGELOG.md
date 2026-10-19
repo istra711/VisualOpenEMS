@@ -109,6 +109,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   LUT/mapper while log is on, so the checkbox really switches to log10.
   Smoke covers it.
 
+- **Field Viewer pop-out** (`app/ui/vtk_viewer.py`, `app/ui/main_window.py`): a
+  "Pop out" toolbar button (and Simulation -> "Field Viewer (pop-out)…") moves
+  the 3D pane into its own window; "Dock back", closing the window or clicking
+  the button again returns it to the tab. The render pane is re-parented, so the
+  loaded grid / time series / camera survive. Test in `tests/vtk_viewer_smoke.py`
+  (pop-out + dock restores the pane).
+
 - **Solver Parameters dialog** (`app/ui/solver_params.py`,
   `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,
   Simulation menu): new **Solver Parameters…** action exposing the openEMS FDTD

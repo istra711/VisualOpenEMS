@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QMainWindow,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -62,6 +63,41 @@ def _make_reader(vtk, path: Path):
     return getattr(vtk, cls)()
 
 
+class FieldViewerWindow(QMainWindow):
+    """Standalone pop-out window hosting the field viewer's 3D pane."""
+
+    def __init__(self, viewer: "VtkFieldViewer") -> None:
+        super().__init__(None)
+        self.viewer: VtkFieldViewer | None = viewer
+        self.setWindowTitle("Field Viewer - pop-out")
+        self.resize(1000, 780)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(6, 6, 6, 6)
+        bar = QHBoxLayout()
+        title = QLabel("Pop-out: Field Viewer")
+        title.setStyleSheet("font-weight: bold;")
+        bar.addWidget(title)
+        bar.addStretch(1)
+        self.btn_dock = QPushButton("Dock back")
+        bar.addWidget(self.btn_dock)
+        layout.addLayout(bar)
+
+        viewer._host.setParent(None)
+        layout.addWidget(viewer._host, 1)
+        self.setCentralWidget(container)
+        self.btn_dock.clicked.connect(viewer.restore_from_popout)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        v = self.viewer
+        self.viewer = None
+        if v is not None and v._popout_win is self:
+            v.restore_from_popout()
+        super().closeEvent(event)
+
+
 class VtkFieldViewer(QWidget):
     """A VTK render window + ParaView-style controls for field dumps."""
 
@@ -82,12 +118,14 @@ class VtkFieldViewer(QWidget):
         self._timer.timeout.connect(self._on_play_tick)
         self._series_range = None  # global (lo, hi) so the movie does not flicker
         self._series_range_cache: dict = {}
+        self._popout_win: FieldViewerWindow | None = None
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
+        self._root_layout = root  # holds the control rows + the 3D pane
 
         bar = QHBoxLayout()
         self.btn_open = QPushButton("Open…")
@@ -111,10 +149,14 @@ class VtkFieldViewer(QWidget):
         self.chk_outline.toggled.connect(self._refresh_display)
         self.btn_reset = QPushButton("Reset view")
         self.btn_reset.clicked.connect(self._reset_camera)
+        self.btn_popout = QPushButton("Pop out")
+        self.btn_popout.setToolTip("Show the 3D view in a separate window (click again to dock).")
+        self.btn_popout.clicked.connect(self.popout)
         for w in (self.btn_open, self.btn_export, QLabel("Representation"), self.cmb_rep,
                   QLabel("Array"), self.cmb_array, self.chk_outline):
             bar.addWidget(w)
         bar.addStretch(1)
+        bar.addWidget(self.btn_popout)
         bar.addWidget(self.btn_reset)
         root.addLayout(bar)
 
@@ -267,6 +309,37 @@ class VtkFieldViewer(QWidget):
     # --------------------------------------------------------------- actions
     def set_work_dir(self, work_dir: Path | None) -> None:
         self.work_dir = Path(work_dir) if work_dir else None
+
+    def popout(self) -> None:
+        """Move the 3D pane into its own window (toggle: click again to dock)."""
+        if self._popout_win is not None:
+            self.restore_from_popout()
+            return
+        win = FieldViewerWindow(self)
+        self._popout_win = win
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        self.btn_popout.setText("Dock view")
+        if self._iren is not None:
+            self._iren.GetRenderWindow().Render()
+
+    def restore_from_popout(self) -> None:
+        """Move the 3D pane back into the Field Viewer tab."""
+        win = self._popout_win
+        if win is None:
+            return
+        self._popout_win = None
+        win.viewer = None  # avoid a re-entrant closeEvent
+        try:
+            win.close()
+        except Exception:  # noqa: BLE001
+            pass
+        self._host.setParent(None)
+        self._root_layout.addWidget(self._host, 1)  # NOT _host_layout (inside it)
+        self.btn_popout.setText("Pop out")
+        if self._iren is not None:
+            self._iren.GetRenderWindow().Render()
 
     def _on_open(self) -> None:
         start = ""

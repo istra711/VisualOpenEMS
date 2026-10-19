@@ -820,6 +820,12 @@ class MainWindow(QMainWindow):
         add_action(smenu, "Field Viewer", slot=self._on_show_vtk)
         add_action(
             smenu,
+            "Field Viewer (pop-out)\u2026",
+            slot=self._on_popout_field_viewer,
+            tip="Open the Field Viewer tab and move the 3D view to a separate window",
+        )
+        add_action(
+            smenu,
             "Export field dumps to VTK\u2026",
             slot=self._on_export_vtk,
             tip="Convert the project's field dumps (simulation/*.h5) to VTK (.vtr) "
@@ -1380,6 +1386,15 @@ class MainWindow(QMainWindow):
         if getattr(self, "vtk_tab_index", -1) >= 0:
             self.tabs.setCurrentIndex(self.vtk_tab_index)
         self._log("Field Viewer opened")
+
+    def _on_popout_field_viewer(self) -> None:
+        """Open the Field Viewer tab and move its 3D pane to a separate window."""
+        self._on_show_vtk()
+        try:
+            if self.vtk_viewer._popout_win is None:
+                self.vtk_viewer.popout()
+        except Exception as e:  # noqa: BLE001 — never crash the GUI
+            self._log(f"Field Viewer pop-out failed: {e}")
 
     def _on_export_vtk(self) -> None:
         """Convert the project's field dumps to VTK and show them."""
