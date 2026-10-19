@@ -132,6 +132,16 @@ class SolverParamsDialog(QDialog):
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        from PySide6.QtWidgets import QPushButton
+
+        btn_help = QPushButton("Help")
+        btn_help.setToolTip("Help for the Solver Parameters")
+        from app.ui.tab_help import show_tab_help
+
+        btn_help.clicked.connect(
+            lambda _=False, p=self: show_tab_help(p, "Solver Parameters")
+        )
+        bb.addButton(btn_help, QDialogButtonBox.ButtonRole.HelpRole)
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
         outer.addWidget(bb)
