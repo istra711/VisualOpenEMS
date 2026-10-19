@@ -524,7 +524,10 @@ Buttons / controls
     (a contour of the selected array; Iso-level slider).
   • "Colour": Auto (data range) / manual min-max + Log scale (log colour
     mapping, like ParaView's "Use log scale") + "Rescale to data range".
-  • "Time" slider + "Play": step through / animate a per-step series.
+  • "Time" slider + "Play": step through / animate a per-step series. Next to
+    the step counter the frame's physical simulation time is shown in ps or ns
+    (auto unit), taken from the openEMS HDF5 "time" attribute and written into
+    <name>.series.json by the export (frequency-domain steps show "f = … GHz").
   • Film mode: "fps" sets the speed (1–60), "Loop" repeats the sequence,
     "Auto-play" starts immediately after loading/exporting a series. While a
     series is loaded, Auto colour uses ONE range for the whole sequence (so the
@@ -536,6 +539,9 @@ Buttons / controls
     again / "Dock back" / closing the window dismisses the pop-out.
   • "Outline": domain box. "Reset view": fit camera. Mouse: rotate (left),
     pan (middle/shift), zoom (wheel).
+  • Right-click on the controls (not inside the 3D view) opens a menu: Open…,
+    Export dumps, Pop out view / Dock view, Reset view. Inside the 3D view the
+    right mouse button stays reserved for navigation.
   • A colour bar shows the scalar range.
 
 What it writes (per dump)

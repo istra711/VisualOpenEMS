@@ -98,6 +98,19 @@ def main() -> int:
         p = series_dir / f"Et-E_{i:04d}.vtr"
         shutil.copy(written[0], p)
         steps.append(p)
+    import json
+
+    (series_dir / "Et-E.series.json").write_text(
+        json.dumps(
+            {
+                "labels": ["t0", "t62", "t124"],
+                "files": [p.name for p in steps],
+                "times": [3.398875e-13, 4.2485935e-11, 8.463198e-11],
+                "frequencies": [None, None, None],
+            }
+        ),
+        encoding="utf-8",
+    )
     v.load(steps[0])
     assert len(v._series) == 3, v._series
     assert v.slider_time.maximum() == 2
@@ -105,6 +118,16 @@ def main() -> int:
     assert v._timer.isActive()
     assert v._series_range_for("magnitude") is not None, "no fixed colour range"
     print("  series loaded:", len(v._series), "steps, auto-playing")
+
+    # physical simulation time of the frame (auto ps/ns unit)
+    assert v.lbl_sim_time.text() == "t = 0.3399 ps", v.lbl_sim_time.text()
+    v.slider_time.setValue(2)
+    assert v.lbl_sim_time.text() == "t = 84.63 ps", v.lbl_sim_time.text()
+    assert v.format_sim_time(1.5e-9) == "t = 1.5 ns"
+    assert v.format_sim_time(4.2e-12) == "t = 4.2 ps"
+    assert v.format_frequency(2.23e9) == "f = 2.23 GHz"
+    assert v.format_sim_time(None) == ""
+    print("  frame time label:", v.lbl_sim_time.text())
 
     v.spn_fps.setValue(10)
     assert v._timer.interval() == 100, v._timer.interval()
@@ -163,6 +186,19 @@ def main() -> int:
     assert v._popout_win is None
     assert v._root_layout.count() == before
     print("  pop-out / close (no duplicate) OK")
+
+    # right-click menu: only outside the 3D pane (VTK uses it inside)
+    from PySide6.QtCore import QPoint
+
+    v.btn_play.setChecked(False)
+    v.resize(900, 700)
+    v.show()
+    app.processEvents()
+    host = v._host.geometry()
+    assert host.height() > 50, host
+    assert not v._context_menu_allowed(host.center()), "menu would open inside the 3D pane"
+    assert v._context_menu_allowed(QPoint(5, 5)), "menu blocked on the controls"
+    print("  right-click gating (pane excluded) OK")
 
     print("VTK VIEWER SMOKE PASS")
     return 0

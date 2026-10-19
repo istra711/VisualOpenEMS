@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -109,6 +110,8 @@ class VtkFieldViewer(QWidget):
         self._scalar_range = (0.0, 1.0)
         self._series: list[Path] = []
         self._series_labels: list[str] = []
+        self._series_times: list[float | None] = []  # seconds (TD dumps)
+        self._series_freqs: list[float | None] = []  # Hz (FD dumps)
         self._current_path: Path | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(250)
@@ -123,6 +126,11 @@ class VtkFieldViewer(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
         self._root_layout = root  # holds the control rows + the 3D pane
+
+        # Right-click menu on the controls/background only — never on the 3D
+        # pane (VTK uses right-click there, see _context_menu_allowed).
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
 
         bar = QHBoxLayout()
         self.btn_open = QPushButton("Open…")
@@ -217,6 +225,11 @@ class VtkFieldViewer(QWidget):
         self.btn_play.setCheckable(True)
         self.btn_play.toggled.connect(self._on_play_toggled)
         self.lbl_time_info = QLabel("")
+        self.lbl_sim_time = QLabel("")
+        self.lbl_sim_time.setToolTip(
+            "Physical simulation time of this frame (ps/ns) — or frequency for "
+            "frequency-domain dumps — taken from the openEMS HDF5 dump."
+        )
         self.spn_fps = QSpinBox()
         self.spn_fps.setRange(1, 60)
         self.spn_fps.setValue(4)
@@ -235,6 +248,7 @@ class VtkFieldViewer(QWidget):
         row4.addWidget(self.slider_time, 1)
         row4.addWidget(self.btn_play)
         row4.addWidget(self.lbl_time_info)
+        row4.addWidget(self.lbl_sim_time)
         row4.addWidget(self.spn_fps)
         row4.addWidget(self.chk_loop)
         row4.addWidget(self.chk_autoplay)
@@ -255,11 +269,13 @@ class VtkFieldViewer(QWidget):
         root.addWidget(self._host, 1)
 
     def _set_time_visible(self, on: bool) -> None:
+        self._time_controls_on = on
         for w in (
             self.lbl_time,
             self.slider_time,
             self.btn_play,
             self.lbl_time_info,
+            self.lbl_sim_time,
             self.spn_fps,
             self.chk_loop,
             self.chk_autoplay,
@@ -331,6 +347,29 @@ class VtkFieldViewer(QWidget):
         except Exception:  # noqa: BLE001
             pass
         self.btn_popout.setText("Pop out")
+
+    def _context_menu_allowed(self, pos) -> bool:
+        """True unless the click is inside the 3D pane (VTK right-click there)."""
+        host = getattr(self, "_host", None)
+        return host is None or not host.geometry().contains(pos)
+
+    def _show_context_menu(self, pos) -> None:
+        if not self._context_menu_allowed(pos):
+            return
+        menu = QMenu(self)
+        menu.addAction("Open…", self._on_open)
+        menu.addAction("Export project dumps → VTK", self.export_and_load)
+        menu.addSeparator()
+        if self._popout_win is not None:
+            menu.addAction("Dock view (close pop-out)", self.restore_from_popout)
+        elif self.btn_popout.isHidden():
+            win = self.window()
+            if isinstance(win, FieldViewerWindow):
+                menu.addAction("Close pop-out window", win.close)
+        else:
+            menu.addAction("Pop out view", self.popout)
+        menu.addAction("Reset view", self._reset_camera)
+        menu.exec(self.mapToGlobal(pos))
 
     def _copy_state_from(self, other: "VtkFieldViewer") -> None:
         """Mirror representation / colour / playback settings (for the pop-out)."""
@@ -442,6 +481,7 @@ class VtkFieldViewer(QWidget):
 
     def _detect_series(self, path: Path) -> None:
         self._series, self._series_labels = [], []
+        self._series_times, self._series_freqs = [], []
         m = re.match(r"(?P<base>.+)_(?P<idx>\d+)$", path.stem)
         if not m:
             return
@@ -454,13 +494,23 @@ class VtkFieldViewer(QWidget):
             return
         labels = [p.stem.rsplit("_", 1)[1] for p in files]
         sidecar = path.parent / (base + ".series.json")
+        times: list[float | None] = []
+        freqs: list[float | None] = []
         if sidecar.exists():
             try:
-                labels = list(json.loads(sidecar.read_text(encoding="utf-8")).get("labels", labels))
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+                labels = list(data.get("labels", labels))
+                times = list(data.get("times") or [])
+                freqs = list(data.get("frequencies") or [])
             except Exception:  # noqa: BLE001
                 pass
         self._series = files
         self._series_labels = labels
+        n = len(files)
+        # keep the lists aligned with the files (sidecars from older exports
+        # have no times/frequencies)
+        self._series_times = (times + [None] * n)[:n]
+        self._series_freqs = (freqs + [None] * n)[:n]
         self._series_range = None  # computed lazily for the chosen array
 
     def _populate_arrays(self) -> None:
@@ -787,4 +837,43 @@ class VtkFieldViewer(QWidget):
             i = self.slider_time.value()
             lab = self._series_labels[i] if i < len(self._series_labels) else str(i)
             self.lbl_time_info.setText(f"{i + 1}/{len(self._series)}  ({lab})")
+        self._update_sim_time_label()
         print(f"VTK viewer: loaded {path.name} ({n} points, scalar={name})")
+
+    @staticmethod
+    def format_sim_time(seconds: float | None) -> str:
+        """``t = 339.9 ps`` / ``t = 1.268 ns`` (auto unit)."""
+        if seconds is None:
+            return ""
+        a = abs(seconds)
+        if a < 1e-9:
+            return f"t = {seconds * 1e12:.4g} ps"
+        if a < 1e-6:
+            return f"t = {seconds * 1e9:.4g} ns"
+        if a < 1e-3:
+            return f"t = {seconds * 1e6:.4g} µs"
+        return f"t = {seconds:.4g} s"
+
+    @staticmethod
+    def format_frequency(hz: float | None) -> str:
+        if hz is None:
+            return ""
+        a = abs(hz)
+        if a >= 1e9:
+            return f"f = {hz / 1e9:.4g} GHz"
+        if a >= 1e6:
+            return f"f = {hz / 1e6:.4g} MHz"
+        if a >= 1e3:
+            return f"f = {hz / 1e3:.4g} kHz"
+        return f"f = {hz:.4g} Hz"
+
+    def _update_sim_time_label(self) -> None:
+        text = ""
+        if self._series:
+            i = self.slider_time.value()
+            if 0 <= i < len(self._series_times):
+                t = self._series_times[i]
+                f = self._series_freqs[i] if i < len(self._series_freqs) else None
+                text = self.format_frequency(f) or self.format_sim_time(t)
+        self.lbl_sim_time.setText(text)
+        self.lbl_sim_time.setVisible(bool(text) and getattr(self, "_time_controls_on", False))

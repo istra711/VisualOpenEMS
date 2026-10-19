@@ -153,13 +153,39 @@ def test_time_series_numeric_keys(tmp_path):
         m.create_dataset("z", data=np.linspace(0, 3, nz))
         tdg = f.create_group("FieldData").create_group("TD")
         for i in (0, 62, 124):
-            tdg.create_dataset(f"{i:08d}", data=np.full((3, nx, ny, nz), i, dtype="float32"))
+            ds = tdg.create_dataset(f"{i:08d}", data=np.full((3, nx, ny, nz), i, dtype="float32"))
+            ds.attrs["time"] = np.array([1.5e-11 * i], dtype="float32")
 
     _x, _y, _z, steps = read_dump_series(p)
     assert [lab for lab, _f in steps] == ["t0", "t62", "t124"]
+    _x, _y, _z, steps, meta = read_dump_series(p, with_meta=True)
+    assert [m["time"] for m in meta] == pytest.approx([0.0, 9.3e-10, 1.86e-9], rel=1e-5)
+    assert all(m["frequency"] is None for m in meta)
+
     paths, labels = dump_series_to_vtr(p, tmp_path / "out")
     assert labels == ["t0", "t62", "t124"]
     assert len(paths) == 3
+    sidecar = (tmp_path / "out" / "Et-H.series.json").read_text(encoding="utf-8")
+    import json
+
+    data = json.loads(sidecar)
+    assert len(data["times"]) == 3
+    assert data["times"][2] == pytest.approx(1.86e-9, rel=1e-5)
+    assert data["frequencies"] == [None, None, None]
+
+
+def test_fd_frequency_meta(tmp_path):
+    """FD dumps carry their frequency as a dataset attribute."""
+    import h5py
+
+    p = tmp_path / "Et-E.h5"
+    _make_dump(p)
+    with h5py.File(p, "a") as f:
+        f["FieldData/FD/f0_real"].attrs["frequency"] = np.array([2.23e9], dtype="float32")
+
+    _x, _y, _z, _steps, meta = read_dump_series(p, with_meta=True)
+    assert meta[0]["frequency"] == pytest.approx(2.23e9, rel=1e-5)
+    assert meta[0]["time"] is None
 
 
 def test_degenerate_dump_raises(tmp_path):

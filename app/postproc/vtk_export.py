@@ -47,17 +47,33 @@ def read_dump_arrays(h5_path: Path | str):
     return x, y, z, field
 
 
-def read_dump_series(h5_path: Path | str):
+def _attr_float(obj, name: str) -> float | None:
+    """First scalar value of an HDF5 attribute, or ``None``."""
+    try:
+        if name not in obj.attrs:
+            return None
+        val = np.asarray(obj.attrs[name], dtype=float).ravel()
+        return float(val[0]) if val.size else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def read_dump_series(h5_path: Path | str, with_meta: bool = False):
     """Return ``(x, y, z, steps)`` with ``steps = [(label, field), ...]``.
 
     Covers *all* stored steps so the viewer can animate:
     ``FieldData/FD/f<N>_real|_imag`` (labels ``f0``, ``f1``, …, complex) and/or
     ``FieldData/TD/t<N>`` (labels ``t0``, ``t1``, …, real).
+
+    With ``with_meta=True`` a fifth list is returned: one dict per step with the
+    physical ``time`` (seconds, TD dumps) or ``frequency`` (Hz, FD dumps), as
+    stored by openEMS in the dataset attributes; unavailable values are ``None``.
     """
     import h5py
 
     x = y = z = None
     steps: list[tuple[str, np.ndarray]] = []
+    meta: list[dict] = []
     with h5py.File(h5_path, "r") as f:
         mesh = f["Mesh"] if "Mesh" in f else None
         if mesh is not None:
@@ -76,13 +92,25 @@ def read_dump_series(h5_path: Path | str):
             reals = sorted((k for k in names if k.endswith("_real")), key=_num)
             for key in reals:
                 base = key[: -len("_real")]
-                re = np.asarray(g[key])
+                ds = g[key]
+                re = np.asarray(ds)
                 field = re + 1j * np.asarray(g[base + "_imag"]) if (base + "_imag") in g else re
                 steps.append((base, field))
+                meta.append({
+                    "time": _attr_float(ds, "time"),
+                    "frequency": _attr_float(ds, "frequency"),
+                })
             for key in _td_keys(names):  # "00000000" (openEMS) or "t0"
                 label = key if not key.isdigit() else f"t{int(key)}"
-                steps.append((label, np.asarray(g[key])))
+                ds = g[key]
+                steps.append((label, np.asarray(ds)))
+                meta.append({
+                    "time": _attr_float(ds, "time"),
+                    "frequency": _attr_float(ds, "frequency"),
+                })
     steps = [(lab, _orient_field(x, y, z, f)) for lab, f in steps]
+    if with_meta:
+        return x, y, z, steps, meta
     return x, y, z, steps
 
 
@@ -206,7 +234,7 @@ def dump_series_to_vtr(
     from vtk.util import numpy_support as ns
 
     h5_path = Path(h5_path)
-    x, y, z, steps = read_dump_series(h5_path)
+    x, y, z, steps, meta = read_dump_series(h5_path, with_meta=True)
     if not steps:
         raise ValueError(f"{h5_path.name}: no field data in the dump")
     if out_dir is None:
@@ -220,7 +248,16 @@ def dump_series_to_vtr(
         paths.append(out)
         labels.append(str(label))
     (out_dir / f"{h5_path.stem}.series.json").write_text(
-        json.dumps({"labels": labels, "files": [p.name for p in paths]}, indent=2),
+        json.dumps(
+            {
+                "labels": labels,
+                "files": [p.name for p in paths],
+                # physical step positions (openEMS dataset attributes)
+                "times": [m.get("time") for m in meta],
+                "frequencies": [m.get("frequency") for m in meta],
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return paths, labels
