@@ -158,6 +158,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preferred. Test: `tests/mainwindow_sparam_smoke.py` (scan finds another
   project's S-params while the scope stays empty).
 
+- **Run log: START banner, elapsed step lines, END banner** (`app/runlog.py`,
+  `app/ui/main_window.py`): every Run Simulation / Run All Ports opens a log
+  session with
+
+  ```
+  ########### START (14:03:07) #############
+  Run: Run Simulation
+  [+0.1 s] Step: Preparing run (project, work dir, geometry)
+  [+0.3 s] Step: Generating run script
+  [+2.4 s] Step: Starting openEMS (FDTD)
+  ...
+  [+1 m 23.4 s] Step: openEMS finished — loading results
+  ################ END (14:04:30, duration 1 m 23.4 s) ###############
+  ```
+
+  Elapsed times are measured from the START time and formatted as
+  `12.3 s` / `1 m 23.4 s` / `1 h 02 m 03.4 s`; the END banner carries the
+  wall-clock end time and the total duration. The session is closed after the
+  results are loaded into the viewers, on abort, on a failed start and after a
+  failed/aborted multi-run merge (only once — a late poll cannot repeat it).
+  Run All Ports logs each excitation as a step. The busy check now runs before
+  the run is prepared. Fixed the S-params-missing dialog (`{sim}` → `{work}`).
+  Tests: `tests/test_run_log.py` (format) + `tests/run_log_smoke.py` (sequence,
+  no duplicate END).
+
 - **Auto-play defaults to OFF + configurable in Settings** (`app/settings.py`,
   `app/ui/main_window.py`, `app/ui/vtk_viewer.py`): the Field Viewer no longer
   starts the animation on its own; the "Auto-play" checkbox (and its default,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from app.freecad_io.importer import load_geometry_file, overall_bounds
 from app.models.project import GeomAssignment, PortDef, Project
+from app.runlog import format_elapsed, format_run_end, format_run_start
 from app.settings import AppSettings
 from app.simulation.progress import EngineProgress
 from app.simulation.runner import SimulationRunner
@@ -58,6 +60,7 @@ def _read_text(path: Path) -> str | None:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+
 
 class _LogBridge(QObject):
     """Thread-safe log hop: worker threads emit, UI thread runs the slot."""
@@ -88,6 +91,9 @@ class MainWindow(QMainWindow):
         self._multi_plans: list | None = None
         self._multi_pos: int = 0
         self._multi_timer = None
+        # run-log session: monotonic start time (None when no run is active)
+        self._run_t0: float | None = None
+        self._abort_requested = False
         self.setWindowTitle("FreeCAD OpenEMS GUI")
         self._build_ui()
         self._apply_window_geometry()
@@ -1109,6 +1115,33 @@ class MainWindow(QMainWindow):
                 self._append_log_on_gui(msg)
         except Empty:
             pass
+
+    # ----- run-log session: START banner / step lines / END banner ---------
+    def _begin_run_log(self, title: str = "simulation") -> None:
+        """Open a run session in the log and start the elapsed-time base."""
+        self._run_t0 = time.monotonic()
+        self._abort_requested = False
+        self._log(format_run_start())
+        self._log(f"Run: {title}")
+
+    def _run_step(self, name: str) -> None:
+        """Log the step being worked on, with the delta to the START time."""
+        t0 = self._run_t0
+        if t0 is None:
+            self._log(f"Step: {name}")
+            return
+        self._log(f"[+{format_elapsed(time.monotonic() - t0)}] Step: {name}")
+
+    def _end_run_log(self, note: str | None = None) -> None:
+        """Close the run session: END banner with end time and total duration."""
+        t0 = self._run_t0
+        if t0 is None:
+            return  # no active session (e.g. late/duplicate poll)
+        elapsed = time.monotonic() - t0
+        self._run_t0 = None
+        if note:
+            self._log(note)
+        self._log(format_run_end(elapsed))
 
     def _reset_engine_progress(self) -> None:
         """Clear the FDTD engine progress bars (called when a run starts)."""
@@ -3943,6 +3976,11 @@ class MainWindow(QMainWindow):
     def _on_run(self) -> None:
         self._ensure_log_visible("simulation")
         self._sync_project_from_form()
+        if self.runner.is_running() or self._multi_plans is not None:
+            QMessageBox.warning(self, "Busy", "A simulation is already running.")
+            return
+        self._begin_run_log("Run Simulation")
+        self._run_step("Preparing run (project, work dir, geometry)")
         work = self._project_work_dir()
         self._prepare_run_state(work)
         f0 = self.project.mesh.target_frequency or 2.45e9
@@ -3956,16 +3994,15 @@ class MainWindow(QMainWindow):
                 f"(f0={f0/1e9:.3f} GHz, fc={fc/1e9:.3f} GHz). Using your value — may not converge."
             )
         self._log_computed_summary()
+        self._run_step("Generating run script")
         script = self._run_script_for(work)
         self._log(
             f"Sim settings: f0={f0/1e9:.3f} GHz, max_timesteps={self.project.sim.max_timesteps}, "
             f"end_criteria={self.project.sim.end_criteria}, "
             f"boundary={self.project.boundary.as_openems_list()}"
         )
-        if self.runner.is_running() or self._multi_plans is not None:
-            QMessageBox.warning(self, "Busy", "A simulation is already running.")
-            return
         self._reset_engine_progress()
+        self._run_step("Starting openEMS (FDTD)")
         try:
             # _log is thread-safe (queue only) — do not pass Signal.emit
             self.runner.start(script, log_cb=self._log)
@@ -3973,6 +4010,7 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Run failed", str(e))
             self._log(f"Run failed: {e}")
+            self._end_run_log("Run failed to start")
 
         # poll for finished sim and open S-param viewer (GUI thread only)
         def _check() -> None:
@@ -3982,6 +4020,7 @@ class MainWindow(QMainWindow):
                 timer.stop()
                 exit_code = getattr(self.runner, "last_exit", None)
                 log_path = getattr(self.runner, "log_path", None)
+                self._run_step("openEMS finished — loading results")
                 files = self._find_sparams_files(work)
                 found = files[-1] if files else None
                 # Antenna pattern (NF2FF) — load alongside the S-params result
@@ -4019,14 +4058,16 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(
                         self,
                         "S-params missing",
-                        f"No sparams.s1p / sparams.json under:\n{sim}\n\n"
+                        f"No sparams.s1p / sparams.json under:\n{work}\n\n"
                         f"Exit code: {exit_code}\n"
                         f"Log: {log_path}\n\n"
                         "Check the simulator log for CalcPort / export / mesh errors.",
                     )
+                self._end_run_log()
             except Exception as e:  # noqa: BLE001
                 print("post-sim viewer error:", e)
                 self._log(f"Post-sim viewer error: {e}")
+                self._end_run_log(f"Run ended with a post-processing error: {e}")
 
         timer = QTimer(self)
         timer.timeout.connect(_check)
@@ -4049,15 +4090,19 @@ class MainWindow(QMainWindow):
             self._log("Run All Ports: fewer than 2 ports — running the normal simulation")
             self._on_run()
             return
+        self._begin_run_log("Run All Ports")
+        self._run_step("Preparing run (project, work dir, geometry)")
         work = self._project_work_dir()
         self._prepare_run_state(work)
         from app.simulation.multirun import plan_port_runs
 
+        self._run_step(f"Planning {nports} port run(s)")
         try:
             plans = plan_port_runs(self.project, self.primitives, work)
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Multi-run setup failed", str(e))
             self._log(f"Multi-run setup failed: {e}")
+            self._end_run_log("Run All Ports failed to start")
             return
         self._multi_plans = plans
         self._multi_pos = 0
@@ -4073,7 +4118,7 @@ class MainWindow(QMainWindow):
             self._finish_multi_run()
             return
         plan = plans[self._multi_pos]
-        self._log(
+        self._run_step(
             f"Multi-run {self._multi_pos + 1}/{len(plans)}: excite "
             f"'{plan.port_name}' (port {plan.port_number})"
         )
@@ -4087,6 +4132,7 @@ class MainWindow(QMainWindow):
             self._log(f"Multi-run start failed ({plan.port_name}): {e}")
             QMessageBox.critical(self, "Run failed", str(e))
             self._multi_plans = None
+            self._end_run_log("Run All Ports failed to start")
             return
         if self._multi_timer is None:
             self._multi_timer = QTimer(self)
@@ -4104,6 +4150,11 @@ class MainWindow(QMainWindow):
             f"Multi-run {self._multi_pos + 1}/{len(plans)} "
             f"('{plan.port_name}') exit code {exit_code}"
         )
+        if getattr(self, "_abort_requested", False):
+            self._log("Multi-run aborted by the user")
+            self._multi_pos = len(plans)  # do not schedule the remaining runs
+            self._finish_multi_run()
+            return
         self._multi_pos += 1
         self._start_next_multi_run()
 
@@ -4113,11 +4164,13 @@ class MainWindow(QMainWindow):
         plans = self._multi_plans or []
         self._multi_plans = None
         work = self._project_work_dir()
+        self._run_step("Merging port runs")
         try:
             result = merge_port_runs(work, plans)
         except Exception as e:  # noqa: BLE001
             self._log(f"Multi-run merge failed: {e}")
             QMessageBox.warning(self, "Merge failed", str(e))
+            self._end_run_log("Run All Ports failed while merging")
             return
         if result["missing"]:
             self._log(
@@ -4139,8 +4192,10 @@ class MainWindow(QMainWindow):
                 self._log(f"S-param results ready: {found[-1]}")
         except Exception as e:  # noqa: BLE001 — merge succeeded, viewer is best-effort
             self._log(f"S-param viewer update failed: {e}")
+        self._end_run_log()
 
     def _on_abort(self) -> None:
+        self._abort_requested = True
         self.runner.abort()
         self._log("Abort requested")
 
