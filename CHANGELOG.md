@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a clear message, and the VTK tab is pointed at the **current project
   folder** (`<work>/<project>/simulation`), not the base work dir.
 
+- **VTK viewer: ParaView-style field-dump analysis** (`app/ui/vtk_viewer.py`,
+  `app/postproc/vtk_export.py`): reworked after the openEMS "Field Dumps
+  Analysis via ParaView" guide. New controls: an **Array** selector (all point +
+  cell arrays, e.g. magnitude/field/RotH-Field), a **Representation** combo
+  (Surface / Wireframe / **Slice** with axis+position, for 3D boxes / Iso-surface
+  with the level slider), **Colour** rescaling (**Auto** data range / manual
+  min-max / **Log scale** / "Rescale to data range"), and a **Time** slider +
+  **Play** that animates a per-step series. The exporter now writes one
+  `.vtr` per stored step (`<name>_0000.vtr …`) plus `<name>.series.json` in the
+  batch export; a single `<name>.vtr` (first step) is kept. Tests:
+  `tests/test_vtk_export.py` (+ time-series) and `tests/vtk_viewer_smoke.py`.
+
 ## [0.5.0] - 2026-10-18
 
 ### Added

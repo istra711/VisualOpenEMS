@@ -483,18 +483,26 @@ Tips
 Turns the openEMS HDF5 field dumps into VTK rectilinear grids and shows them in
 an embedded 3D view (no external ParaView needed).
 
-Buttons
+Mirrors the openEMS "Field Dumps Analysis via ParaView" workflow.
+
+Buttons / controls
   • "Export project dumps → VTK": converts every dump in the current project's
-    simulation/ folder (*.h5, excluding nf2ff_*) into <project>/vtk/*.vtr and
-    loads the first one.
-  • "Open .vtr…": open any VTK file — .vtr, .vti, .vtu, .vtp, .vts (XML) or a
-    legacy .vtk (e.g. a ParaView example); the reader is picked by extension.
-  • Representation: "Surface" (default — the dataset coloured by the scalar,
-    like ParaView), "Iso-surface" (a contour of the scalar) or "Wireframe".
-  • "Outline": domain box. "Iso-level" slider: contour level (Iso-surface only).
+    simulation/ folder (*.h5, excluding nf2ff_*) into <project>/vtk/ and loads
+    the first one. For time-domain dumps it also writes one file per step
+    (<name>_0000.vtr …) plus <name>.series.json, so the steps can be animated.
+  • "Open…": open any VTK file — .vtr, .vti, .vtu, .vtp, .vts (XML) or a legacy
+    .vtk (e.g. a ParaView example); the reader is picked by extension.
+  • "Array": pick the field array to display (point or cell data), e.g.
+    magnitude / field / RotH-Field — the ParaView "Cell/Point Array" step.
+  • "Representation": Surface (default, like ParaView), Wireframe, Slice (a
+    cutting plane, axis + position — good for 3D boxes) or Iso-surface
+    (a contour of the selected array; Iso-level slider).
+  • "Colour": Auto (data range) / manual min-max + Log scale (log colour
+    mapping, like ParaView's "Use log scale") + "Rescale to data range".
+  • "Time" slider + "Play": step through / animate a per-step series.
+  • "Outline": domain box. "Reset view": fit camera. Mouse: rotate (left),
+    pan (middle/shift), zoom (wheel).
   • A colour bar shows the scalar range.
-  • "Reset view": fit the camera to the data. Mouse: rotate (left), pan
-    (middle/shift), zoom (wheel).
 
 What it writes (per dump)
   • point data "magnitude" = |vector field| (the active scalar), and
