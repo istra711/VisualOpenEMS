@@ -28,6 +28,30 @@ def main() -> int:
     w.sparam_viewer._goto_min()
     print("markers:", w.sparam_viewer.markers, "rows", w.sparam_viewer.marker_list.count())
 
+    # "Scan work dir" searches the GLOBAL work dir, not just the project scope
+    import shutil
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="sparam_scan_"))
+    try:
+        empty_proj = tmp / "empty_proj"
+        empty_proj.mkdir()
+        decoy_dir = tmp / "other_proj" / "sparams"
+        decoy_dir.mkdir(parents=True)
+        (decoy_dir / "sparams.s1p").write_text(
+            "# MHz S RI R 50\n100 0.5 0.1\n200 0.4 0.2\n", encoding="utf-8"
+        )
+        w.sparam_viewer.scan_root = tmp
+        w.sparam_viewer.set_work_dir(empty_proj)  # scoped: nothing here
+        assert w.sparam_viewer.file_list.count() == 0
+        w.sparam_viewer.btn_scan.click()  # the "Scan work dir" button
+        assert w.sparam_viewer.file_list.count() == 1, (
+            "Scan work dir did not find the other project's S-params"
+        )
+        print("[scan] Scan work dir finds results outside the project scope OK")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     # Fit NF2FF must push the new box to the Mesh Viewer (no rebuild needed)
     w._on_load_patch()
     calls: list = []

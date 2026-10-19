@@ -69,27 +69,31 @@ def load_network_from_path(path: Path | str):
     return rf.Network(str(path))
 
 
+_SPARAM_NAMES = ("sparams.s1p", "sparams.s2p", "sparams.s3p", "sparams.s4p", "sparams.json")
+
+
 def find_latest_sparam_files(work_dir: Path) -> list[Path]:
     """Discover sparams.s*p / sparams.json, newest first.
 
-    Searches the new project layout (``<dir>/sparams``), a single project
-    folder itself and the legacy ``<dir>/simulation`` / ``<dir>/*/simulation``
-    locations — so both the global work directory (all projects) and one
-    project directory can be passed.
+    One result per directory (``sparams.s1p`` beats ``sparams.json``) at
+    ``<dir>``, ``<dir>/sparams``, ``<dir>/simulation`` and up to two nested
+    levels (``<dir>/<project>/...``) — so both the global work directory (all
+    projects) and a single project directory can be passed.
     """
     out: list[Path] = []
     if not work_dir.exists():
         return out
-    dirs: list[Path] = [work_dir / "sparams"]
-    dirs += list(work_dir.glob("*/sparams"))
-    direct = work_dir / "simulation"
-    if direct.is_dir():
-        dirs.append(direct)
-    dirs += list(work_dir.glob("*/simulation"))
-    for sim in dirs:
-        for name in ("sparams.s1p", "sparams.s2p", "sparams.s3p", "sparams.s4p", "sparams.json"):
-            p = sim / name
-            if p.exists():
+    dirs: list[Path] = [work_dir]
+    for pat in ("*", "*/*", "*/*/*"):
+        dirs += sorted(p for p in work_dir.glob(pat) if p.is_dir())
+    seen: set[Path] = set()
+    for d in dirs:
+        if d in seen:
+            continue
+        seen.add(d)
+        for name in _SPARAM_NAMES:
+            p = d / name
+            if p.is_file():
                 out.append(p)
                 break
     out.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -212,6 +216,8 @@ class SParamViewer(QWidget):
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.work_dir = Path(work_dir) if work_dir else None
+        # root used by "Scan work dir"; work_dir may be scoped to one project
+        self.scan_root: Path | None = None
         self.network = None
         self.network_path: Path | None = None
         self.markers: list[float] = []  # frequencies (Hz)
@@ -232,6 +238,10 @@ class SParamViewer(QWidget):
         self.btn_open = QPushButton("Open Touchstone / JSON…")
         self.btn_reload = QPushButton("Reload")
         self.btn_scan = QPushButton("Scan work dir")
+        self.btn_scan.setToolTip(
+            "List all sparams.s*p / sparams.json files in the whole work\n"
+            "directory (not only the current project)"
+        )
         self.cmb_plot = QComboBox()
         self.cmb_plot.addItems(self.PLOT_TYPES)
         self.cmb_port = QComboBox()
@@ -290,7 +300,7 @@ class SParamViewer(QWidget):
 
         self.btn_open.clicked.connect(self._on_open)
         self.btn_reload.clicked.connect(self._reload_current)
-        self.btn_scan.clicked.connect(self._on_scan)
+        self.btn_scan.clicked.connect(self._on_scan_workdir)
         self.cmb_marker_style.currentTextChanged.connect(self._on_marker_style_changed)
         self.cmb_plot.currentTextChanged.connect(lambda *_: self._redraw())
         self.cmb_plot.currentIndexChanged.connect(self._redraw)
@@ -339,6 +349,11 @@ class SParamViewer(QWidget):
 
     # ----- data loading -------------------------------------------------
     def set_work_dir(self, work_dir: Path) -> None:
+        """Scope the initial listing to ``work_dir`` (usually one project).
+
+        "Scan work dir" ignores this scope and uses ``scan_root`` (the global
+        work directory) so results of other projects can be found on demand.
+        """
         self.work_dir = Path(work_dir)
         self._on_scan()
 
@@ -401,27 +416,50 @@ class SParamViewer(QWidget):
         if path:
             self.load_path(path)
 
-    def _on_scan(self, auto_load: bool = False) -> None:
+    def _on_scan_workdir(self) -> None:
+        """The "Scan work dir" button: list every result of the whole work dir."""
+        self._on_scan(root=self.scan_root or self.work_dir)
+
+    def _on_scan(self, auto_load: bool = False, root: Path | None = None) -> None:
+        """Fill the list with the results below ``root`` (default: ``work_dir``).
+
+        ``work_dir`` is usually scoped to the current project; "Scan work dir"
+        passes ``scan_root`` (the global work dir) instead. The loaded file
+        stays selected without being reloaded.
+        """
+        root = root or self.work_dir
+        self.file_list.blockSignals(True)
         self.file_list.clear()
-        if not self.work_dir:
-            return
-        files = find_latest_sparam_files(self.work_dir)
-        for f in files:
-            # sub-path as shown text (like the Antenna tab), full path in
-            # UserRole + tooltip for loading
-            try:
-                shown = str(f.relative_to(self.work_dir))
-            except ValueError:
-                shown = f.name
-            item = QListWidgetItem(shown)
-            item.setData(Qt.ItemDataRole.UserRole, str(f))
-            item.setToolTip(str(f))
-            self.file_list.addItem(item)
-        if auto_load and files:
+        files: list[Path] = []
+        if root is not None:
+            files = find_latest_sparam_files(root)
+            for f in files:
+                # sub-path as shown text (like the Antenna tab), full path in
+                # UserRole + tooltip for loading
+                try:
+                    shown = str(f.relative_to(root))
+                except ValueError:
+                    shown = f.name
+                item = QListWidgetItem(shown)
+                item.setData(Qt.ItemDataRole.UserRole, str(f))
+                item.setToolTip(str(f))
+                self.file_list.addItem(item)
+        # keep the loaded file selected when the scan found it
+        row = -1
+        if self.network_path is not None:
+            for i in range(self.file_list.count()):
+                raw = self.file_list.item(i).data(Qt.ItemDataRole.UserRole)
+                if str(raw) == str(self.network_path):
+                    row = i
+                    break
+        if auto_load and row < 0 and files and self.network is None:
+            row = 0
+        if row >= 0:
+            self.file_list.setCurrentRow(row)
+        self.file_list.blockSignals(False)
+        if auto_load and files and self.network is None:
             # Newest file first — load so the tab is never blank when data exists.
             self.load_path(files[0])
-            if self.file_list.count():
-                self.file_list.setCurrentRow(0)
 
     def _on_file_selected(self, current: QListWidgetItem | None, _prev=None) -> None:
         if current is None:

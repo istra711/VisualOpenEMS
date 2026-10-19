@@ -404,7 +404,9 @@ Tips
 After a successful Run
   • Loads Touchstone (sparams.sNp) + simulation JSON from the work folder.
   • Loaded files lists each entry as subpath relative to the work dir (full
-    path in the tooltip); click an entry to load it.
+    path in the tooltip); click an entry to load it. It starts scoped to the
+    current project — "Scan work dir" lists the S-params of ALL projects in
+    the work directory.
   • Marker style picks which format the marker list shows (dB, |S|,
     Phase, Γ, Z, Y, VSWR, RL — or All formats for every format at once).
   • Plot |S| in dB (and other formats), Smith chart.
