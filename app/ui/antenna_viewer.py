@@ -477,9 +477,8 @@ class AntennaPatternViewer(QWidget):
         self._dbi_data_min = -1.0
         self._dbi_data_max = 1.0
         self._set_dbi_controls_visible(False)
-
-        if self.work_dir:
-            self._on_scan()
+        # The "Loaded files" list stays EMPTY until the user clicks
+        # "Scan work dir" (or opens a file explicitly).
 
     # ----- analysis dialog (right-click any plot) --------------------------
     def _build_radial_dialog(self) -> QDialog:
@@ -683,8 +682,12 @@ class AntennaPatternViewer(QWidget):
 
     # ----- data loading -------------------------------------------------
     def set_work_dir(self, work_dir: Path) -> None:
+        """Remember the work dir — without filling the file list.
+
+        The list is only populated by "Scan work dir" (or by opening a file
+        explicitly), so switching projects does not auto-list unrelated data.
+        """
         self.work_dir = Path(work_dir)
-        self._on_scan()
 
     def _on_open(self) -> None:
         # start in the folder of the currently loaded file (or the work dir)

@@ -426,8 +426,8 @@ Tips
 After a successful Run (with NF2FF enabled)
   • Loads the project folder's nf2ff/nf2ff.json written by the NF2FF
     post-processing (<work>/<project>/nf2ff/nf2ff.json).
-  • Loaded files — lists each file as subpath relative to the work dir plus
-    file name (e.g. myproj/nf2ff/nf2ff.json); tooltip = full path.
+  • Loaded files — starts EMPTY; "Scan work dir" fills it with every
+    nf2ff.json in the work dir (subpath + name, tooltip = full path).
   • Details — header shows the current file name in parentheses; below it
     Dmax, Gmax, eta, Prad and theta/phi points for the selected frequency.
   • Plots (combo): E-Plane (phi=90), H-Plane (phi=0), Azimuth (theta=90),

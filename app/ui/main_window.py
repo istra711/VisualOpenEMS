@@ -1336,15 +1336,12 @@ class MainWindow(QMainWindow):
     def _refresh_antenna_viewer(self) -> None:
         """Show the current project's pattern when the Antenna tab is opened.
 
-        Refreshes the file list without touching a user selection; when nothing
-        is loaded yet it loads the project's recorded NF2FF result, else the
-        newest file in the list.
+        Only this project's own result is auto-loaded (never another project's
+        file); the "Loaded files" list stays empty until "Scan work dir".
         """
-        self.antenna_viewer.set_work_dir(self.settings.work_path())  # rescan list
+        self.antenna_viewer.set_work_dir(self.settings.work_path())
         if self.antenna_viewer.data is not None:
             return  # keep what the user has loaded
-        # project's result first (recorded -> project folder -> legacy folder),
-        # only then the newest file of the whole work dir
         proj_dir = self._project_work_dir()
         target = next(
             (
@@ -1359,8 +1356,7 @@ class MainWindow(QMainWindow):
             None,
         )
         if target is None:
-            # never auto-load another project's pattern (the file list still
-            # shows the whole work dir for manual browsing)
+            # never auto-load another project's pattern
             self._log(f"Antenna pattern: no NF2FF result for {proj_dir.name}")
             return
         try:

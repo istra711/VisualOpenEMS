@@ -99,6 +99,9 @@ def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     viewer = AntennaPatternViewer(work_dir=work)
     viewer.resize(1100, 800)
+    assert viewer.file_list.count() == 0, (
+        "the Loaded files list must stay empty until 'Scan work dir'"
+    )
     viewer.load_path(synth_json)
     print("info:", viewer.lbl_info.text())
     if "Prad" not in viewer.lbl_info.text():
@@ -406,7 +409,10 @@ def main() -> int:
     write_synthetic_nf2ff(other)
     found = [str(f) for f in find_latest_nf2ff_files(work)]
     assert str(other) in found, ("discovery missed the new layout", str(other))
-    viewer.set_work_dir(work)  # rescan with two candidates
+    before = viewer.file_list.count()
+    viewer.set_work_dir(work)  # stores only — the list is filled by Scan
+    assert viewer.file_list.count() == before, "set_work_dir must not rescan the list"
+    viewer._on_scan()  # "Scan work dir" -> the new candidate appears
     items = [
         str(viewer.file_list.item(i).data(Qt.ItemDataRole.UserRole))
         for i in range(viewer.file_list.count())

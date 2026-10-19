@@ -140,6 +140,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opening the Antenna tab no longer auto-loads the newest NF2FF of the whole
   work dir (only this project's own).
 
+  The Antenna tab's "Loaded files" list now starts **empty**: `set_work_dir`
+  only remembers the directory, and the list is filled exclusively by
+  "Scan work dir" (or when a file is opened explicitly). `antenna_viewer_smoke`
+  asserts the empty start and that `set_work_dir` does not rescan.
+
 - **Auto-play defaults to OFF + configurable in Settings** (`app/settings.py`,
   `app/ui/main_window.py`, `app/ui/vtk_viewer.py`): the Field Viewer no longer
   starts the animation on its own; the "Auto-play" checkbox (and its default,
