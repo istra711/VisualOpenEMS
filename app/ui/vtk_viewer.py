@@ -505,6 +505,27 @@ class VtkFieldViewer(QWidget):
         return (0.0, 0.0, b[4] + (b[5] - b[4]) * frac)
 
     # ------------------------------------------------------------- rendering
+    @staticmethod
+    def _make_scalar_bar(vtk, lut, name: str):
+        """Compact colour bar: VTK otherwise scales title/labels with the bar
+        height, which produced a huge "field" filling the pane."""
+        bar = vtk.vtkScalarBarActor()
+        bar.SetLookupTable(lut)
+        bar.SetTitle(name)
+        bar.SetNumberOfLabels(5)
+        bar.UnconstrainedFontSizeOn()  # font size in points, not bar-relative
+        bar.SetMaximumWidthInPixels(120)
+        bar.SetMaximumHeightInPixels(300)
+        bar.SetBarRatio(0.25)
+        bar.GetTitleTextProperty().SetFontSize(12)
+        bar.GetTitleTextProperty().SetColor(1, 1, 1)
+        bar.GetLabelTextProperty().SetFontSize(10)
+        bar.GetLabelTextProperty().SetColor(1, 1, 1)
+        bar.SetLabelFormat("%.2e")
+        bar.SetTextPad(3)
+        bar.SetVerticalTitleSeparation(4)
+        return bar
+
     def _make_mapper(self, vtk, lut, loc, name):
         """Return (mapper, lut) for the current representation (None if none)."""
         if self._grid is None:
@@ -565,11 +586,7 @@ class VtkFieldViewer(QWidget):
                 actor.GetMapper().SetLookupTable(lut)
             self._renderer.AddActor(actor)
             if name:
-                bar = vtk.vtkScalarBarActor()
-                bar.SetLookupTable(lut)
-                bar.SetTitle(name)
-                bar.SetNumberOfLabels(5)
-                self._renderer.AddActor2D(bar)
+                self._renderer.AddActor2D(self._make_scalar_bar(vtk, lut, name))
 
         if self.chk_outline.isChecked():
             outline = vtk.vtkOutlineFilter()
