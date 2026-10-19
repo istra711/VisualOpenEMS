@@ -867,6 +867,10 @@ def main() -> int:
         print("setup_only: FDTD setup done — skipping the run and post-processing")
         return 0
     print("Simulation finished (FDTD.Run complete)")
+    print(
+        "Post-processing started - the solver has exited; the next steps only "
+        "read its output files (no more FDTD computation)."
+    )
 
     # Evaluate S-params over the EXCITATION band only. Outside
     # [f_start, f_stop] the Gaussian pulse carries (almost) no energy, so
@@ -874,6 +878,10 @@ def main() -> int:
     # (|S11| >> 1) — that garbage dominated the S-param plots. The mesh is
     # sized for this band, so a resonance can only be trusted here anyway.
     freqs = np.linspace(project.mesh.start_frequency, project.mesh.stop_frequency, 201)
+    print(
+        "[1/3] S-parameters: %d port(s) x %d frequencies ..." % (len(port_objects), len(freqs)),
+        flush=True,
+    )
     s_table = {}
     written = {}
     # S-params are referenced to the port's own resistance (openEMS default when
@@ -897,7 +905,12 @@ def main() -> int:
                 finite_ok = True
                 break
         if not finite_ok:
-            print("ERROR: S-param table has no finite values (CalcPort failed?)")
+            print("ERROR: S-param table has no finite values (CalcPort failed?)", flush=True)
+        print(
+            "      CalcPort done - writing JSON / Touchstone / plot to %s ..."
+            % (WORK_DIR / "sparams"),
+            flush=True,
+        )
         written = sp.export_sparams(s_table, WORK_DIR / "sparams", basename="sparams", z0=ref_z)
         print("S-param outputs:", {k: str(v) for k, v in written.items()})
         touch = written.get("touchstone")
@@ -914,21 +927,32 @@ def main() -> int:
         traceback.print_exc()
         return 3
 
+    _enabled_dumps = [d for d in project.dumps if getattr(d, "enabled", True)]
+    print(
+        "[2/3] Field slices: %d enabled dump(s) -> %s ..."
+        % (len(_enabled_dumps), WORK_DIR / "fields"),
+        flush=True,
+    )
     try:
-        fld.plot_field_slices(out_dir, project.dumps, WORK_DIR / "fields")
+        _slices = fld.plot_field_slices(out_dir, project.dumps, WORK_DIR / "fields")
+        print("      wrote %d slice image(s)" % len(_slices or []), flush=True)
     except Exception as e:
-        print("Field postproc warning:", e)
+        print("Field postproc warning:", e, flush=True)
 
     if nf2ff_box is not None:
+        print("[3/3] NF2FF: transforming the near-field box -> %s ..."
+              % (WORK_DIR / "nf2ff"), flush=True)
         try:
             # auto: S11 minimum; count: N points over the mesh range; list: explicit
             f_eval = nf.resolve_eval_frequencies(project, s_table)
             result = nf.compute_and_export(
                 out_dir, nf2ff_box, f_eval, project.nf2ff, WORK_DIR / "nf2ff"
             )
-            print("NF2FF summary:", result.get("summary"))
+            print("NF2FF summary:", result.get("summary"), flush=True)
         except Exception as e:
-            print("NF2FF postproc warning:", e)
+            print("NF2FF postproc warning:", e, flush=True)
+    else:
+        print("[3/3] NF2FF: no NF2FF box - skipped", flush=True)
 
     print("DONE")
     return 0
