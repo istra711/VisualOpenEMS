@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-19
+
 ### Added
 
 - **Field Viewer: MP4 video export of field sequences** (`app/ui/vtk_viewer.py`,
@@ -1034,4 +1036,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.3.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.3.0
 [0.4.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.4.0
 [0.5.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.0
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.0...HEAD
+[0.5.1]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.1
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.1...HEAD
