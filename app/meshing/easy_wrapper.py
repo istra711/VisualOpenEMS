@@ -31,12 +31,14 @@ def cap_max_cell_size(CSX, mesh: MeshSpec, targets: MeshTargets) -> None:
     """
     grid = CSX.GetGrid()
     max_cell = float(targets.max_cell_units)
-    ratio = float(getattr(mesh, "max_grading_ratio", 2.0) or 2.0)
+    # CSXCAD needs ratio > 1 (1.0 raises with an empty message -> the oversized
+    # PML cell would stay and the validator aborts the run with cell_too_large).
+    ratio = float(mesh.effective_max_grading_ratio())
     for axis in "xyz":
         try:
             grid.SmoothMeshLines(axis, max_cell, ratio)
         except Exception as e:  # noqa: BLE001 — never fail a run on the cap
-            print(f"  max-cell cap ({max_cell:.4g}) skipped on {axis}: {e}")
+            print(f"  max-cell cap ({max_cell:.4g}) skipped on {axis}: {e!r}")
 
 
 def apply_boundary(FDTD, boundary: BoundarySpec, mesh: MeshSpec, targets: MeshTargets):

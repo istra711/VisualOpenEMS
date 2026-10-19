@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-19
+
+### Fixed
+
+- **`max_grading_ratio = 1.0` produced an invalid mesh and aborted the run**
+  (`app/models/project.py`, `app/meshing/{easy_wrapper,build_task,interface_refine,polar}.py`,
+  `app/simulation/script_gen.py`, `app/ui/mesh_params.py`): the Mesh Parameters
+  field *Max grading ratio* allowed **1.0**. CSXCAD's cell cap
+  (`SmoothMeshLines(axis, max_cell, ratio)`) needs ``ratio > 1`` and raised an
+  exception with an **empty message**, so the cap did nothing, an oversized PML
+  cell survived (e.g. 14.26 mm where lambda/10 = 10.16 mm) and the generated run
+  script aborted with ``[ERROR] cell_too_large ... aborting simulation``
+  (exit code 2). The spin box now starts at **1.05** and
+  `MeshSpec.effective_max_grading_ratio()` clamps to 1.05…10 (0/None -> 2.0) and
+  is used by easyMesh, the cell cap, the validator, the interface refinement and
+  the polar mesher. The cap now logs ``{e!r}`` instead of grabbing an empty
+  ``str(e)``.
+  Tests: `tests/test_models.py` (clamping) + `tests/mesh_thread_smoke.py`
+  (a real build with `num_lines = 1` and `max_grading_ratio = 1.0`).
+
 ## [0.5.2] - 2026-10-19
 
 ### Fixed
@@ -1067,4 +1087,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.0
 [0.5.1]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.1
 [0.5.2]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.2
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.2...HEAD
+[0.5.3]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.3
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.3...HEAD

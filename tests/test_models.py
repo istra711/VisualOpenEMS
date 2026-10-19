@@ -38,6 +38,20 @@ def test_num_lines_clamped_for_easymesh():
         assert mesh.global_setup(boundary)["num_lines"] == want, value
 
 
+def test_max_grading_ratio_clamped():
+    """A ratio of 1.0 breaks CSXCAD's SmoothMeshLines cap -> cell_too_large."""
+    from app.models.project import BoundarySpec, MeshSpec
+
+    boundary = BoundarySpec(air_margin=["auto"] * 6)
+    for value, want in ((None, 2.0), (0.0, 2.0), (1.0, 1.05), (1.05, 1.05),
+                        (2.0, 2.0), (50.0, 10.0)):
+        mesh = MeshSpec(drawing_unit="mm", max_grading_ratio=value)
+        assert mesh.effective_max_grading_ratio() == want, (
+            value, mesh.effective_max_grading_ratio()
+        )
+        assert mesh.global_setup(boundary)["max_grading_ratio"] == want, value
+
+
 def test_mesh_targets():
     from app.models.project import MeshSpec
     from app.meshing.rules import compute_targets, wavelength_m

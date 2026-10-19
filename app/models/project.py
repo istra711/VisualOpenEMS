@@ -179,6 +179,22 @@ class MeshSpec:
     def unit_to_meters(self) -> float:
         return {"m": 1.0, "mm": 1e-3, "um": 1e-6, "cm": 1e-2}[self.drawing_unit]
 
+    def effective_max_grading_ratio(self) -> float:
+        """``max_grading_ratio`` clamped to a workable range (1.05 .. 10).
+
+        A ratio of exactly 1.0 disables grading AND makes CSXCAD's
+        ``SmoothMeshLines(axis, max_cell, 1.0)`` (the lambda/10 cell cap) fail,
+        so an oversized PML cell survives and the mesh validator aborts the
+        whole run with "cell_too_large".
+        """
+        try:
+            ratio = float(self.max_grading_ratio or 2.0)
+        except (TypeError, ValueError):
+            ratio = 2.0
+        if ratio != ratio:  # NaN
+            ratio = 2.0
+        return max(1.05, min(10.0, ratio))
+
     def effective_num_lines(self) -> int:
         """easyMesh ``num_lines`` clamped to a workable range (>= 2).
 
@@ -215,7 +231,8 @@ class MeshSpec:
             # NOTE: the metal-interface refinement is applied app-side
             # (app/meshing/interface_refine.py) — do NOT forward it to easyMesh
             # (its internal version is smoothed away / breaks metal-in-air).
-            "max_grading_ratio": self.max_grading_ratio,
+            # Clamped: a ratio of 1.0 breaks CSXCAD's SmoothMeshLines cap.
+            "max_grading_ratio": self.effective_max_grading_ratio(),
         }
         if self.target_frequency is not None:
             setup["target_frequency"] = self.target_frequency

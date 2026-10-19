@@ -298,7 +298,7 @@ def refine_at_metal_interfaces(
     grid = CSX.GetGrid()
     fine = getattr(mesh, "min_cellsize", None)
     fine_z = getattr(mesh, "min_cellsize_z", None)
-    growth = float(getattr(mesh, "max_grading_ratio", 2.0) or 2.0)
+    growth = float(mesh.effective_max_grading_ratio())
 
     stats: dict[str, int] = {}
     for axis_idx, axis_name in enumerate("xyz"):

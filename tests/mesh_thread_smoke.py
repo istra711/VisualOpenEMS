@@ -66,7 +66,10 @@ def main() -> int:
     # Regression: num_lines = 1 (old Mesh-Parameters minimum) made easyMesh die
     # with "zero-size array to reduction operation minimum which has no identity"
     # (it samples + diffs num_lines points per edge gap). Clamped to >= 2 now.
+    # num_grading = 1.0 broke CSXCAD's cell cap -> the mesh failed validation
+    # (cell_too_large) and the run aborted; clamped to >= 1.05 now.
     win.project.mesh.num_lines = 1
+    win.project.mesh.max_grading_ratio = 1.0
     win._on_build_mesh()
     deadline = time.time() + 90
     while win._mesh_building and time.time() < deadline:
@@ -76,7 +79,9 @@ def main() -> int:
     report = win.mesh_report.toPlainText()
     assert "zero-size array" not in report, report[:400]
     assert "Mesh setup" in report, report[:400]
-    print("  num_lines clamped (no numpy reduction error) OK")
+    assert "[ERROR]" not in report, report[:400]  # no cell_too_large either
+    assert "cell_too_large" not in report, report[:400]
+    print("  num_lines / grading clamped (no numpy or cell_too_large error) OK")
 
     win.close()
     print("MESH THREAD SMOKE OK")
