@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -79,6 +80,8 @@ class VtkFieldViewer(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(250)
         self._timer.timeout.connect(self._on_play_tick)
+        self._series_range = None  # global (lo, hi) so the movie does not flicker
+        self._series_range_cache: dict = {}
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -175,10 +178,27 @@ class VtkFieldViewer(QWidget):
         self.btn_play.setCheckable(True)
         self.btn_play.toggled.connect(self._on_play_toggled)
         self.lbl_time_info = QLabel("")
+        self.spn_fps = QSpinBox()
+        self.spn_fps.setRange(1, 60)
+        self.spn_fps.setValue(4)
+        self.spn_fps.setSuffix(" fps")
+        self.spn_fps.setToolTip("Playback speed of the time-series animation.")
+        self.spn_fps.valueChanged.connect(self._on_fps_changed)
+        self.chk_loop = QCheckBox("Loop")
+        self.chk_loop.setChecked(True)
+        self.chk_loop.setToolTip("Restart at the first step after the last one.")
+        self.chk_autoplay = QCheckBox("Auto-play")
+        self.chk_autoplay.setChecked(True)
+        self.chk_autoplay.setToolTip(
+            "Start the animation automatically after loading / exporting a series."
+        )
         row4.addWidget(self.lbl_time)
         row4.addWidget(self.slider_time, 1)
         row4.addWidget(self.btn_play)
         row4.addWidget(self.lbl_time_info)
+        row4.addWidget(self.spn_fps)
+        row4.addWidget(self.chk_loop)
+        row4.addWidget(self.chk_autoplay)
         root.addLayout(row4)
         self._set_time_visible(False)
 
@@ -196,7 +216,15 @@ class VtkFieldViewer(QWidget):
         root.addWidget(self._host, 1)
 
     def _set_time_visible(self, on: bool) -> None:
-        for w in (self.lbl_time, self.slider_time, self.btn_play, self.lbl_time_info):
+        for w in (
+            self.lbl_time,
+            self.slider_time,
+            self.btn_play,
+            self.lbl_time_info,
+            self.spn_fps,
+            self.chk_loop,
+            self.chk_autoplay,
+        ):
             w.setVisible(on)
 
     def _ensure_render_window(self) -> bool:
@@ -297,6 +325,7 @@ class VtkFieldViewer(QWidget):
             self._refresh_display()
             self._reset_camera()
         self._log_title(path)
+        self._autoplay()
 
     def _read_into_grid(self, path: Path, show_errors: bool = False) -> bool:
         vtk = _vtk()
@@ -340,6 +369,7 @@ class VtkFieldViewer(QWidget):
                 pass
         self._series = files
         self._series_labels = labels
+        self._series_range = None  # computed lazily for the chosen array
 
     def _populate_arrays(self) -> None:
         self.cmb_array.blockSignals(True)
@@ -376,9 +406,39 @@ class VtkFieldViewer(QWidget):
             arr = data.GetArray(name)
             rng = arr.GetRange() if arr else (0.0, 1.0)
             self._data_range = (float(rng[0]), float(rng[1]))
+        if self._series and name and self.chk_auto.isChecked():
+            rng = self._series_range_for(name)
+            if rng is not None:
+                self._data_range = rng  # fixed range -> no flicker while playing
         self._scalar_range = self._data_range  # compatibility alias
         self._rescale_to_data()
         self._refresh_display()
+
+    def _series_range_for(self, name: str):
+        cache = getattr(self, "_series_range_cache", None)
+        if cache is None:
+            cache = self._series_range_cache = {}
+        if name in cache:
+            return cache[name]
+        vtk = _vtk()
+        lo, hi = float("inf"), float("-inf")
+        for p in self._series:
+            try:
+                r = _make_reader(vtk, p)
+                r.SetFileName(str(p))
+                r.Update()
+                g = r.GetOutput()
+            except Exception:  # noqa: BLE001
+                continue
+            if g is None:
+                continue
+            arr = g.GetPointData().GetArray(name) or g.GetCellData().GetArray(name)
+            if arr is not None:
+                a, b = arr.GetRange()
+                lo, hi = min(lo, a), max(hi, b)
+        res = None if lo == float("inf") or hi <= lo else (lo, hi)
+        cache[name] = res
+        return res
 
     def _rescale_to_data(self, *_a) -> None:
         lo, hi = self._data_range
@@ -545,15 +605,31 @@ class VtkFieldViewer(QWidget):
     def _on_play_toggled(self, on: bool) -> None:
         self.btn_play.setText("■ Stop" if on else "▶ Play")
         if on and self._series:
+            if self.slider_time.value() >= len(self._series) - 1:
+                self.slider_time.setValue(0)  # restart from the beginning
             self._timer.start()
         else:
             self._timer.stop()
 
+    def _on_fps_changed(self, fps: int) -> None:
+        self._timer.setInterval(max(1, int(round(1000.0 / max(1, fps)))))
+
     def _on_play_tick(self) -> None:
         if not self._series:
             return
-        nxt = (self.slider_time.value() + 1) % len(self._series)
+        cur = self.slider_time.value()
+        if cur >= len(self._series) - 1:
+            if not self.chk_loop.isChecked():
+                self.btn_play.setChecked(False)
+                return
+            nxt = 0
+        else:
+            nxt = cur + 1
         self.slider_time.setValue(nxt)
+
+    def _autoplay(self) -> None:
+        if self._series and self.chk_autoplay.isChecked():
+            self.btn_play.setChecked(True)
 
     def _log_title(self, path: Path) -> None:
         n = self._grid.GetNumberOfPoints() if self._grid else 0

@@ -89,6 +89,33 @@ def main() -> int:
     assert v._scalar_name == "temperature", v._scalar_name
     print("  .vtu (non-.vtr) loaded, scalar:", v._scalar_name)
 
+    # --- time series: film playback (fps / loop / auto-play / fixed colours) ---
+    import shutil
+
+    series_dir = written[0].parent
+    steps = []
+    for i in range(3):
+        p = series_dir / f"Et-E_{i:04d}.vtr"
+        shutil.copy(written[0], p)
+        steps.append(p)
+    v.load(steps[0])
+    assert len(v._series) == 3, v._series
+    assert v.slider_time.maximum() == 2
+    assert v.chk_autoplay.isChecked() and v.btn_play.isChecked(), "auto-play did not start"
+    assert v._timer.isActive()
+    assert v._series_range_for("magnitude") is not None, "no fixed colour range"
+    print("  series loaded:", len(v._series), "steps, auto-playing")
+
+    v.spn_fps.setValue(10)
+    assert v._timer.interval() == 100, v._timer.interval()
+
+    # loop off -> playback stops on the last frame instead of wrapping
+    v.chk_loop.setChecked(False)
+    v.slider_time.setValue(2)
+    v._on_play_tick()
+    assert not v.btn_play.isChecked() and not v._timer.isActive()
+    print("  fps + loop-off stop OK")
+
     print("VTK VIEWER SMOKE PASS")
     return 0
 

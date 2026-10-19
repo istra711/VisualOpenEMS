@@ -523,6 +523,11 @@ Buttons / controls
   • "Colour": Auto (data range) / manual min-max + Log scale (log colour
     mapping, like ParaView's "Use log scale") + "Rescale to data range".
   • "Time" slider + "Play": step through / animate a per-step series.
+  • Film mode: "fps" sets the speed (1–60), "Loop" repeats the sequence,
+    "Auto-play" starts immediately after loading/exporting a series. While a
+    series is loaded, Auto colour uses ONE range for the whole sequence (so the
+    colours don't flicker frame-to-frame); untick Auto to override.
+    With Loop off the playback stops on the last frame.
   • "Outline": domain box. "Reset view": fit camera. Mouse: rotate (left),
     pan (middle/shift), zoom (wheel).
   • A colour bar shows the scalar range.
