@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch export; a single `<name>.vtr` (first step) is kept. Tests:
   `tests/test_vtk_export.py` (+ time-series) and `tests/vtk_viewer_smoke.py`.
 
+- **Field dumps: CSXCAD AddDump parameters in the GUI** (`app/models/project.py`
+  `DumpDef`, `app/ui/geometry_editors.py` `DumpDialog`, `app/simulation/script_gen.py`):
+  the "Add Field Dump…" dialog now exposes **File type** (HDF5 `.h5` default, or
+  **VTK `.vtr` written directly by openEMS**), **Interpolation** (None / Node /
+  Cell = CSXCAD `dump_mode`), and an optional **Frequencies** list for
+  frequency-domain dumps (comma-separated, overrides the single Frequency).
+  `DumpDef` gained `file_type`, `dump_mode`, `frequencies` (old projects load
+  with defaults); the run script passes them to `CSX.AddDump(...)`, and SAR dumps
+  use the 20..22 type range. Test `tests/dump_params_smoke.py`; help updated.
+
 ## [0.5.0] - 2026-10-18
 
 ### Added

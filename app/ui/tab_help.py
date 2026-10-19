@@ -357,7 +357,13 @@ Ports
 
 Dumps
   • Enable field dumps — writes E/H/J fields for AppCSXCAD / Paraview.
-  • Add Field Dump… — region + quantity (E, H, J, SAR, …).
+  • Add Field Dump… — region + quantity (E, H, J, SAR, …) and the CSXCAD
+    AddDump parameters:
+      – File type: HDF5 (.h5, default) or VTK (.vtr written directly by
+        openEMS — handy for ParaView / the VTK tab).
+      – Interpolation: None / Node (default) / Cell.
+      – Frequency (FD dumps) or an optional Frequencies list (e.g.
+        "2.4 GHz, 2.45 GHz") that overrides it.
 
 NF2FF
   • Enable NF2FF box — far-field box for pattern results.

@@ -623,11 +623,17 @@ def main() -> int:
             if not dump.enabled:
                 continue
             dump_type = {"E": 10, "H": 11, "J": 13, "Jtot": 13, "D": 14, "B": 15}.get(dump.quantity, 10)
-            if not dump.frequency_domain:
+            if dump.quantity == "SAR":
+                dump_type = 20  # SAR lives in its own 20..22 range
+            elif not dump.frequency_domain:
                 dump_type = dump_type - 10
-            props_kw = dict(file_type=1)
+            props_kw = dict(
+                file_type=int(getattr(dump, "file_type", 1) or 1),
+                dump_mode=int(getattr(dump, "dump_mode", 1) or 1),
+            )
             if dump.frequency_domain:
-                props_kw["frequency"] = [dump.frequency]
+                freqs = getattr(dump, "frequencies", None) or [dump.frequency]
+                props_kw["frequency"] = [float(f) for f in freqs]
             if any(int(s) != 1 for s in dump.sub_sampling):
                 props_kw["sub_sampling"] = list(dump.sub_sampling)
             d = CSX.AddDump(dump.name, dump_type=dump_type, **props_kw)

@@ -84,6 +84,13 @@ class DumpDef:
     frequency: float = 2.4e9
     sub_sampling: list[int] = field(default_factory=lambda: [1, 1, 1])
     enabled: bool = True
+    #: CSXCAD AddDump file type: 0 = VTK (.vtr), 1 = HDF5 (default)
+    file_type: int = 1
+    #: interpolation: 0 = none, 1 = node (default), 2 = cell
+    dump_mode: int = 1
+    #: optional explicit list of frequencies for a frequency-domain dump
+    #: (overrides ``frequency`` when set)
+    frequencies: list[float] | None = None
 
 
 @dataclass
