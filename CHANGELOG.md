@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-19
+
 ### Fixed
 
 - **Mesh build died with "zero-size array to reduction operation minimum which
@@ -1064,4 +1066,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.4.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.4.0
 [0.5.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.0
 [0.5.1]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.1
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.1...HEAD
+[0.5.2]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.2
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.2...HEAD
