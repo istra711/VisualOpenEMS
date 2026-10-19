@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
@@ -680,6 +681,24 @@ class DumpDialog(QDialog):
 
             self.ed_freqs.setText(", ".join(fmt_hz(f) for f in d.frequencies))
         form.addRow("Frequencies", self.ed_freqs)
+        sub = list(getattr(d, "sub_sampling", [1, 1, 1]) or [1, 1, 1])
+        self.spn_sub = []
+        sub_row = QHBoxLayout()
+        for i, ax in enumerate("xyz"):
+            sp = QSpinBox()
+            sp.setRange(1, 100000)
+            sp.setValue(int(sub[i]) if i < len(sub) else 1)
+            sp.setToolTip(
+                "Time-domain only: record every Nth step on axis "
+                f"{ax}. 1 = every step (huge); e.g. 10 keeps every 10th — makes\n"
+                "the field animation (Time slider / Play in the Field Viewer)\n"
+                "manageable."
+            )
+            self.spn_sub.append(sp)
+            sub_row.addWidget(QLabel(ax))
+            sub_row.addWidget(sp)
+        sub_row.addStretch(1)
+        form.addRow("Sub-sampling", sub_row)
         form.addRow(self.chk_fd)
         form.addRow(self.chk_en)
         self.spn_start = _vec3_row(form, "Start", d.start, coord_system=coord_system)
@@ -731,6 +750,8 @@ class DumpDialog(QDialog):
             on = self.chk_fd.isChecked()
             for w in (self.spn_freq, self.cmb_freq_unit, self.ed_freqs):
                 w.setEnabled(on)
+            for w in self.spn_sub:  # sub-sampling is time-domain only
+                w.setEnabled(not on)
 
         self.chk_fd.toggled.connect(lambda _on: _sync_freq_enabled())
         _sync_freq_enabled()
@@ -751,6 +772,7 @@ class DumpDialog(QDialog):
             enabled=self.chk_en.isChecked(),
             file_type=int(self.cmb_file_type.currentData()),
             dump_mode=int(self.cmb_mode.currentData()),
+            sub_sampling=[int(s.value()) for s in self.spn_sub],
             frequencies=freqs,
         )
         self.accept()
