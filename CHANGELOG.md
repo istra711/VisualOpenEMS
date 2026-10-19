@@ -70,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Et-E_0.vtr`, …) and sorts numerically. Test `tests/dump_params_smoke.py`;
   help updated.
 
+- **Field Viewer film mode** (`app/ui/vtk_viewer.py`): a per-step series now
+  plays as a movie — **fps** (1–60, default 4), **Loop** on/off (off stops on
+  the last frame), **Auto-play** after loading/exporting, restart from step 0
+  when Play is pressed on the last frame, and a **fixed colour range for the
+  whole sequence** (computed once per array, cached) so the animation does not
+  flicker frame-to-frame. Tests in `tests/vtk_viewer_smoke.py`.
+
 - **Solver Parameters dialog** (`app/ui/solver_params.py`,
   `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,
   Simulation menu): new **Solver Parameters…** action exposing the openEMS FDTD
