@@ -69,6 +69,10 @@ def main() -> int:
         "--collect-binaries=openEMS",
         # VTK viewer: bundle VTK's shared libraries (needed by the VTK tab)
         "--collect-binaries=vtk",
+        # Field Viewer video export (MP4): imageio + its bundled ffmpeg binary
+        # are imported lazily, so PyInstaller must be told about them.
+        "--hidden-import=imageio",
+        "--collect-all=imageio_ffmpeg",
         "--collect-submodules=openEMS",
         "--collect-submodules=CSXCAD",
         # the WinPython env ships PyQt5 next to PySide6 — PyInstaller refuses
@@ -91,7 +95,7 @@ def main() -> int:
         "netCDF4", "pyproj", "h5netcdf", "tables",
         # plotting / media extras not used by the GUI
         "bokeh", "panel", "pydeck", "plotly", "dash",
-        "imageio", "imageio_ffmpeg", "moviepy", "av",
+        "moviepy", "av",  # imageio/imageio_ffmpeg: needed for video export
         "tokenizers", "transformers",
         # dev / doc / notebook toolchain
         "IPython", "jedi", "black", "yapf", "astroid", "pylint",

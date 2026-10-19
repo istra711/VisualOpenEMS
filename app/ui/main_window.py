@@ -11,6 +11,7 @@ from PySide6 import QtCore
 from PySide6.QtCore import QUrl, QObject, Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QFont, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -857,6 +858,13 @@ class MainWindow(QMainWindow):
             tip="Convert the project's field dumps (simulation/*.h5) to VTK (.vtr) "
             "in <project>/vtk and open them in the Field Viewer",
         )
+        add_action(
+            smenu,
+            "Export field video (MP4)\u2026",
+            slot=self._on_export_field_video,
+            tip="Render the Field Viewer's loaded time series to an MP4 using the "
+            "current 3D settings and the fps value",
+        )
 
         vmenu = bar.addMenu("&View")
         for title, idx in self._tab_title_map.items():
@@ -1517,6 +1525,21 @@ class MainWindow(QMainWindow):
             self.vtk_viewer.export_and_load()
         except Exception as e:  # noqa: BLE001 — never crash the GUI
             self._log(f"VTK export failed: {e}")
+
+    def _on_export_field_video(self) -> None:
+        """Export the Field Viewer's sequence to MP4 with the current view.
+
+        The Field Viewer tab is raised first: its GL window must be current
+        (and not zero-sized) for the frames to contain the rendered scene.
+        """
+        if getattr(self, "vtk_tab_index", -1) >= 0:
+            self.tabs.setCurrentIndex(self.vtk_tab_index)
+            QApplication.processEvents()
+        try:
+            self.vtk_viewer.export_video()
+        except Exception as e:  # noqa: BLE001 — never crash the GUI
+            self._log(f"Field video export failed: {e}")
+            QMessageBox.warning(self, "Save video", f"Video export failed:\n{e}")
 
     def _refresh_materials(self) -> None:
         self.mat_list.clear()

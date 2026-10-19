@@ -86,7 +86,8 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - **VTK Viewer** — convert the HDF5 field dumps to VTK rectilinear grids
   (`.vtr`) and inspect them in an embedded 3D view (iso-surface of |field|,
   outline, configurable axes: View → Axes for corner marker, labels/font,
-  size and a numeric coordinate ruler); the `.vtr` files open in ParaView too
+  size and a numeric coordinate ruler; export the sequence as an MP4 video
+  with the current view settings); the `.vtr` files open in ParaView too
 - All viewers support export to PNG
 
 ### Workflow Automation
