@@ -116,6 +116,17 @@ def main() -> int:
     assert not v.btn_play.isChecked() and not v._timer.isActive()
     print("  fps + loop-off stop OK")
 
+    # compact colour bar (no giant "field" title)
+    import vtk as _vtk
+
+    bar = v._make_scalar_bar(_vtk, v._lookup_table(), "field")
+    assert bar.GetMaximumWidthInPixels() == 120
+    assert bar.GetMaximumHeightInPixels() == 300
+    assert bar.GetTitleTextProperty().GetFontSize() == 12
+    assert bar.GetLabelTextProperty().GetFontSize() == 10
+    assert bar.GetUnconstrainedFontSize() == 1
+    print("  compact colour bar OK")
+
     print("VTK VIEWER SMOKE PASS")
     return 0
 
