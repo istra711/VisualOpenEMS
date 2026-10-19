@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mesh build died with "zero-size array to reduction operation minimum which
+  has no identity"** (`app/models/project.py`, `app/ui/mesh_params.py`,
+  `app/ui/mesh_worker.py`): the Mesh Parameters field *Num lines (edge gaps)*
+  allowed **1**, and easyMesh samples each edge gap with ``num_lines`` points
+  before diffing them — with 0/1 the diff is empty, so numpy aborted the whole
+  build with that cryptic error (instead of meshing). The spin box now starts at
+  **2** and `MeshSpec.effective_num_lines()` clamps the value to 2..50
+  (0/None -> 5) so old projects / hand-edited JSON cannot hit it either.
+  Additionally the worker now logs the **full traceback** of a failed mesh build
+  (only the message was shown before), and the GUI-side finish errors do too.
+  Tests: `tests/test_models.py` (clamping) +
+  `tests/mesh_thread_smoke.py` (a real build with `num_lines = 1`).
+
 - **VTK popped up its own "vtkOutputWindow" on the corner marker**
   (`app/ui/vtk_viewer.py`): `_update_corner_marker` called
   `InteractiveOff()` **before** `SetEnabled(1)`, so VTK warned "*Set interactor

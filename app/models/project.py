@@ -179,6 +179,20 @@ class MeshSpec:
     def unit_to_meters(self) -> float:
         return {"m": 1.0, "mm": 1e-3, "um": 1e-6, "cm": 1e-2}[self.drawing_unit]
 
+    def effective_num_lines(self) -> int:
+        """easyMesh ``num_lines`` clamped to a workable range (>= 2).
+
+        easyMesh samples each edge gap with ``num_lines`` points and diffs them;
+        ``0``/``1`` gives an empty diff, so the whole build dies with a cryptic
+        "zero-size array to reduction operation minimum" error (numpy). Old
+        projects and hand-edited values can still carry 1 -> clamp here.
+        """
+        try:
+            n = int(self.num_lines or 5)
+        except (TypeError, ValueError):
+            n = 5
+        return max(2, min(50, n))
+
     def global_setup(self, boundary: BoundarySpec) -> dict[str, Any]:
         setup: dict[str, Any] = {
             "start_frequency": self.start_frequency,
@@ -192,7 +206,10 @@ class MeshSpec:
             "use_circle_detection": self.use_circle_detection,
             "use_arc_detection": self.use_arc_detection,
             "handle_closely_placed_edges": self.handle_closely_placed_edges,
-            "num_lines": self.num_lines,
+            # easyMesh inserts ``num_lines`` samples per edge gap and then diffs
+            # them; with 0 or 1 the diff is empty and numpy aborts the whole
+            # mesh build with "zero-size array to reduction operation minimum".
+            "num_lines": self.effective_num_lines(),
             "dirs": self.dirs,
             "coord_system": self.coord_system,
             # NOTE: the metal-interface refinement is applied app-side

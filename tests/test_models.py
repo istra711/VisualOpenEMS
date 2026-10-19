@@ -26,6 +26,18 @@ def test_project_roundtrip():
     assert any(m.name == "copper" for m in q.materials)
 
 
+def test_num_lines_clamped_for_easymesh():
+    """num_lines < 2 breaks easyMesh ("zero-size array to reduction ... min")."""
+    from app.models.project import BoundarySpec, MeshSpec
+
+    boundary = BoundarySpec(air_margin=["auto"] * 6)
+    # value -> expected (0/None = "unset" -> default 5; 1 -> 2; else 2..50)
+    for value, want in ((None, 5), (0, 5), (1, 2), (2, 2), (5, 5), (80, 50)):
+        mesh = MeshSpec(drawing_unit="mm", num_lines=value)
+        assert mesh.effective_num_lines() == want, (value, mesh.effective_num_lines())
+        assert mesh.global_setup(boundary)["num_lines"] == want, value
+
+
 def test_mesh_targets():
     from app.models.project import MeshSpec
     from app.meshing.rules import compute_targets, wavelength_m

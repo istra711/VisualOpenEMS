@@ -9,6 +9,7 @@ that happens here.
 
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
@@ -44,6 +45,9 @@ class MeshBuildThread(QThread):
                 log=self.log.emit,
             )
         except Exception as e:  # noqa: BLE001 — report to the GUI thread
+            # The message alone is often cryptic (e.g. a numpy reduction error
+            # deep inside easyMesh), so log the full traceback as well.
+            self.log.emit("Mesh build error:\n" + traceback.format_exc())
             self.failed.emit(str(e))
             return
         self.done.emit(result)

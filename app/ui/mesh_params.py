@@ -125,10 +125,10 @@ class MeshParamsPanel(QWidget):
         self.spn_grading.setDecimals(2)
         self.spn_grading.setValue(2.0)
         self.spn_num_lines = QSpinBox()
-        self.spn_num_lines.setRange(1, 50)
+        self.spn_num_lines.setRange(2, 50)  # >= 2: easyMesh samples + diffs per gap
         self.spn_num_lines.setValue(5)
         self.spn_num_lines.setToolTip(
-            "Extra mesh lines per edge gap (easyMesh num_lines).\n"
+            "Extra mesh lines per edge gap (easyMesh num_lines), at least 2.\n"
             "Higher = denser at metal edges."
         )
         self.cmb_dirs = QComboBox()

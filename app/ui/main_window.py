@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
@@ -3834,7 +3835,7 @@ class MainWindow(QMainWindow):
             self._finish_mesh_build(result)
         except Exception as e:  # noqa: BLE001
             self._set_mesh_report(f"ERROR: {e}")
-            self._log(f"Mesh build failed: {e}")
+            self._log(f"Mesh build failed: {e}\n{traceback.format_exc()}")
         finally:
             self._mesh_building = False
             self.btn_build_mesh.setEnabled(True)
