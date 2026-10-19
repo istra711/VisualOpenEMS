@@ -63,6 +63,21 @@ def main() -> int:
     csx = tmp / "mesh_build" / "csx.xml"
     assert csx.exists(), f"csx.xml missing under {tmp / 'mesh_build'}"
 
+    # Regression: num_lines = 1 (old Mesh-Parameters minimum) made easyMesh die
+    # with "zero-size array to reduction operation minimum which has no identity"
+    # (it samples + diffs num_lines points per edge gap). Clamped to >= 2 now.
+    win.project.mesh.num_lines = 1
+    win._on_build_mesh()
+    deadline = time.time() + 90
+    while win._mesh_building and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+    assert not win._mesh_building, "mesh build (num_lines=1) did not finish in time"
+    report = win.mesh_report.toPlainText()
+    assert "zero-size array" not in report, report[:400]
+    assert "Mesh setup" in report, report[:400]
+    print("  num_lines clamped (no numpy reduction error) OK")
+
     win.close()
     print("MESH THREAD SMOKE OK")
     return 0
