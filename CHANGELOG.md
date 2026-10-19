@@ -102,6 +102,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grid gives a 2×2×3 dump. Renamed to **Spatial sub-sampling** with the correct
   tooltip/help; no longer disabled for frequency-domain dumps.
 
+- **"Log scale" had no visible effect** (`app/ui/vtk_viewer.py`): field magnitudes
+  normally reach exactly 0, so the auto colour range started at 0 and the
+  ``lo > 0`` guard silently fell back to linear. ``_effective_range`` now
+  substitutes the smallest positive field value (fallback ``hi*1e-9``) for the
+  LUT/mapper while log is on, so the checkbox really switches to log10.
+  Smoke covers it.
+
 - **Solver Parameters dialog** (`app/ui/solver_params.py`,
   `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,
   Simulation menu): new **Solver Parameters…** action exposing the openEMS FDTD

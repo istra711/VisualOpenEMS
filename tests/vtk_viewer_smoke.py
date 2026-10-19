@@ -127,6 +127,19 @@ def main() -> int:
     assert bar.GetUnconstrainedFontSize() == 1
     print("  compact colour bar OK")
 
+    # log scale must actually engage even when the range starts at 0.0
+    v.chk_log.setChecked(True)
+    v.chk_auto.setChecked(False)
+    v.spn_min.setValue(0.0)
+    v.spn_max.setValue(1e-12)
+    lut_log = v._lookup_table()
+    assert lut_log.GetScale() == 1, lut_log.GetScale()  # 1 = log10
+    lo_l, hi_l = lut_log.GetTableRange()
+    assert 0.0 < lo_l < hi_l, (lo_l, hi_l)
+    v.chk_log.setChecked(False)
+    assert v._lookup_table().GetScale() == 0
+    print("  log-scale range (0 -> min positive) OK")
+
     print("VTK VIEWER SMOKE PASS")
     return 0
 

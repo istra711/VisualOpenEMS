@@ -471,19 +471,51 @@ class VtkFieldViewer(QWidget):
             hi = lo + 1.0
         return lo, hi
 
+    def _effective_range(self) -> tuple[float, float]:
+        """Colour range actually used by the LUT / mapper.
+
+        log10 is undefined at 0, but field magnitudes normally reach exactly 0
+        somewhere — the old ``lo > 0`` test silently fell back to linear, so the
+        "Log scale" box did nothing. Substitute the smallest positive value.
+        """
+        lo, hi = self._color_range()
+        if hi <= lo:
+            hi = lo + 1.0
+        if self.chk_log.isChecked() and hi > 0:
+            if lo <= 0:
+                lo = self._min_positive() or hi * 1e-9
+            if lo >= hi:
+                lo = hi * 1e-6
+        return lo, hi
+
+    def _min_positive(self) -> float | None:
+        """Smallest positive value of the displayed array (None if none)."""
+        loc, name = self._array()
+        if self._grid is None or not name:
+            return None
+        data = self._grid.GetPointData() if loc == "point" else self._grid.GetCellData()
+        arr = data.GetArray(name)
+        if arr is None:
+            return None
+        import numpy as np
+        from vtk.util import numpy_support as ns
+
+        a = ns.vtk_to_numpy(arr).astype(float).ravel()
+        a = a[np.isfinite(a) & (a > 0)]
+        return float(a.min()) if a.size else None
+
     def _lookup_table(self):
         vtk = self._vtk
         lut = vtk.vtkLookupTable()
         lut.SetNumberOfTableValues(256)
         lut.SetHueRange(0.667, 0.0)  # blue -> red (ParaView "jet"-ish)
         lut.Build()
-        lo, hi = self._color_range()
+        lo, hi = self._effective_range()
         if self.chk_log.isChecked() and lo > 0 and hi > lo:
             lut.SetScaleToLog10()
-            lut.SetTableRange(lo, hi)
         else:
             lut.SetScaleToLinear()
-            lut.SetTableRange(lo, hi)
+        lut.SetTableRange(lo, hi)
         lut.Build()
         return lut
 
@@ -562,7 +594,7 @@ class VtkFieldViewer(QWidget):
             mapper.SetLookupTable(lut)
             mapper.SetScalarModeToUsePointFieldData() if loc == "point" else mapper.SetScalarModeToUseCellFieldData()
             mapper.SelectColorArray(name)
-            mapper.SetScalarRange(*self._color_range())
+            mapper.SetScalarRange(*self._effective_range())
             mapper.ScalarVisibilityOn()
         else:
             mapper.ScalarVisibilityOff()
