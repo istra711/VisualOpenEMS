@@ -165,14 +165,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
   ########### START (14:03:07) #############
   Run: Run Simulation
-  [+0.1 s] Step: Preparing run (project, work dir, geometry)
-  [+0.3 s] Step: Generating run script
-  [+2.4 s] Step: Starting openEMS (FDTD)
+
+  --- [+0.1 s] Step: Preparing run (project, work dir, geometry) ---
+
+  --- [+0.3 s] Step: Generating run script ---
+
+  --- [+2.4 s] Step: Starting openEMS (FDTD) ---
   ...
-  [+1 m 23.4 s] Step: openEMS finished — loading results
+  --- [+1 m 23.4 s] Step: openEMS finished — loading results ---
   ################ END (14:04:30, duration 1 m 23.4 s) ###############
   ```
 
+  Every step line is marked (`--- … ---`) and preceded by a blank line.
   Elapsed times are measured from the START time and formatted as
   `12.3 s` / `1 m 23.4 s` / `1 h 02 m 03.4 s`; the END banner carries the
   wall-clock end time and the total duration. The session is closed after the

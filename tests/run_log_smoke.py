@@ -37,7 +37,9 @@ def main() -> int:
 
     steps = [l for l in lines if "Step: phase A" in l]
     assert steps, lines[-8:]
-    assert steps[-1].startswith("[+") and " s]" in steps[-1], steps[-1]
+    assert steps[-1].startswith("--- [+") and " s]" in steps[-1], steps[-1]
+    assert steps[-1].endswith("] Step: phase A ---"), steps[-1]
+    assert lines[lines.index(steps[-1]) - 1] == "", "blank line before the step"
 
     end = [l for l in lines if l.startswith("################ END (")]
     assert end, lines[-8:]
@@ -58,7 +60,7 @@ def main() -> int:
     # a step outside a session still logs, just without the delta
     win._run_step("standalone")
     win._drain_log_queue()
-    assert "Step: standalone" in win.log_view.toPlainText().splitlines()
+    assert "--- Step: standalone ---" in win.log_view.toPlainText().splitlines()
     print("[run-log] no duplicate END, standalone step OK")
 
     win.close()
