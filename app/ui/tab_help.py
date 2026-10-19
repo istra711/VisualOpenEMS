@@ -530,9 +530,10 @@ Buttons / controls
     series is loaded, Auto colour uses ONE range for the whole sequence (so the
     colours don't flicker frame-to-frame); untick Auto to override.
     With Loop off the playback stops on the last frame.
-  • "Pop out": moves the 3D view to a separate window (also Simulation ->
-    "Field Viewer (pop-out)…"). Click again / "Dock back" / closing the window
-    returns it to the tab.
+  • "Pop out": opens a second viewer in its own window, loaded with the same
+    file and mirroring representation/array/slice/colour/playback settings (also
+    Simulation -> "Field Viewer (pop-out)…"). The tab keeps its view; clicking
+    again / "Dock back" / closing the window dismisses the pop-out.
   • "Outline": domain box. "Reset view": fit camera. Mouse: rotate (left),
     pan (middle/shift), zoom (wheel).
   • A colour bar shows the scalar range.

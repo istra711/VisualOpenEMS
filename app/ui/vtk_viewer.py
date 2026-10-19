@@ -64,37 +64,33 @@ def _make_reader(vtk, path: Path):
 
 
 class FieldViewerWindow(QMainWindow):
-    """Standalone pop-out window hosting the field viewer's 3D pane."""
+    """Standalone window with its OWN field viewer.
 
-    def __init__(self, viewer: "VtkFieldViewer") -> None:
+    Re-parenting the embedded QVTKRenderWindowInteractor between top-level
+    windows leaves a stale native window behind (a duplicated view), so the
+    pop-out gets a second VtkFieldViewer that mirrors the current state instead.
+    """
+
+    def __init__(self, source: "VtkFieldViewer") -> None:
         super().__init__(None)
-        self.viewer: VtkFieldViewer | None = viewer
+        self.source: VtkFieldViewer | None = source
+        self.viewer = VtkFieldViewer(work_dir=source.work_dir)
+        self.viewer.btn_popout.setVisible(False)  # no nested pop-outs
         self.setWindowTitle("Field Viewer - pop-out")
         self.resize(1000, 780)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setCentralWidget(self.viewer)
 
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(6, 6, 6, 6)
-        bar = QHBoxLayout()
-        title = QLabel("Pop-out: Field Viewer")
-        title.setStyleSheet("font-weight: bold;")
-        bar.addWidget(title)
-        bar.addStretch(1)
-        self.btn_dock = QPushButton("Dock back")
-        bar.addWidget(self.btn_dock)
-        layout.addLayout(bar)
-
-        viewer._host.setParent(None)
-        layout.addWidget(viewer._host, 1)
-        self.setCentralWidget(container)
-        self.btn_dock.clicked.connect(viewer.restore_from_popout)
+        if source._current_path is not None:
+            self.viewer.load(source._current_path)
+        self.viewer._copy_state_from(source)
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        v = self.viewer
-        self.viewer = None
-        if v is not None and v._popout_win is self:
-            v.restore_from_popout()
+        src = self.source
+        self.source = None
+        if src is not None and src._popout_win is self:
+            src._popout_win = None
+            src.btn_popout.setText("Pop out")
         super().closeEvent(event)
 
 
@@ -113,6 +109,7 @@ class VtkFieldViewer(QWidget):
         self._scalar_range = (0.0, 1.0)
         self._series: list[Path] = []
         self._series_labels: list[str] = []
+        self._current_path: Path | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(250)
         self._timer.timeout.connect(self._on_play_tick)
@@ -311,7 +308,7 @@ class VtkFieldViewer(QWidget):
         self.work_dir = Path(work_dir) if work_dir else None
 
     def popout(self) -> None:
-        """Move the 3D pane into its own window (toggle: click again to dock)."""
+        """Open a separate window mirroring the view (toggle: click again to close)."""
         if self._popout_win is not None:
             self.restore_from_popout()
             return
@@ -321,25 +318,46 @@ class VtkFieldViewer(QWidget):
         win.raise_()
         win.activateWindow()
         self.btn_popout.setText("Dock view")
-        if self._iren is not None:
-            self._iren.GetRenderWindow().Render()
 
     def restore_from_popout(self) -> None:
-        """Move the 3D pane back into the Field Viewer tab."""
+        """Close the pop-out window (the tab view is unaffected)."""
         win = self._popout_win
         if win is None:
             return
         self._popout_win = None
-        win.viewer = None  # avoid a re-entrant closeEvent
+        win.source = None  # avoid a re-entrant closeEvent
         try:
             win.close()
         except Exception:  # noqa: BLE001
             pass
-        self._host.setParent(None)
-        self._root_layout.addWidget(self._host, 1)  # NOT _host_layout (inside it)
         self.btn_popout.setText("Pop out")
-        if self._iren is not None:
-            self._iren.GetRenderWindow().Render()
+
+    def _copy_state_from(self, other: "VtkFieldViewer") -> None:
+        """Mirror representation / colour / playback settings (for the pop-out)."""
+        for setter in (
+            lambda: self.cmb_rep.setCurrentText(other.cmb_rep.currentText()),
+            lambda: self.chk_outline.setChecked(other.chk_outline.isChecked()),
+            lambda: self.cmb_slice_axis.setCurrentText(other.cmb_slice_axis.currentText()),
+            lambda: self.slider_slice.setValue(other.slider_slice.value()),
+            lambda: self.slider.setValue(other.slider.value()),
+            lambda: self.chk_log.setChecked(other.chk_log.isChecked()),
+            lambda: self.chk_auto.setChecked(other.chk_auto.isChecked()),
+            lambda: self.spn_min.setValue(other.spn_min.value()),
+            lambda: self.spn_max.setValue(other.spn_max.value()),
+            lambda: self.spn_fps.setValue(other.spn_fps.value()),
+            lambda: self.chk_loop.setChecked(other.chk_loop.isChecked()),
+            lambda: self.chk_autoplay.setChecked(other.chk_autoplay.isChecked()),
+        ):
+            try:
+                setter()
+            except Exception:  # noqa: BLE001
+                pass
+        # the array combo is rebuilt on load; select the same entry by name
+        i = self.cmb_array.findText(other.cmb_array.currentText())
+        if i >= 0:
+            self.cmb_array.setCurrentIndex(i)
+        if self._series and other._series:
+            self.slider_time.setValue(min(other.slider_time.value(), len(self._series) - 1))
 
     def _on_open(self) -> None:
         start = ""
@@ -385,6 +403,7 @@ class VtkFieldViewer(QWidget):
         self._detect_series(path)
         if not self._read_into_grid(path, show_errors=True):
             return
+        self._current_path = path
         if self._series:
             self.slider_time.blockSignals(True)
             self.slider_time.setRange(0, len(self._series) - 1)

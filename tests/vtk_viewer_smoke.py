@@ -140,17 +140,29 @@ def main() -> int:
     assert v._lookup_table().GetScale() == 0
     print("  log-scale range (0 -> min positive) OK")
 
-    # pop-out the 3D pane and dock it back
+    # pop-out gets its OWN viewer (no GL widget reparenting, so no stale copy)
+    before = v._root_layout.count()
     v.popout()
     assert v._popout_win is not None, "pop-out window not created"
     assert v.btn_popout.text() == "Dock view"
-    assert v._host.parent() is not None
     win = v._popout_win
-    v.popout()  # toggle -> restore
-    assert v._popout_win is None and win.viewer is None
+    assert win.viewer is not v
+    assert win.viewer.parent() is win
+    assert win.viewer._current_path == v._current_path
+    assert win.viewer.cmb_rep.currentText() == v.cmb_rep.currentText()
+    # closing the window leaves the tab exactly as it was
+    win.close()
+    assert v._popout_win is None, "close did not reset the pop-out state"
     assert v.btn_popout.text() == "Pop out"
-    assert v._host.parent() is not None
-    print("  pop-out / dock OK")
+    assert v._root_layout.count() == before, "tab layout gained items after close"
+    assert v._host.parent() is v
+    # toggle button: open then close again
+    v.popout()
+    assert v._popout_win is not None
+    v.popout()
+    assert v._popout_win is None
+    assert v._root_layout.count() == before
+    print("  pop-out / close (no duplicate) OK")
 
     print("VTK VIEWER SMOKE PASS")
     return 0

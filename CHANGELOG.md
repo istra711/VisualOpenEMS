@@ -110,11 +110,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Smoke covers it.
 
 - **Field Viewer pop-out** (`app/ui/vtk_viewer.py`, `app/ui/main_window.py`): a
-  "Pop out" toolbar button (and Simulation -> "Field Viewer (pop-out)…") moves
-  the 3D pane into its own window; "Dock back", closing the window or clicking
-  the button again returns it to the tab. The render pane is re-parented, so the
-  loaded grid / time series / camera survive. Test in `tests/vtk_viewer_smoke.py`
-  (pop-out + dock restores the pane).
+  "Pop out" toolbar button (and Simulation -> "Field Viewer (pop-out)…") opens
+  the 3D view in its own window; "Dock back", closing the window or clicking
+  the button again closes it. The pop-out hosts a **second viewer instance**
+  that is loaded with the same file and mirrors representation, array, slice,
+  colour range/log scale and playback settings. Re-parenting the native
+  `QVTKRenderWindowInteractor` between top-level windows left a stale native
+  window behind (duplicated controls/pane in the tab after closing), so the
+  widget is no longer moved. Test in `tests/vtk_viewer_smoke.py` (pop-out,
+  close via the window, assert the tab layout is unchanged).
 
 - **Solver Parameters dialog** (`app/ui/solver_params.py`,
   `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,

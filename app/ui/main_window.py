@@ -1388,7 +1388,7 @@ class MainWindow(QMainWindow):
         self._log("Field Viewer opened")
 
     def _on_popout_field_viewer(self) -> None:
-        """Open the Field Viewer tab and move its 3D pane to a separate window."""
+        """Open the Field Viewer tab and show the view in a separate window."""
         self._on_show_vtk()
         try:
             if self.vtk_viewer._popout_win is None:
