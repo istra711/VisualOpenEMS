@@ -34,6 +34,13 @@ def main() -> int:
     assert dlg._flags["setup_only"].isChecked()
     assert dlg._flags["disable_dumps"].isChecked()
     assert not dlg._flags["debug_material"].isChecked()
+    # the dialog has a Help button (opens the "Solver Parameters" help topic)
+    from PySide6.QtWidgets import QPushButton
+
+    assert any(b.text() == "Help" for b in dlg.findChildren(QPushButton)), "no Help button"
+    from app.ui.tab_help import TAB_HELP, TAB_ORDER
+
+    assert "Solver Parameters" in TAB_ORDER and "Solver Parameters" in TAB_HELP
 
     # change + accept
     dlg.cmb_engine.setCurrentText("multithreaded")

@@ -21,6 +21,7 @@ TAB_ORDER = [
     "Antenna Simulation",
     "Cylindrical Mesh",
     "VTK",
+    "Solver Parameters",
 ]
 
 TAB_HELP: dict[str, str] = {
@@ -216,15 +217,10 @@ Tips
     or to limit CPU load on shared machines — passed to FDTD.Run(numThreads=N).
 
 Solver Parameters… (Simulation menu)
-  • openEMS FDTD initialization + Run() options (see the openEMS "Simulation"
-    concepts page). Initialization: OverSampling, TimeStepFactor (only lowers the
-    stability timestep), TimeStepMethod (1=CFL, 3=Rennings2), Max simulated time
-    (SetMaxTime, sets the frequency resolution df=1/T). Run(): Verbose 0-3,
-    Engine (fastest/basic/sse/sse-compressed/multithreaded) and the flags
-    Cleanup, Setup only (pre-process, no run), Disable dumps, Dump statistics,
-    Debug material/-PEC/-boxes/-operator/-CSX, Show probe discretization,
-    Legacy HDF5 dumps, Cell-constant material.
-  • Threads (numThreads) live in Simulation Parameters; EndCriteria/NrTS too.
+  • Separates the openEMS FDTD init + Run() options (engine, verbose,
+    timestep, MaxTime, debug dumps, setup-only, …) from these mesh/excitation
+    settings. See Help → "Solver Parameters" for the full description.
+  • Threads (numThreads), EndCriteria (dB) and NrTS stay here.
 
 Run script (toolbar: Script…)
   • Run Simulation writes work/<project>/project_run.py (plus project_copy.json,
@@ -534,6 +530,44 @@ Notes
   • The files are plain .vtr — they open in ParaView too.
   • Needs a working OpenGL (a normal desktop session); in a headless/remote
     session the 3D view may be unavailable but the .vtr files are still written.
+""",
+    "Solver Parameters": """SOLVER PARAMETERS — openEMS FDTD init + Run() options
+
+Simulation menu → Solver Parameters…. Every option maps 1:1 to the openEMS
+"Simulation" concepts page; the defaults reproduce the normal behaviour.
+
+FDTD initialization (openEMS(...))
+  • OverSampling — Nyquist oversampling of time-domain dumps (auto = off).
+  • TimeStepFactor — multiply the stability (CFL/Rennings2) timestep by this
+    factor (0<x<=1). It only ever REDUCES the timestep (safer, slower); for
+    marginally stable runs. auto = 1.
+  • TimeStepMethod — 1 = CFL, 3 = Rennings2 (default). auto = engine default.
+  • Max simulated time — SetMaxTime() caps the SIMULATED time (not wall-clock),
+    seconds. The simulated duration T sets the frequency resolution df = 1/T,
+    so a longer run resolves closer frequencies (typical RF: a few ns).
+
+Run() options
+  • Verbose (0-3) — engine log detail.
+  • Engine — fastest (default), basic, sse, sse-compressed, multithreaded.
+    Mainly for benchmarking / verification.
+  • Cleanup — delete known old output files in the sim dir before running, so
+    stale results cannot be mistaken for new ones. ON by default.
+  • Setup only — pre-process (build the operator) and stop: NO FDTD run and no
+    results. Useful with the debug options to validate a model quickly.
+  • Disable dumps — ignore all field-dump boxes (faster).
+  • Dump statistics — write openEMS_run_stats.txt / openEMS_stats.txt.
+  • Debug material / Debug PEC — write the material / metal distribution as
+    DISCRETIZED to VTK: the most direct way to see what the mesh made of the
+    model.
+  • Debug boxes / operator / CSX — write probe+dump boxes, the FDTD operator and
+    the parsed geometry (debugCSX.xml).
+  • Show probe discretization — report where each probe snapped to the grid.
+  • Legacy HDF5 dumps — HDF5 dumps with the reversed (legacy) axis order.
+  • Cell-constant material — assume a material is constant inside a cell
+    (material probing at the cell centre).
+
+Threads (numThreads), EndCriteria (dB) and NrTS are on the Simulation
+Parameters window — not repeated here.
 """,
     "Antenna Simulation": """ANTENNA SIMULATION — settings that keep FDTD results trustworthy
 
