@@ -45,6 +45,9 @@ class SimulationRunner:
             )
         env = os.environ.copy()
         env["PYTHONPATH"] = str(self.app_root) + os.pathsep + env.get("PYTHONPATH", "")
+        # Unbuffered child stdout: otherwise the post-processing prints sit in an
+        # 8 kB block buffer and the log looks frozen until the process exits.
+        env["PYTHONUNBUFFERED"] = "1"
         # ensure openEMS can find DLLs
         openems = Path(self.settings.openems_root)
         if openems.exists():
@@ -58,7 +61,9 @@ class SimulationRunner:
         except Exception as e:  # noqa: BLE001
             print("sim log open failed:", e)
             self._log_file = None
-        self._proc = self._spawn([str(python), str(script_path)], env)
+        # -u is belt-and-braces with PYTHONUNBUFFERED (some embedded interpreters
+        # ignore the env var); it keeps the log streaming during post-processing.
+        self._proc = self._spawn([str(python), "-u", str(script_path)], env)
         t = threading.Thread(target=self._pump, daemon=True)
         t.start()
 

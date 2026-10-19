@@ -77,6 +77,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole sequence** (computed once per array, cached) so the animation does not
   flicker frame-to-frame. Tests in `tests/vtk_viewer_smoke.py`.
 
+- **Live log for the post-processing phase** (`app/simulation/runner.py`,
+  `app/simulation/script_gen.py`): the child is now started with `-u` +
+  `PYTHONUNBUFFERED=1`, so the run script's prints appear immediately instead of
+  sitting in an 8 kB block buffer until the process exits (the log looked frozen
+  after the solver finished). The run script now reports the three post-processing
+  stages explicitly — `[1/3] S-parameters …`, `CalcPort done — writing JSON /
+  Touchstone / plot`, `[2/3] Field slices … (N image(s))`, `[3/3] NF2FF …` (or
+  "no NF2FF box - skipped"), all `flush=True`. Test
+  `tests/test_runner_streaming.py` (asserts the first line arrives before exit).
+
 - **Solver Parameters dialog** (`app/ui/solver_params.py`,
   `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,
   Simulation menu): new **Solver Parameters…** action exposing the openEMS FDTD
