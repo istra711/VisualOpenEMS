@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 
 from app.freecad_io.importer import load_geometry_file, overall_bounds
 from app.models.project import GeomAssignment, PortDef, Project
-from app.runlog import format_elapsed, format_run_end, format_run_start
+from app.runlog import format_run_end, format_run_start, format_run_step
 from app.settings import AppSettings
 from app.simulation.progress import EngineProgress
 from app.simulation.runner import SimulationRunner
@@ -1125,12 +1125,14 @@ class MainWindow(QMainWindow):
         self._log(f"Run: {title}")
 
     def _run_step(self, name: str) -> None:
-        """Log the step being worked on, with the delta to the START time."""
+        """Log the step being worked on (marked line, blank line before).
+
+        The delta is measured from the START of the run session.
+        """
         t0 = self._run_t0
-        if t0 is None:
-            self._log(f"Step: {name}")
-            return
-        self._log(f"[+{format_elapsed(time.monotonic() - t0)}] Step: {name}")
+        elapsed = None if t0 is None else time.monotonic() - t0
+        self._log("")  # Leerzeile vor jeder Step-Markierung
+        self._log(format_run_step(name, elapsed))
 
     def _end_run_log(self, note: str | None = None) -> None:
         """Close the run session: END banner with end time and total duration."""

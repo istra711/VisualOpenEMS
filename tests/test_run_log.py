@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.runlog import format_elapsed, format_run_end, format_run_start
+from app.runlog import (
+    format_elapsed,
+    format_run_end,
+    format_run_start,
+    format_run_step,
+)
 
 
 def test_format_elapsed_seconds() -> None:
@@ -30,4 +35,13 @@ def test_end_banner() -> None:
     line = format_run_end(83.4, when)
     assert line == (
         "################ END (14:04:30, duration 1 m 23.4 s) ###############"
+    )
+
+
+def test_step_line_markers() -> None:
+    assert format_run_step("Generating run script") == (
+        "--- Step: Generating run script ---"
+    )
+    assert format_run_step("Generating run script", 83.4) == (
+        "--- [+1 m 23.4 s] Step: Generating run script ---"
     )
