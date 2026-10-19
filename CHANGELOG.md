@@ -145,6 +145,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Scan work dir" (or when a file is opened explicitly). `antenna_viewer_smoke`
   asserts the empty start and that `set_work_dir` does not rescan.
 
+- **S-Params "Scan work dir" searched only the project folder**
+  (`app/ui/sparam_viewer.py`, `app/ui/main_window.py`): the S-param tab is
+  scoped to the current project (`set_work_dir(project_dir)`), so *Scan work
+  dir* found nothing after a project without results was opened. The button now
+  uses `scan_root` (the global work directory, kept in sync by Settings) via a
+  dedicated `_on_scan_workdir()` slot, so it lists the S-params of **all**
+  projects; the loaded file stays selected without being reloaded.
+  `find_latest_sparam_files` also grew to two nested levels and now finds files
+  *directly* in a project folder and in multi-run sub-folders
+  (`<work>/<proj>/<sub>/simulation/`) — one result per directory, `sparams.s1p`
+  preferred. Test: `tests/mainwindow_sparam_smoke.py` (scan finds another
+  project's S-params while the scope stays empty).
+
 - **Auto-play defaults to OFF + configurable in Settings** (`app/settings.py`,
   `app/ui/main_window.py`, `app/ui/vtk_viewer.py`): the Field Viewer no longer
   starts the animation on its own; the "Auto-play" checkbox (and its default,

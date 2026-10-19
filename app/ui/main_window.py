@@ -520,6 +520,9 @@ class MainWindow(QMainWindow):
         from app.ui.sparam_viewer import SParamViewer
 
         self.sparam_viewer = SParamViewer(work_dir=self.settings.work_path())
+        # "Scan work dir" always searches the global work dir; set_work_dir()
+        # may scope the initial listing to a single project.
+        self.sparam_viewer.scan_root = self.settings.work_path()
         tabs.addTab(self.sparam_viewer, "S-Params")
         self.sparam_tabs = tabs
         self.tabs = tabs  # main workflow tab widget (View menu)
@@ -4266,6 +4269,11 @@ class MainWindow(QMainWindow):
         try:
             self.vtk_viewer.set_autoplay_default(self.settings.field_viewer_autoplay)
         except Exception:  # noqa: BLE001 — viewer may not exist in early tests
+            pass
+        try:
+            self.sparam_viewer.scan_root = self.settings.work_path()
+            self.antenna_viewer.set_work_dir(self.settings.work_path())
+        except Exception:  # noqa: BLE001 — viewers may not exist in early tests
             pass
         self.runner = SimulationRunner(self.settings, app_root=APP_ROOT)
         pd = self.settings.port_defaults()
