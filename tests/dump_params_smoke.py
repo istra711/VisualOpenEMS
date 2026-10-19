@@ -54,6 +54,22 @@ def main() -> int:
     assert q.dumps[0].frequencies and len(q.dumps[0].frequencies) == 2
     print("  project JSON round trip OK")
 
+    # "Fit to geometry" / "Use NF2FF box" buttons fill the Start/Stop spins
+    dlg2 = DumpDialog(
+        fit_box=([-5.0, -5.0, -30.0], [5.0, 5.0, 30.0]),
+        nf2ff_box=([-40.0, -40.0, -40.0], [40.0, 40.0, 40.0]),
+    )
+    assert dlg2.btn_fit.isEnabled() and dlg2.btn_nf2ff.isEnabled()
+    dlg2.btn_fit.click()
+    assert [round(s.value(), 1) for s in dlg2.spn_start] == [-5.0, -5.0, -30.0]
+    assert [round(s.value(), 1) for s in dlg2.spn_stop] == [5.0, 5.0, 30.0]
+    dlg2.btn_nf2ff.click()
+    assert [round(s.value(), 1) for s in dlg2.spn_start] == [-40.0, -40.0, -40.0]
+    print("  Fit-to-geometry / Use-NF2FF buttons OK")
+
+    dlg3 = DumpDialog()  # no reference boxes -> buttons disabled
+    assert not dlg3.btn_fit.isEnabled() and not dlg3.btn_nf2ff.isEnabled()
+
     print("DUMP PARAMS SMOKE PASS")
     return 0
 

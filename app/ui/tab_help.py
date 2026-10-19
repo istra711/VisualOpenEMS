@@ -364,6 +364,9 @@ Dumps
       – Interpolation: None / Node (default) / Cell.
       – Frequency (FD dumps) or an optional Frequencies list (e.g.
         "2.4 GHz, 2.45 GHz") that overrides it.
+    Start/Stop buttons: "Fit to geometry" (structure bbox + margin) and
+    "Use NF2FF box" (reuse the NF2FF integration box) — start != stop in at
+    least one axis, otherwise the dump is a single point and shows nothing.
 
 NF2FF
   • Enable NF2FF box — far-field box for pattern results.
