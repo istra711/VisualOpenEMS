@@ -52,6 +52,7 @@ def main() -> int:
     print("  dump -> vtr:", written[0].name)
 
     v = VtkFieldViewer(work_dir=td)
+    assert not v.chk_autoplay.isChecked(), "Auto-play must default to off"
     v.load(written[0])
     assert v._grid is not None, "grid not loaded"
     assert v._grid.GetNumberOfPoints() == 6 * 5 * 4, v._grid.GetNumberOfPoints()
@@ -111,6 +112,7 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
+    v.set_autoplay_default(True)  # opt in (the app default is off)
     v.load(steps[0])
     assert len(v._series) == 3, v._series
     assert v.slider_time.maximum() == 2
@@ -121,8 +123,10 @@ def main() -> int:
 
     # physical simulation time of the frame (auto ps/ns unit)
     assert v.lbl_sim_time.text() == "t = 0.3399 ps", v.lbl_sim_time.text()
+    assert v.lbl_time_info.text() == "1/3  (step 0)", v.lbl_time_info.text()
     v.slider_time.setValue(2)
     assert v.lbl_sim_time.text() == "t = 84.63 ps", v.lbl_sim_time.text()
+    assert v.lbl_time_info.text() == "3/3  (step 124)", v.lbl_time_info.text()
     assert v.format_sim_time(1.5e-9) == "t = 1.5 ns"
     assert v.format_sim_time(4.2e-12) == "t = 4.2 ps"
     assert v.format_frequency(2.23e9) == "f = 2.23 GHz"

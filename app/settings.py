@@ -37,6 +37,10 @@ class AppSettings:
     window_geometry: str = ""  # base64 QByteArray from QMainWindow.saveGeometry()
     log_panel_visible: bool = True  # simulator log panel under the tabs
 
+    # --- Field Viewer (VTK) ---
+    #: start playback automatically when a time series is loaded/exported
+    field_viewer_autoplay: bool = False
+
     # --- Port defaults (Settings dialog + FreeCAD import fallbacks) ---
     default_port_type: str = "lumped"  # lumped | msl | rect_waveguide
     default_port_resistance: float = 50.0  # Ohm

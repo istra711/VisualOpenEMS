@@ -240,9 +240,10 @@ class VtkFieldViewer(QWidget):
         self.chk_loop.setChecked(True)
         self.chk_loop.setToolTip("Restart at the first step after the last one.")
         self.chk_autoplay = QCheckBox("Auto-play")
-        self.chk_autoplay.setChecked(True)
+        self.chk_autoplay.setChecked(False)  # default off; enable in Settings
         self.chk_autoplay.setToolTip(
-            "Start the animation automatically after loading / exporting a series."
+            "Start the animation automatically after loading / exporting a series.\n"
+            "Default can be changed in Settings → Field Viewer."
         )
         row4.addWidget(self.lbl_time)
         row4.addWidget(self.slider_time, 1)
@@ -322,6 +323,10 @@ class VtkFieldViewer(QWidget):
     # --------------------------------------------------------------- actions
     def set_work_dir(self, work_dir: Path | None) -> None:
         self.work_dir = Path(work_dir) if work_dir else None
+
+    def set_autoplay_default(self, on: bool) -> None:
+        """Apply the Settings default for the Auto-play checkbox."""
+        self.chk_autoplay.setChecked(bool(on))
 
     def popout(self) -> None:
         """Open a separate window mirroring the view (toggle: click again to close)."""
@@ -835,10 +840,17 @@ class VtkFieldViewer(QWidget):
             self.lbl_level.setText(f"{n} points")
         if self._series:
             i = self.slider_time.value()
-            lab = self._series_labels[i] if i < len(self._series_labels) else str(i)
-            self.lbl_time_info.setText(f"{i + 1}/{len(self._series)}  ({lab})")
+            self.lbl_time_info.setText(
+                f"{i + 1}/{len(self._series)}  ({self._step_label(i)})"
+            )
         self._update_sim_time_label()
         print(f"VTK viewer: loaded {path.name} ({n} points, scalar={name})")
+
+    def _step_label(self, i: int) -> str:
+        """``step 6324`` for openEMS TD keys, else the sidecar label as-is."""
+        lab = self._series_labels[i] if i < len(self._series_labels) else str(i)
+        m = re.fullmatch(r"t(\d+)", str(lab))
+        return f"step {m.group(1)}" if m else str(lab)
 
     @staticmethod
     def format_sim_time(seconds: float | None) -> str:
