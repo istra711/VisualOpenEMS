@@ -187,6 +187,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/test_run_log.py` (format) + `tests/run_log_smoke.py` (sequence,
   no duplicate END).
 
+- **Field Viewer started "empty" until you zoomed in** (`app/ui/vtk_viewer.py`):
+  the orientation triad was a fixed 10×10×10-unit actor. For the metre-sized
+  (or smaller) openEMS domains it dominated `ResetCamera()`, so the field filled
+  only a few pixels. The triad now scales with the dataset (18 % of the
+  bounding-box diagonal) and sits at the lower corner, and
+  `ResetCameraClippingRange()` keeps the near/far planes tight after a reset.
+  Test: `tests/vtk_viewer_smoke.py` (`axes_total_length`).
+
 - **Bottom-edge right-click menu for the log area** (`app/ui/main_window.py`):
   a right-click on the status bar (or on its engine/progress widgets at the
   bottom right) opens a menu with **Show log panel** (checkable), the log-area

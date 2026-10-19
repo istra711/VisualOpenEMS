@@ -14,6 +14,7 @@ inside the GUI. The GL window is not created on a headless/offscreen platform
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -39,6 +40,22 @@ from PySide6.QtWidgets import (
 from app.postproc.vtk_export import dump_to_vtr, export_dumps_to_vtk  # noqa: F401
 
 _AXIS_NORMAL = {"X": (1, 0, 0), "Y": (0, 1, 0), "Z": (0, 0, 1)}
+
+
+def axes_total_length(bounds) -> float:
+    """Edge length of the orientation triad, derived from the dataset bounds.
+
+    A fixed length (the old ``10, 10, 10``) dwarfs the metre-sized (or smaller)
+    openEMS domains and dominates ``ResetCamera()``, so the field looked
+    invisible at startup until the user zoomed in deeply.
+    """
+    dx = abs(float(bounds[1]) - float(bounds[0]))
+    dy = abs(float(bounds[3]) - float(bounds[2]))
+    dz = abs(float(bounds[5]) - float(bounds[4]))
+    diag = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if not math.isfinite(diag) or diag <= 0.0:
+        return 1.0
+    return 0.18 * diag
 
 
 def _vtk():
@@ -825,8 +842,13 @@ class VtkFieldViewer(QWidget):
             oa.GetProperty().SetColor(0.8, 0.8, 0.8)
             self._renderer.AddActor(oa)
 
+        # Orientation triad, scaled to the dataset and placed at the lower
+        # corner (a fixed-size triad used to make the field appear tiny).
+        bounds = self._grid.GetBounds()
         axes = vtk.vtkAxesActor()
-        axes.SetTotalLength(10, 10, 10)
+        length = axes_total_length(bounds)
+        axes.SetTotalLength(length, length, length)
+        axes.SetPosition(bounds[0], bounds[2], bounds[4])
         self._renderer.AddActor(axes)
 
         if self._iren is not None:
@@ -835,6 +857,8 @@ class VtkFieldViewer(QWidget):
     def _reset_camera(self) -> None:
         if self._renderer is not None:
             self._renderer.ResetCamera()
+            # keep near/far planes tight around the fitted scene
+            self._renderer.ResetCameraClippingRange()
             if self._iren is not None:
                 self._iren.GetRenderWindow().Render()
 
