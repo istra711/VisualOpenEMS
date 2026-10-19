@@ -328,6 +328,51 @@ class VtkFieldViewer(QWidget):
         """Apply the Settings default for the Auto-play checkbox."""
         self.chk_autoplay.setChecked(bool(on))
 
+    def clear(self, message: str | None = None) -> None:
+        """Drop the loaded field/series so no stale scene stays visible.
+
+        Used when a project without field dumps is opened (nothing must be
+        shown); the pop-out mirror (if any) is emptied as well.
+        """
+        self._timer.stop()
+        if self.btn_play.isChecked():
+            self.btn_play.blockSignals(True)
+            self.btn_play.setChecked(False)
+            self.btn_play.setText("▶ Play")
+            self.btn_play.blockSignals(False)
+        self._series, self._series_labels = [], []
+        self._series_times, self._series_freqs = [], []
+        self._current_path = None
+        self._grid = None
+        self._scalar_name = None
+        self._data_range = (0.0, 1.0)
+        self._scalar_range = (0.0, 1.0)
+        self._series_range = None
+        self._series_range_cache = {}
+        self.lbl_level.setText("")
+        self.lbl_time_info.setText("")
+        self.lbl_sim_time.setText("")
+        self._set_time_visible(False)
+        self.cmb_array.blockSignals(True)
+        self.cmb_array.clear()
+        self.cmb_array.blockSignals(False)
+        if self._renderer is not None:
+            try:
+                self._renderer.RemoveAllViewProps()
+                self._iren.GetRenderWindow().Render()
+            except Exception:  # noqa: BLE001
+                pass
+        if not getattr(self, "_vtk_failed", False):
+            if message:
+                self.lbl_hint.setText(message)
+            self.lbl_hint.setVisible(True)
+        win = self._popout_win
+        if win is not None and getattr(win, "viewer", None) is not self:
+            try:
+                win.viewer.clear()
+            except Exception:  # noqa: BLE001
+                pass
+
     def popout(self) -> None:
         """Open a separate window mirroring the view (toggle: click again to close)."""
         if self._popout_win is not None:

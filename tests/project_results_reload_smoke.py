@@ -4,10 +4,10 @@ Builds a fake project work dir (<work>/<name>/simulation) with the artifacts a
 run leaves behind — csx.xml (meshed CSX) and sparams.s1p — then loads the
 project through MainWindow._open_project_path and checks that
 
-  * the Mesh Viewer shows the saved mesh (grid lines match csx.xml),
-  * the S-param Viewer has the saved network loaded,
-  * a project WITHOUT results leaves the viewers untouched (no crash),
-  * the S-param viewer is scoped to the project directory afterwards.
+   * the Mesh Viewer shows the saved mesh (grid lines match csx.xml),
+   * the S-param Viewer has the saved network loaded,
+   * a project WITHOUT results EMPTIES the viewers (no stale data shown),
+   * the S-param viewer is scoped to the project directory afterwards.
 
 Run: python -u tests/project_results_reload_smoke.py
 """
@@ -47,6 +47,27 @@ def _write_csx(dst: Path) -> dict[str, int]:
     metal.AddBox(start=[1.0, -5.0, 0.0], stop=[10.0, 5.0, 1.0], priority=10)
     csx.Write2XML(str(dst))
     return {d: len(_GRID[d]) for d in "xyz"}
+
+
+def _write_field_series(vtk_dir: Path) -> Path:
+    """Export a tiny FD dump into vtk_dir; returns the first .vtr path."""
+    import h5py
+
+    from app.postproc.vtk_export import dump_series_to_vtr
+
+    nx, ny, nz = 4, 3, 2
+    h5 = vtk_dir / "Et-E.h5"
+    with h5py.File(h5, "w") as f:
+        m = f.create_group("Mesh")
+        m.create_dataset("x", data=np.linspace(0.0, 3.0, nx))
+        m.create_dataset("y", data=np.linspace(0.0, 2.0, ny))
+        m.create_dataset("z", data=np.linspace(0.0, 1.0, nz))
+        fd = f.create_group("FieldData").create_group("FD")
+        fd.create_dataset("f0_real", data=np.ones((3, nx, ny, nz), dtype="float32"))
+        fd.create_dataset("f0_imag", data=np.zeros((3, nx, ny, nz), dtype="float32"))
+    paths, _labels = dump_series_to_vtr(h5, vtk_dir)
+    h5.unlink()
+    return paths[0]
 
 
 def _write_sparams(sim_dir: Path) -> Path:
@@ -112,15 +133,29 @@ def main() -> int:
         net_ok = win.sparam_viewer.network  # tab refresh reloads the file object
         print("[reload] S-params tab scoped to the project OK")
 
-        # --- a project without results must not clobber the viewers ----------
+        # --- a project without results must EMPTY the viewers ----------------
         empty_dir.mkdir(parents=True, exist_ok=True)
         empty_proj = empty_dir / "empty.fcsim.json"
         Project.new_default("results_reload_smoke_empty").save(empty_proj)
-        csx_before = win.mesh_viewer._csx
         win._open_project_path(empty_proj)
-        assert win.mesh_viewer._csx is csx_before, "mesh viewer must stay without results"
-        assert win.sparam_viewer.network is net_ok, "S-params must stay without results"
-        print("[reload] project without results leaves the viewers untouched OK")
+        assert win.mesh_viewer._csx is None, "mesh viewer must be cleared"
+        assert win.sparam_viewer.network is None, "S-params must be cleared"
+        assert win.antenna_viewer.data is None, "antenna pattern must be cleared"
+        assert win.vtk_viewer._grid is None, "field viewer must be cleared"
+        assert win.vtk_viewer._series == [], "field series must be cleared"
+        print("[reload] project without results clears the viewers OK")
+
+        # --- a project WITH exported dumps restores the Field Viewer --------
+        field_dir = work / "results_reload_smoke_field"
+        shutil.rmtree(field_dir, ignore_errors=True)
+        (field_dir / "vtk").mkdir(parents=True, exist_ok=True)
+        first_vtr = _write_field_series(field_dir / "vtk")
+        field_proj = field_dir / "results_reload_smoke_field.fcsim.json"
+        Project.new_default("results_reload_smoke_field").save(field_proj)
+        win._open_project_path(field_proj)
+        assert win.vtk_viewer._grid is not None, "field viewer did not restore the dump"
+        assert win.vtk_viewer._current_path == first_vtr, win.vtk_viewer._current_path
+        print("[reload] project with dumps restores the Field Viewer OK")
 
         win.close()
         print("PROJECT RESULTS RELOAD SMOKE PASS")
@@ -128,6 +163,7 @@ def main() -> int:
     finally:
         shutil.rmtree(proj_dir, ignore_errors=True)
         shutil.rmtree(empty_dir, ignore_errors=True)
+        shutil.rmtree(work / "results_reload_smoke_field", ignore_errors=True)
 
 
 if __name__ == "__main__":

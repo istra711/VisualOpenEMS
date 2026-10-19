@@ -120,6 +120,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   widget is no longer moved. Test in `tests/vtk_viewer_smoke.py` (pop-out,
   close via the window, assert the tab layout is unchanged).
 
+- **Opening a project without results empties the viewers**
+  (`app/ui/main_window.py`, `app/ui/sparam_viewer.py`,
+  `app/ui/antenna_viewer.py`, `app/ui/vtk_viewer.py`): `_load_last_results` now
+  always reconciles every result viewer with the opened project — S-Params,
+  Antenna/NF2FF and the Field Viewer are restored when the project has data for
+  them (the Field Viewer now also picks up the newest `<project>/vtk/*.vtr`
+  series) and **cleared otherwise**, so a project whose results were deleted no
+  longer shows the previous project's diagrams. New viewers get a `clear()`
+  method; **New project** clears them too. Smoke:
+  `tests/project_results_reload_smoke.py` (clears + restores the field dump).
+
 - **Auto-play defaults to OFF + configurable in Settings** (`app/settings.py`,
   `app/ui/main_window.py`, `app/ui/vtk_viewer.py`): the Field Viewer no longer
   starts the animation on its own; the "Auto-play" checkbox (and its default,

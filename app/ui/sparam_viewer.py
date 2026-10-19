@@ -342,6 +342,19 @@ class SParamViewer(QWidget):
         self.work_dir = Path(work_dir)
         self._on_scan()
 
+    def clear(self) -> None:
+        """Drop the loaded network (empty diagram) — e.g. project without results."""
+        self.network = None
+        self.network_path = None
+        self.markers = []
+        self._populate_ports()
+        self._refresh_markers()
+        self.lbl_info.setText("")
+        self._redraw()
+        gw = getattr(self, "_graph_win", None)
+        if gw is not None and hasattr(gw, "lbl_info"):
+            gw.lbl_info.setText("")
+
     def load_path(self, path: Path | str) -> None:
         path = Path(path)
         try:
