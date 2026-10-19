@@ -43,6 +43,7 @@ def read_dump_arrays(h5_path: Path | str):
                     break
             if field is None:
                 field = _field_from_group(root)
+    field = _orient_field(x, y, z, field)
     return x, y, z, field
 
 
@@ -81,7 +82,30 @@ def read_dump_series(h5_path: Path | str):
             tkeys = sorted((k for k in names if k.startswith("t") and k[1:].isdigit()), key=_num)
             for key in tkeys:
                 steps.append((key, np.asarray(g[key])))
+    steps = [(lab, _orient_field(x, y, z, f)) for lab, f in steps]
     return x, y, z, steps
+
+
+def _orient_field(x, y, z, field):
+    """Re-order a dump field to ``(3, nx, ny, nz)`` matching the mesh arrays.
+
+    openEMS stores the raw dump data with the spatial axes in the REVERSED
+    order (``z, y, x``) relative to the ``Mesh/{x,y,z}`` coordinate arrays (this
+    is the ``--legacyHDF5Dumps`` order; the default is reversed too). Detect it
+    from the shapes and transpose, so the VTK coordinates line up with the data.
+    """
+    if field is None:
+        return None
+    f = np.asarray(field)
+    spatial = f.shape[1:] if (f.ndim == 4 and f.shape[0] == 3) else f.shape
+    dims = (x.size, y.size, z.size)
+    if tuple(spatial) == dims:
+        return f
+    if tuple(spatial) == dims[::-1]:
+        if f.ndim == 4:
+            return np.ascontiguousarray(f.transpose(0, 3, 2, 1))
+        return np.ascontiguousarray(f.transpose(2, 1, 0))
+    return f  # unknown layout — let _check_grid report the mismatch
 
 
 def _magnitude(field: np.ndarray) -> np.ndarray:

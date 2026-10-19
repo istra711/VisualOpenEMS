@@ -89,6 +89,33 @@ def test_export_dir_skips_empty(tmp_path):
     assert names == ["Et-E.vtr"]
 
 
+def test_reversed_axis_order_is_oriented(tmp_path):
+    # openEMS stores the dump spatial axes reversed (z,y,x) vs Mesh/{x,y,z}
+    import h5py
+    import vtk
+    from vtk.util import numpy_support as ns
+
+    nx, ny, nz = 5, 4, 3
+    p = tmp_path / "Et-E.h5"
+    with h5py.File(p, "w") as f:
+        m = f.create_group("Mesh")
+        m.create_dataset("x", data=np.linspace(0, 10, nx))
+        m.create_dataset("y", data=np.linspace(0, 6, ny))
+        m.create_dataset("z", data=np.linspace(0, 3, nz))
+        fd = f.create_group("FieldData").create_group("FD")
+        rng = np.random.default_rng(7)
+        fd.create_dataset("f0_real", data=rng.standard_normal((3, nz, ny, nx)).astype("float32"))
+        fd.create_dataset("f0_imag", data=rng.standard_normal((3, nz, ny, nx)).astype("float32"))
+
+    out = dump_to_vtr(p)  # must NOT raise "mesh does not match field"
+    r = vtk.vtkXMLRectilinearGridReader()
+    r.SetFileName(str(out))
+    r.Update()
+    g = r.GetOutput()
+    assert tuple(g.GetDimensions()) == (nx, ny, nz), g.GetDimensions()
+    assert ns.vtk_to_numpy(g.GetPointData().GetArray("magnitude")).shape == (nx * ny * nz,)
+
+
 def test_time_series_export(tmp_path):
     import h5py
 
