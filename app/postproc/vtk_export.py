@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from app.postproc.fields import _field_from_group
+from app.postproc.fields import _field_from_group, _td_keys
 
 
 def read_dump_arrays(h5_path: Path | str):
@@ -79,9 +79,9 @@ def read_dump_series(h5_path: Path | str):
                 re = np.asarray(g[key])
                 field = re + 1j * np.asarray(g[base + "_imag"]) if (base + "_imag") in g else re
                 steps.append((base, field))
-            tkeys = sorted((k for k in names if k.startswith("t") and k[1:].isdigit()), key=_num)
-            for key in tkeys:
-                steps.append((key, np.asarray(g[key])))
+            for key in _td_keys(names):  # "00000000" (openEMS) or "t0"
+                label = key if not key.isdigit() else f"t{int(key)}"
+                steps.append((label, np.asarray(g[key])))
     steps = [(lab, _orient_field(x, y, z, f)) for lab, f in steps]
     return x, y, z, steps
 

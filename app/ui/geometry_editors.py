@@ -689,16 +689,16 @@ class DumpDialog(QDialog):
             sp.setRange(1, 100000)
             sp.setValue(int(sub[i]) if i < len(sub) else 1)
             sp.setToolTip(
-                "Time-domain only: record every Nth step on axis "
-                f"{ax}. 1 = every step (huge); e.g. 10 keeps every 10th — makes\n"
-                "the field animation (Time slider / Play in the Field Viewer)\n"
-                "manageable."
+                f"SPATIAL sub-sampling on axis {ax} (CSXCAD 'sub_sampling'): "
+                "1 = every mesh line (full resolution), N = every Nth mesh line\n"
+                "(coarser, smaller dump). This does NOT set the time step; a\n"
+                "time-domain dump stores every solver step automatically."
             )
             self.spn_sub.append(sp)
             sub_row.addWidget(QLabel(ax))
             sub_row.addWidget(sp)
         sub_row.addStretch(1)
-        form.addRow("Sub-sampling", sub_row)
+        form.addRow("Spatial sub-sampling", sub_row)
         form.addRow(self.chk_fd)
         form.addRow(self.chk_en)
         self.spn_start = _vec3_row(form, "Start", d.start, coord_system=coord_system)
@@ -750,8 +750,6 @@ class DumpDialog(QDialog):
             on = self.chk_fd.isChecked()
             for w in (self.spn_freq, self.cmb_freq_unit, self.ed_freqs):
                 w.setEnabled(on)
-            for w in self.spn_sub:  # sub-sampling is time-domain only
-                w.setEnabled(not on)
 
         self.chk_fd.toggled.connect(lambda _on: _sync_freq_enabled())
         _sync_freq_enabled()
