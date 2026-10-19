@@ -33,11 +33,26 @@ def _field_from_group(grp) -> np.ndarray | None:
         if im_key in grp:
             return re + 1j * np.asarray(grp[im_key])
         return re
-    # time domain: t0, t1, … -> last time step
-    tkeys = sorted(k for k in names if k.startswith("t") and k[1:].isdigit())
+    # time domain -> last time step
+    tkeys = _td_keys(names)
     if tkeys:
         return np.asarray(grp[tkeys[-1]])
     return None
+
+
+def _td_keys(names) -> list[str]:
+    """Time-step dataset names, ordered numerically.
+
+    openEMS writes ``00000000``, ``00000062``, … (zero-padded step index);
+    older/other writers use ``t0``, ``t1``, …
+    """
+    found: list[tuple[int, str]] = []
+    for k in names:
+        if k.isdigit():
+            found.append((int(k), k))
+        elif k.startswith("t") and k[1:].isdigit():
+            found.append((int(k[1:]), k))
+    return [name for _, name in sorted(found)]
 
 
 def _vector_magnitude(data: np.ndarray) -> np.ndarray:

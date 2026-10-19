@@ -140,6 +140,28 @@ def test_time_series_export(tmp_path):
     assert (tmp_path / "out" / "Et-E.series.json").exists()
 
 
+def test_time_series_numeric_keys(tmp_path):
+    """openEMS writes TD steps as 00000000, 00000062, … (not t0)."""
+    import h5py
+
+    p = tmp_path / "Et-H.h5"
+    nx, ny, nz = 5, 4, 3
+    with h5py.File(p, "w") as f:
+        m = f.create_group("Mesh")
+        m.create_dataset("x", data=np.linspace(0, 10, nx))
+        m.create_dataset("y", data=np.linspace(0, 6, ny))
+        m.create_dataset("z", data=np.linspace(0, 3, nz))
+        tdg = f.create_group("FieldData").create_group("TD")
+        for i in (0, 62, 124):
+            tdg.create_dataset(f"{i:08d}", data=np.full((3, nx, ny, nz), i, dtype="float32"))
+
+    _x, _y, _z, steps = read_dump_series(p)
+    assert [lab for lab, _f in steps] == ["t0", "t62", "t124"]
+    paths, labels = dump_series_to_vtr(p, tmp_path / "out")
+    assert labels == ["t0", "t62", "t124"]
+    assert len(paths) == 3
+
+
 def test_degenerate_dump_raises(tmp_path):
     import h5py
 

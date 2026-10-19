@@ -87,6 +87,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "no NF2FF box - skipped"), all `flush=True`. Test
   `tests/test_runner_streaming.py` (asserts the first line arrives before exit).
 
+### Fixed
+
+- **Time-domain dumps were not recognised as a series** (`app/postproc/fields.py`,
+  `app/postproc/vtk_export.py`): openEMS stores TD steps as ``00000000``,
+  ``00000062``, … (zero-padded step index), but the reader only accepted ``t0``,
+  ``t1``, … → ``read_dump_series`` returned 0 steps, so "Export project dumps to
+  VTK" produced a single frame and the Field Viewer had nothing to animate. New
+  ``_td_keys`` accepts both namings (numeric order) and labels numeric keys as
+  ``t0``, ``t62``, … Test `tests/test_vtk_export.py`
+  (`test_time_series_numeric_keys`).
+- **"Sub-sampling" in the dump dialog was documented/used as a time step**: it is
+  CSXCAD's *spatial* `sub_sampling` (every Nth mesh line), e.g. 10 on a 15×15×30
+  grid gives a 2×2×3 dump. Renamed to **Spatial sub-sampling** with the correct
+  tooltip/help; no longer disabled for frequency-domain dumps.
+
 - **Solver Parameters dialog** (`app/ui/solver_params.py`,
   `app/models/project.py` `SimSpec`, `app/simulation/script_gen.py`,
   Simulation menu): new **Solver Parameters…** action exposing the openEMS FDTD
