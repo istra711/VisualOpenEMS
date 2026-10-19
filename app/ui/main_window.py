@@ -1812,10 +1812,28 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             self._log(f"Computed summary failed: {e}")
 
+    def _clear_result_viewers(self, reason: str = "") -> None:
+        """Empty the result viewers so no stale data from another project shows."""
+        for name, viewer in (
+            ("mesh", getattr(self, "mesh_viewer", None)),
+            ("S-params", getattr(self, "sparam_viewer", None)),
+            ("NF2FF", getattr(self, "antenna_viewer", None)),
+            ("field", getattr(self, "vtk_viewer", None)),
+        ):
+            if viewer is None:
+                continue
+            try:
+                viewer.clear()
+            except Exception as e:  # noqa: BLE001 — never crash on a reset
+                print(f"{name} viewer clear failed: {e}")
+        if reason:
+            self._log(f"Result viewers cleared ({reason})")
+
     def _on_new(self) -> None:
         self.project = Project.new_default("untitled")
         self.primitives = []
         self._current_file_path = None
+        self._clear_result_viewers("new project")
         self.tree.clear()
         self.geom_info.clear()
         self._refresh_materials()
@@ -2147,56 +2165,121 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             self._log(f"Mesh Viewer: automatic meshing failed: {e}")
 
+    def _find_field_series(self, project_dir: Path) -> Path | None:
+        """Newest exported field dump (``<project>/vtk/*.vtr``), or ``None``.
+
+        Prefers the first step of the newest series (``<stem>_0000.vtr``) so the
+        film starts at the beginning.
+        """
+        import re
+
+        vtk_dir = Path(project_dir) / "vtk"
+        if not vtk_dir.is_dir():
+            return None
+        vtrs = sorted(
+            vtk_dir.glob("*.vtr"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        if not vtrs:
+            return None
+        m = re.match(r"(?P<base>.+)_(?P<idx>\d+)$", vtrs[0].stem)
+        if m:
+            first = vtk_dir / f"{m.group('base')}_0000.vtr"
+            if first.exists():
+                return first
+        return vtrs[0]
+
     def _load_last_results(self) -> None:
-        """Restore Mesh Viewer + S-param Viewer from the project's results.
+        """Restore the viewers from the project's results — or empty them.
 
         Prefers the paths recorded in the project JSON (``Project.results``,
         written after every run) and falls back to the project folder
-        (``<work>/<project>/{csx.xml, sparams/}``) plus the legacy
+        (``<work>/<project>/{csx.xml, sparams/, vtk/}``) plus the legacy
         ``<project>/simulation/`` location for older projects.
+
+        A viewer with *no* data for the opened project (e.g. the results were
+        deleted) is cleared, so nothing from the previously opened project
+        stays on screen.
         """
         rec = dict(self.project.results or {})
         project_dir = self._existing_path(rec.get("project_dir")) or self._project_work_dir()
         sim_dir = self._existing_path(rec.get("sim_dir")) or (project_dir / "simulation")
-        if not project_dir.is_dir() and not any(
-            self._existing_path(rec.get(k)) for k in ("csx_xml", "mesh_xml", "sparams")
-        ):
-            return
         loaded: list[str] = []
+        cleared: list[str] = []
 
         # --- Mesh Viewer: the meshed CSX of that run (or the last build) ----
         if self._load_recorded_csx():
             loaded.append("mesh")
+        else:
+            try:
+                self.mesh_viewer.clear()
+            except Exception as e:  # noqa: BLE001
+                print("mesh viewer clear failed:", e)
+            cleared.append("mesh")
 
         # --- S-param Viewer: recorded file, else newest of THIS project -----
+        self.sparam_viewer.set_work_dir(project_dir)
         recorded = self._existing_path(rec.get("sparams"))
-        cands: list[Path] = []
-        if recorded is not None:
-            cands = [recorded]
-        else:
-            cands = self._find_sparams_files(project_dir, sim_dir)
+        cands = [recorded] if recorded is not None else self._find_sparams_files(project_dir, sim_dir)
+        ok = False
         if cands:
-            self.sparam_viewer.set_work_dir(self._project_work_dir())
             try:
                 self.sparam_viewer.load_path(cands[-1])
                 loaded.append(f"S-params ({cands[-1].name})")
+                ok = True
             except Exception as e:  # noqa: BLE001
                 self._log(f"Could not restore S-params {cands[-1].name}: {e}")
+        if not ok:
+            self.sparam_viewer.clear()
+            cleared.append("S-params")
 
-        # --- Antenna pattern (NF2FF), when recorded -------------------------
-        nf2ff = self._existing_path(rec.get("nf2ff"))
+        # --- Antenna pattern (NF2FF): recorded, else this project's file ----
+        self.antenna_viewer.set_work_dir(self.settings.work_path())
+        nf2ff = next(
+            (
+                c
+                for c in (
+                    self._existing_path(rec.get("nf2ff")),
+                    self._existing_path(project_dir / "nf2ff" / "nf2ff.json"),
+                    self._existing_path(sim_dir / "nf2ff" / "nf2ff.json"),
+                )
+                if c is not None
+            ),
+            None,
+        )
+        ok = False
         if nf2ff is not None:
             try:
-                self.antenna_viewer.set_work_dir(self.settings.work_path())
                 self.antenna_viewer.load_path(nf2ff)
                 loaded.append(f"NF2FF ({nf2ff.name})")
+                ok = True
             except Exception as e:  # noqa: BLE001
                 self._log(f"Could not restore NF2FF {nf2ff.name}: {e}")
+        if not ok:
+            self.antenna_viewer.clear()
+            cleared.append("NF2FF")
+
+        # --- Field Viewer (VTK): newest exported dump of THIS project -------
+        self.vtk_viewer.set_work_dir(project_dir)
+        series = self._find_field_series(project_dir)
+        ok = False
+        if series is not None:
+            try:
+                self.vtk_viewer.load(series)
+                loaded.append(f"field ({series.name})")
+                ok = True
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not restore field dump {series.name}: {e}")
+        if not ok:
+            self.vtk_viewer.clear()
+            cleared.append("field")
 
         if loaded:
             self._log(f"Restored last results from {project_dir}: " + ", ".join(loaded))
-        else:
-            self._log(f"No restorable results in {project_dir}")
+        if cleared:
+            self._log(
+                f"No results for {project_dir}: " + ", ".join(cleared)
+                + " — viewer(s) cleared"
+            )
 
     def _on_save(self) -> None:
         self._sync_project_from_form()

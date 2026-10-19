@@ -759,6 +759,27 @@ class AntennaPatternViewer(QWidget):
             raw = current.data(Qt.ItemDataRole.UserRole) or current.text()
             self.load_path(Path(raw))
 
+    def clear(self) -> None:
+        """Drop the loaded NF2FF data (empty diagram) — project without results."""
+        self.data = None
+        self.data_path = None
+        self.markers = []
+        self._hpbw = None
+        self._vrv = None
+        self.cmb_freq.blockSignals(True)
+        self.cmb_freq.clear()
+        self.cmb_freq.blockSignals(False)
+        self._refresh_markers()
+        self.lbl_info.setText("")
+        self._update_details()
+        self._redraw()
+        gw = getattr(self, "_graph_win", None)
+        if gw is not None:
+            if hasattr(gw, "sync_freq"):
+                gw.sync_freq()
+            if hasattr(gw, "lbl_info"):
+                gw.lbl_info.setText("")
+
     def load_path(self, path: Path) -> None:
         self.markers = []
         self._refresh_markers()
