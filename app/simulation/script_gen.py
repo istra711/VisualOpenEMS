@@ -465,8 +465,21 @@ def main() -> int:
 
     # CoordSystem=1 => cylindrical (r, alpha, z) operator; 0 = cartesian (default)
     _cs = 1 if mesh.is_cylindrical else 0
-    FDTD = openEMS(NrTS=nr_ts, EndCriteria=project.sim.end_criteria, CoordSystem=_cs)
+    _sim = project.sim
+    _init = dict(NrTS=nr_ts, EndCriteria=_sim.end_criteria, CoordSystem=_cs)
+    if getattr(_sim, "over_sampling", None):
+        _init["OverSampling"] = int(_sim.over_sampling)
+    if getattr(_sim, "time_step_factor", None):
+        _init["TimeStepFactor"] = float(_sim.time_step_factor)
+    if getattr(_sim, "time_step_method", None):
+        _init["TimeStepMethod"] = int(_sim.time_step_method)
+    if getattr(_sim, "cell_constant_material", False):
+        _init["CellConstantMaterial"] = 1
+    FDTD = openEMS(**_init)
     FDTD.SetGaussExcite(f0, fc)
+    if getattr(_sim, "max_time", None):
+        FDTD.SetMaxTime(float(_sim.max_time))
+        print(f"FDTD max. simulated time = {float(_sim.max_time):g} s")
 
     CSX = ContinuousStructure(CoordSystem=_cs)
     FDTD.SetCSX(CSX)
@@ -816,18 +829,43 @@ def main() -> int:
     out_dir = WORK_DIR / "simulation"
     out_dir.mkdir(parents=True, exist_ok=True)
     print("Running openEMS into", out_dir)
-    run_kw: dict = {"verbose": 3, "cleanup": True}
-    n_threads = int(getattr(project.sim, "num_threads", 0) or 0)
+    run_kw: dict = {
+        "verbose": int(getattr(_sim, "verbose", 3) or 0),
+        "cleanup": bool(getattr(_sim, "cleanup", True)),
+    }
+    n_threads = int(getattr(_sim, "num_threads", 0) or 0)
     if n_threads > 0:
         run_kw["numThreads"] = n_threads
         print(f"FDTD threads (numThreads) = {n_threads}")
     else:
         print("FDTD threads: auto (all cores)")
+    _eng = str(getattr(_sim, "engine", "") or "").strip()
+    if _eng:
+        run_kw["engine"] = _eng
+    for _key, _attr in (
+        ("disable_dumps", "disable_dumps"),
+        ("dump_statistics", "dump_statistics"),
+        ("debug_material", "debug_material"),
+        ("debug_PEC", "debug_pec"),
+        ("debug_boxes", "debug_boxes"),
+        ("debug_operator", "debug_operator"),
+        ("debug_CSX", "debug_csx"),
+        ("showProbeDiscretization", "show_probe_discretization"),
+        ("legacyHDF5Dumps", "legacy_hdf5_dumps"),
+    ):
+        if getattr(_sim, _attr, False):
+            run_kw[_key] = True
+    if getattr(_sim, "setup_only", False):
+        run_kw["setup_only"] = True
+    print("Solver options:", run_kw)
     # openEMS 0.0.36's Run() asserts os.getcwd() == os.path.realpath(sim_path):
     # a drive-letter case difference (getcwd returns 'c:' but realpath 'C:') or a
     # short/symlink name trips it (openEMS issues #113/#284). Passing the
     # realpath makes the chdir'd cwd match, so the assertion passes.
     FDTD.Run(os.path.realpath(str(out_dir)), **run_kw)
+    if run_kw.get("setup_only"):
+        print("setup_only: FDTD setup done — skipping the run and post-processing")
+        return 0
     print("Simulation finished (FDTD.Run complete)")
 
     # Evaluate S-params over the EXCITATION band only. Outside

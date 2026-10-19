@@ -234,6 +234,25 @@ class SimSpec:
     # Mesh density (cells per free-space wavelength at f_max) enforced while
     # antenna_mode is on. None => fall back to ANTENNA_DENSITY_BY_PRESET[mesh.preset].
     antenna_cells_per_wavelength: float | None = None
+    # --- Solver options (openEMS init + Run(); see the openEMS "Simulation"
+    # concepts page). Defaults reproduce the previous behaviour. ---
+    verbose: int = 3  # Run(verbose=…): 0..3
+    engine: str = ""  # Run(engine=…): "" = default (fastest)
+    setup_only: bool = False  # Run(setup_only=True): preprocess, do not run FDTD
+    cleanup: bool = True  # Run(cleanup=…): wipe old outputs first
+    disable_dumps: bool = False
+    dump_statistics: bool = False
+    debug_material: bool = False
+    debug_pec: bool = False
+    debug_boxes: bool = False
+    debug_operator: bool = False
+    debug_csx: bool = False
+    show_probe_discretization: bool = False
+    legacy_hdf5_dumps: bool = False
+    over_sampling: int | None = None  # openEMS(OverSampling=…)
+    time_step_factor: float | None = None  # openEMS(TimeStepFactor=…) 0<x<=1
+    time_step_method: int | None = None  # openEMS(TimeStepMethod=…) 1=CFL 3=Rennings
+    cell_constant_material: bool = False  # openEMS(CellConstantMaterial=1)
 
 
 @dataclass

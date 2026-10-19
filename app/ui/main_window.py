@@ -802,6 +802,13 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+Shift+P",
             tip="All simulation parameters in one window (Apply / Close)",
         )
+        add_action(
+            smenu,
+            "Solver Parameters\u2026",
+            slot=self._on_open_solver_params,
+            tip="openEMS FDTD init + Run() options: engine, verbose, timestep, "
+            "MaxTime, debug dumps, dump statistics, setup-only …",
+        )
         add_action(smenu, "Script\u2026", btn=self.btn_script)
         smenu.addSeparator()
         add_action(smenu, "S-Params Viewer", btn=self.btn_sparams)
@@ -1596,6 +1603,20 @@ class MainWindow(QMainWindow):
             patch_params=self.sim_params.patch_params,
         )
         dlg.show()
+
+    def _on_open_solver_params(self) -> None:
+        """Open the Solver Parameters dialog (openEMS init + Run() options)."""
+        from app.ui.solver_params import SolverParamsDialog
+
+        self._sync_project_from_form()
+        dlg = SolverParamsDialog(self, self.project)
+        if dlg.exec():
+            self._log(
+                f"Solver parameters: engine={self.project.sim.engine or 'default'}, "
+                f"verbose={self.project.sim.verbose}, setup_only={self.project.sim.setup_only}, "
+                f"cleanup={self.project.sim.cleanup}"
+            )
+            self._sync_form_from_project()
         dlg.raise_()
         dlg.activateWindow()
 
