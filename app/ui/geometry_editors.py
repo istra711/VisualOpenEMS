@@ -13,9 +13,11 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -617,11 +619,15 @@ class DumpDialog(QDialog):
         parent: QWidget | None = None,
         dump: DumpDef | None = None,
         coord_system: str = "cartesian",
+        fit_box: tuple[list[float], list[float]] | None = None,
+        nf2ff_box: tuple[list[float], list[float]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Field dump")
-        self.resize(360, 380)
+        self.resize(380, 470)
         self._coord_system = coord_system
+        self._fit_box = fit_box
+        self._nf2ff_box = nf2ff_box
         d = dump or DumpDef(name="Et", quantity="E", frequency=2.45e9)
         self.result: DumpDef | None = None
         form = QFormLayout(self)
@@ -678,6 +684,30 @@ class DumpDialog(QDialog):
         form.addRow(self.chk_en)
         self.spn_start = _vec3_row(form, "Start", d.start, coord_system=coord_system)
         self.spn_stop = _vec3_row(form, "Stop", d.stop, coord_system=coord_system)
+
+        def _write(spins, vals) -> None:
+            for sp, v in zip(spins, vals):
+                sp.setValue(float(v))
+
+        def _use(box) -> None:
+            if box:
+                _write(self.spn_start, box[0])
+                _write(self.spn_stop, box[1])
+
+        box_row = QHBoxLayout()
+        self.btn_fit = QPushButton("Fit to geometry")
+        self.btn_fit.setToolTip("Cover the whole structure (+ margin) — a volume.")
+        self.btn_fit.setEnabled(fit_box is not None)
+        self.btn_fit.clicked.connect(lambda: _use(self._fit_box))
+        self.btn_nf2ff = QPushButton("Use NF2FF box")
+        self.btn_nf2ff.setToolTip("Use the NF2FF integration box as the dump region.")
+        self.btn_nf2ff.setEnabled(nf2ff_box is not None)
+        self.btn_nf2ff.clicked.connect(lambda: _use(self._nf2ff_box))
+        box_row.addWidget(self.btn_fit)
+        box_row.addWidget(self.btn_nf2ff)
+        box_row.addStretch(1)
+        form.addRow(box_row)
+
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )

@@ -2959,18 +2959,38 @@ class MainWindow(QMainWindow):
         pad = 0.1 * span
         return [lo[i] - pad for i in range(3)], [hi[i] + pad for i in range(3)]
 
+    def _dump_fit_boxes(self):
+        """(geometry bbox, NF2FF box) as ((lo,hi)|None, (lo,hi)|None) for the dump dialog."""
+        fit = self._default_dump_box()
+        nf = self.project.nf2ff
+        nf_box = None
+        try:
+            lo = [float(v) for v in nf.start]
+            hi = [float(v) for v in nf.stop]
+            if any(abs(hi[i] - lo[i]) > 1e-9 for i in range(3)):
+                nf_box = (lo, hi)
+        except Exception:  # noqa: BLE001
+            nf_box = None
+        return fit, nf_box
+
     def _on_add_dump(self) -> None:
         from app.models.project import DumpDef
         from app.ui.geometry_editors import DumpDialog
 
+        fit, nf_box = self._dump_fit_boxes()
         seed = None
-        box = self._default_dump_box()
-        if box is not None:
+        if fit is not None:
             f0 = float(getattr(self.project.mesh, "target_frequency", 0) or 2.45e9)
             seed = DumpDef(
-                name="Et", quantity="E", start=box[0], stop=box[1], frequency=f0
+                name="Et", quantity="E", start=fit[0], stop=fit[1], frequency=f0
             )
-        dlg = DumpDialog(self, dump=seed, coord_system=self.project.mesh.coord_system)
+        dlg = DumpDialog(
+            self,
+            dump=seed,
+            coord_system=self.project.mesh.coord_system,
+            fit_box=fit,
+            nf2ff_box=nf_box,
+        )
         if dlg.exec() and dlg.result:
             d = dlg.result
             self.project.dumps = [x for x in self.project.dumps if x.name != d.name]
@@ -3415,7 +3435,14 @@ class MainWindow(QMainWindow):
             from app.ui.geometry_editors import DumpDialog
 
             d = self.project.dumps[idx]
-            dlg = DumpDialog(self, dump=d, coord_system=self.project.mesh.coord_system)
+            fit, nf_box = self._dump_fit_boxes()
+            dlg = DumpDialog(
+                self,
+                dump=d,
+                coord_system=self.project.mesh.coord_system,
+                fit_box=fit,
+                nf2ff_box=nf_box,
+            )
             if dlg.exec() and dlg.result:
                 self.project.dumps[idx] = dlg.result
                 self._log(f"Field dump updated: {dlg.result.name} ({dlg.result.quantity})")

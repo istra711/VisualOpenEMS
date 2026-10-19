@@ -58,7 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frequency-domain dumps (comma-separated, overrides the single Frequency).
   `DumpDef` gained `file_type`, `dump_mode`, `frequencies` (old projects load
   with defaults); the run script passes them to `CSX.AddDump(...)`, and SAR dumps
-  use the 20..22 type range. Test `tests/dump_params_smoke.py`; help updated.
+  use the 20..22 type range. The dialog also has **"Fit to geometry"** and
+  **"Use NF2FF box"** buttons that fill Start/Stop (the structure bbox + margin,
+  resp. the NF2FF integration box) — so a dump is never left as a single point.
+  Test `tests/dump_params_smoke.py`; help updated.
 
 ## [0.5.0] - 2026-10-18
 
