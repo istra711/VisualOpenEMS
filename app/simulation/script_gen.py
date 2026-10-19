@@ -700,7 +700,7 @@ def main() -> int:
         CSX,
         targets,
         ports=project.ports,
-        max_grading=mesh.max_grading_ratio,
+        max_grading=mesh.effective_max_grading_ratio(),
         coord_system=mesh.coord_system,
     )
     for line in report_to_lines(report):

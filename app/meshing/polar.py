@@ -279,7 +279,7 @@ def generate_polar_mesh(
     res = float(min(targets.target_cell_units, targets.max_cell_units))
     if res <= 0.0:
         raise ValueError("Cylindrical mesh: non-positive cell resolution")
-    ratio = max(1.05, float(mesh.max_grading_ratio or 2.0))
+    ratio = float(mesh.effective_max_grading_ratio())
     # alpha step so that the ARC at the outer radius stays <= res
     res_alpha = res / r_hi
 

@@ -121,9 +121,15 @@ class MeshParamsPanel(QWidget):
         self.spn_max_cell.setDecimals(4)
         self.spn_max_cell.setSpecialValueText("auto")
         self.spn_grading = QDoubleSpinBox()
-        self.spn_grading.setRange(1.0, 10.0)
+        self.spn_grading.setRange(1.05, 10.0)  # 1.0 breaks the lambda/10 cell cap
         self.spn_grading.setDecimals(2)
+        self.spn_grading.setSingleStep(0.05)
         self.spn_grading.setValue(2.0)
+        self.spn_grading.setToolTip(
+            "Max grading ratio between neighbouring cells (1.05 … 10).\n"
+            "Must be > 1 — 1.0 disables grading and makes the lambda/10 cell\n"
+            "cap fail (oversized PML cells → the run aborts)."
+        )
         self.spn_num_lines = QSpinBox()
         self.spn_num_lines.setRange(2, 50)  # >= 2: easyMesh samples + diffs per gap
         self.spn_num_lines.setValue(5)

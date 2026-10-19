@@ -341,7 +341,7 @@ def build_mesh_and_validate(
             CSX,
             targets,
             ports=project.ports,
-            max_grading=mesh.max_grading_ratio,
+            max_grading=mesh.effective_max_grading_ratio(),
             coord_system=mesh.coord_system,
         )
         lines.extend(report_to_lines(report))
