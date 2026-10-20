@@ -235,7 +235,11 @@ class SParamViewer(QWidget):
         self._analysis_dlg = self._build_analysis_dialog()
 
         bar = QHBoxLayout()
-        self.btn_open = QPushButton("Open Touchstone / JSON…")
+        self.btn_open = QPushButton("Open…")
+        self.btn_open.setToolTip(
+            "Open S-parameters: a Touchstone file (.sNp), sparams.json or a\n"
+            "results JSON of this app."
+        )
         self.btn_reload = QPushButton("Reload")
         self.btn_scan = QPushButton("Scan work dir")
         self.btn_scan.setToolTip(

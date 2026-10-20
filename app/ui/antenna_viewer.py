@@ -352,9 +352,14 @@ class AntennaPatternViewer(QWidget):
         root = QVBoxLayout(self)
 
         bar = QHBoxLayout()
-        self.btn_open = QPushButton("Open nf2ff.json…")
+        self.btn_open = QPushButton("Open…")
+        self.btn_open.setToolTip("Open an nf2ff.json (far-field result of a run).")
         self.btn_reload = QPushButton("Reload")
         self.btn_scan = QPushButton("Scan work dir")
+        self.btn_scan.setToolTip(
+            "List every nf2ff.json in the whole work directory\n"
+            "(not only the current project)."
+        )
         self.cmb_plot = QComboBox()
         self.cmb_plot.addItems(self.PLOT_TYPES)
         self.cmb_freq = QComboBox()

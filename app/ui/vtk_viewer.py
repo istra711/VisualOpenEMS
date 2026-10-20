@@ -362,19 +362,33 @@ class VtkFieldViewer(QWidget):
         self.btn_popout = QPushButton("Pop out")
         self.btn_popout.setToolTip("Show the 3D view in a separate window (click again to dock).")
         self.btn_popout.clicked.connect(self.popout)
+        # Two rows: one row of all controls was ~1670 px wide and thereby set the
+        # minimum width of the whole main window - the Project/Geometry splitter
+        # could not be dragged any more.
         for w in (self.btn_open, self.btn_export, self.chk_per_step, self.spin_stride,
-                  QLabel("Representation"), self.cmb_rep, QLabel("Array"), self.cmb_array,
                   self.chk_outline):
             bar.addWidget(w)
         bar.addStretch(1)
-        bar.addWidget(self.btn_video)
-        bar.addWidget(self.btn_popout)
-        bar.addWidget(self.btn_reset)
         root.addLayout(bar)
+
+        bar_view = QHBoxLayout()
+        lbl_rep = QLabel("Show")
+        lbl_rep.setToolTip(
+            "Representation: Surface / Wireframe / Slice / Iso-surface\n"
+            "(the ParaView 'Representation' option)."
+        )
+        for w in (lbl_rep, self.cmb_rep, QLabel("Array"), self.cmb_array):
+            bar_view.addWidget(w)
+        bar_view.addStretch(1)
+        for w in (self.btn_video, self.btn_popout, self.btn_reset):
+            bar_view.addWidget(w)
+        root.addLayout(bar_view)
 
         # slice + iso level
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Slice axis"))
+        lbl_axis = QLabel("Axis")
+        lbl_axis.setToolTip("Slice axis (X / Y / Z).")
+        row2.addWidget(lbl_axis)
         self.cmb_slice_axis = QComboBox()
         self.cmb_slice_axis.addItems(["X", "Y", "Z"])
         self.cmb_slice_axis.currentIndexChanged.connect(self._on_slice_axis_changed)
@@ -389,7 +403,9 @@ class VtkFieldViewer(QWidget):
         )
         self.spn_slice = QDoubleSpinBox()
         self.spn_slice.setDecimals(3)
-        self.spn_slice.setRange(-1e9, 1e9)
+        # ±1 km in mm: plenty for any domain, and a wider range only widens the
+        # box (Qt derives the minimum width from the largest value text)
+        self.spn_slice.setRange(-1e6, 1e6)
         self.spn_slice.setSuffix(" mm")
         self.spn_slice.setKeyboardTracking(False)  # apply on Enter / focus-out
         self.spn_slice.valueChanged.connect(self._on_slice_value)
@@ -414,7 +430,7 @@ class VtkFieldViewer(QWidget):
 
         # colour range (ParaView "Rescale to ... / log scale")
         row3 = QHBoxLayout()
-        self.chk_auto = QCheckBox("Auto (data range)")
+        self.chk_auto = QCheckBox("Auto")
         self.chk_auto.setChecked(True)
         self.chk_auto.setToolTip(
             "Colour limits follow the current frame, so every frame uses the\n"
@@ -440,9 +456,9 @@ class VtkFieldViewer(QWidget):
             "by that value; values below it are drawn in the lowest colour."
         )
         self.chk_log.toggled.connect(self._on_log_toggled)
-        self.btn_rescale = QPushButton("Rescale to data range")
+        self.btn_rescale = QPushButton("Rescale")
         self.btn_rescale.setToolTip(
-            "Set min/max to the range of the current frame.\n"
+            "Rescale min/max to the range of the current frame.\n"
             "Not needed while Auto is on - it does exactly that."
         )
         self.btn_rescale.clicked.connect(self._rescale_to_data)

@@ -101,6 +101,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Main window: the "Project / Geometry" pane could not be resized any more**
+  (`app/ui/mesh_viewer.py`, `app/ui/vtk_viewer.py`, `app/ui/sparam_viewer.py`,
+  `app/ui/antenna_viewer.py`): not the splitter was the problem — the tab pages
+  *behind* it defined the minimum width of the whole window. The Mesh Viewer
+  control bar was a single ~2040 px row and the Field Viewer's ~1670 px, so the
+  horizontal splitter was over-constrained and refused every drag (the left pane
+  sat at its own minimum). Now the bars are split over two rows and the longest
+  button/label texts are short (the tooltips keep the full wording), which drops
+  the page minima to: Mesh Viewer 2054 → 930 px, Field Viewer 1676 → 793 px,
+  S-Params 1008 → 798 px, Antenna 1140 → 1014 px. Dragging the divider is smooth
+  again over its whole range. Renamed (tooltips/help updated): "Show mesh grid"
+  → "Mesh grid", "Show geometry" → "Geometry", "Show ports" → "Ports",
+  "Show NF2FF" → "NF2FF", "Pop-out viewer…" → "Pop-out…",
+  "Representation" → "Show", "Auto (data range)" → "Auto",
+  "Rescale to data range" → "Rescale", "Open Touchstone / JSON…" → "Open…",
+  "Open nf2ff.json…" → "Open…". Also: the Field Viewer slice spinbox spans
+  ±1 km instead of ±1e9 mm (a wider range only widened the box).
+
 - **Field Viewer: Auto / Log scale / Rescale corrupted each other**
   (`app/ui/vtk_viewer.py`, `app/ui/number_field.py`): the colour limits were a
   `QDoubleSpinBox` with 6 decimals, so field magnitudes like `1.26e-9` were
