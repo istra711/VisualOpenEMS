@@ -579,16 +579,21 @@ Buttons / controls
     are in metres (1 mm = 0.001 m) — the slice controls use mm.
   • "Colour": Auto (data range) / manual min-max + Log scale (log colour
     mapping, like ParaView's "Use log scale") + "Rescale to data range".
-    Auto shows the range that is used (one range for the whole series) in
-    read-only fields; "Rescale to data range" is off while Auto is on, because
-    that is what Auto already does. Untick Auto to type min/max by hand — the
-    values then stay put when you move the Time slider or play. The fields take
-    scientific notation ("1.5e-9" or "1,5e-9"). Log scale needs a minimum > 0:
-    a minimum of 0 is replaced by the smallest *usable* positive value (at least
+    Auto follows the CURRENT frame, so every frame uses the full colour table and
+    changes over time stay visible (a single range over the whole series would be
+    dominated by the excitation pulse at the start and paint all later slices one
+    colour). Auto shows the range that is used in read-only fields; "Rescale to
+    data range" is off while Auto is on, because that is what Auto already does.
+    Untick Auto to freeze the range: the fields keep the values they had, so one
+    scale stays for all frames (min/max can be typed, they then stay put when you
+    move the Time slider or play). The fields take scientific notation
+    ("1.5e-9" or "1,5e-9"). Log scale needs a minimum > 0: a minimum of 0 is
+    replaced by the 1 % percentile of the positive values of the frame (at least
     1e-7 of the maximum, because float32 field values below that are noise) and
-    shown in the field; for a series one positive floor is used for all frames,
-    so the colours do not drift while playing. "Rescale to data range" uses all
-    time steps of a loaded series.
+    shown in the field; values below it are drawn in the lowest colour. Using the
+    plain minimum instead would stretch the table over dozens of decades — a
+    single near-zero cell would paint the whole slice one colour. "Rescale to
+    data range" uses the current frame.
   • "Time" slider + "Play": step through / animate a per-step series. Next to
     the step counter the frame's physical simulation time is shown in ps or ns
     (auto unit), taken from the openEMS HDF5 "time" attribute and written into
@@ -596,9 +601,9 @@ Buttons / controls
   • Film mode: "fps" sets the speed (1–60), "Loop" repeats the sequence,
     "Auto-play" (default OFF) starts immediately after loading/exporting a
     series; the default can be changed in Settings → Settings… → Field Viewer
-    (toggling the checkbox here is remembered too). While a
-    series is loaded, Auto colour uses ONE range for the whole sequence (so the
-    colours don't flicker frame-to-frame); untick Auto to override.
+    (toggling the checkbox here is remembered too). During playback the colour
+    range follows each frame (Auto); untick Auto to freeze it for a stable
+    comparison across frames.
     With Loop off the playback stops on the last frame.
   • "Video…" (also Simulation → "Export field video (MP4)…"): renders the
     loaded sequence to an MP4 (H.264) with the CURRENT view: representation,
