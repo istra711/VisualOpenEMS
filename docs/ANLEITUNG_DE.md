@@ -93,7 +93,11 @@ die leere Fläche darunter oder über `View` → **Project / Geometry Panel**
 
 Das **Log-Panel** (unterhalb der Tabs, ein-/ausblendbar mit **Ctrl+L**) hat zwei
 Tabs: **Log** (openEMS-/App-Log) und **Mesh Report** (der Mesh-Check-Report,
-einzige Quelle nach Build).
+einzige Quelle nach Build). **Rechtsklick im gesamten Log-Bereich** (Text,
+Tab-Leiste, Knopfzeile, Zeilenzähler oder der Trenner darüber) öffnet die
+Log-Optionen: Log-Panel und Projekt-/Geometrie-Panel ein-/ausblenden, Log-Tab
+wählen, Auto-scroll, Save log…, Pop out log…. Im Text stehen darüber zusätzlich
+Copy / Select All. Das gleiche Menü liegt auf der Statuszeile ganz unten.
 
 **Settings…** (einmalig):
 

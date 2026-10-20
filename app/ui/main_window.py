@@ -583,6 +583,42 @@ class MainWindow(QMainWindow):
             self.mesh_viewer_scene_info
         )
 
+        # Right-click anywhere in the log area opens the log-area options. It used
+        # to be only the thin status bar below, which was hard to hit: now the
+        # panel background, the tab bar, the button row and the line counter
+        # react too, and the text views keep Copy/Select All.
+        for w in (
+            self.log_panel,
+            self.log_tabs.tabBar(),
+            self.btn_log_clear,
+            self.btn_log_pop,
+            self.btn_log_save,
+            self.btn_log_autoscroll,
+            self.lbl_log_count,
+        ):
+            w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            w.customContextMenuRequested.connect(self._show_status_context_menu)
+        for w in (self.log_panel, self.log_tabs.tabBar(), self.lbl_log_count):
+            w.setToolTip(
+                "Right-click: log-area options (show/hide the Log and the "
+                "Project / Geometry panel, pick a log tab, auto-scroll, save)"
+            )
+        for view in (self.log_view, self.log_mesh_report, self.mesh_viewer_scene_info):
+            view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            view.customContextMenuRequested.connect(
+                lambda pos, v=view: self._show_log_view_context_menu(v, pos)
+            )
+        # the divider between the tabs and the log panel, too
+        self.right_split.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.right_split.customContextMenuRequested.connect(self._show_status_context_menu)
+        handle = self.right_split.handle(1)
+        if handle is not None:
+            handle.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            handle.customContextMenuRequested.connect(self._show_status_context_menu)
+            handle.setToolTip(
+                "Drag: resize the log panel · right-click: log-area options"
+            )
+
         self.right_split.setSizes([520, 220])
         self._log_sizes: list[int] | None = None
         self._apply_log_panel_visibility(
@@ -674,7 +710,8 @@ class MainWindow(QMainWindow):
             w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             w.customContextMenuRequested.connect(self._show_status_context_menu)
         self.status.setToolTip(
-            "Right-click here for log-area options (show/hide the log panel)"
+            "Right-click here for log-area options (show/hide the Log and the "
+            "Project / Geometry panel)"
         )
         # Larger default window so the mesh viewer is usable
         self.resize(1440, 900)
@@ -1438,14 +1475,18 @@ class MainWindow(QMainWindow):
         """Right-click on the Project / Geometry pane → panel options."""
         self._build_project_panel_menu().exec(QCursor.pos())
 
-    # ----- bottom-edge (status bar) log-area menu -------------------------
-    def _build_status_menu(self) -> QMenu:
-        """Options for the log area: show/hide, log tabs, auto-scroll, tools."""
-        menu = QMenu(self)
+    # ----- log area (panel + bottom edge) menu ---------------------------
+    def _add_log_area_actions(self, menu: QMenu) -> None:
+        """Panel switches + log tabs + auto-scroll + tools (shared by the
+        status-bar right-click, the log text and the log panel)."""
         act_panel = menu.addAction("Show log panel")
         act_panel.setCheckable(True)
         act_panel.setChecked(self.btn_log_toggle.isChecked())
         act_panel.toggled.connect(self._set_log_panel_visible)
+        act_proj = menu.addAction("Show Project / Geometry panel")
+        act_proj.setCheckable(True)
+        act_proj.setChecked(self.btn_project_toggle.isChecked())
+        act_proj.toggled.connect(self._set_project_panel_visible)
 
         menu.addSeparator()
         head = menu.addAction("Log area tab")
@@ -1466,10 +1507,30 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction("Save log…", self._save_log)
         menu.addAction("Pop out log…", self._pop_out_log)
+
+    def _build_status_menu(self) -> QMenu:
+        """Options for the log area: show/hide, log tabs, auto-scroll, tools."""
+        menu = QMenu(self)
+        self._add_log_area_actions(menu)
         return menu
 
+    def _log_view_menu(self, view) -> QMenu:
+        """Log text: copy/select-all (Qt's standard menu) + log-area options."""
+        menu = view.createStandardContextMenu()
+        menu.addSeparator()
+        self._add_log_area_actions(menu)
+        return menu
+
+    def _show_log_view_context_menu(self, view, pos=None) -> None:
+        """Right-click in a log text view → standard entries + log-area options."""
+        menu = self._log_view_menu(view)
+        if pos is None:
+            menu.exec(QCursor.pos())
+        else:
+            menu.exec(view.viewport().mapToGlobal(pos))
+
     def _show_status_context_menu(self, _pos=None) -> None:
-        """Right-click at the bottom edge → log-area menu."""
+        """Right-click in the log area / at the bottom edge → log-area menu."""
         menu = self._build_status_menu()
         menu.exec(QCursor.pos())
 

@@ -157,6 +157,11 @@ AppCSXCAD
 Tips
   • The “Mesh Viewer Scene Info” tab (in the log panel, next to Log / Mesh Report)
     shows the same info text — useful while you watch the log or the report.
+  • Right-click anywhere in the log area (text, tab bar, buttons, line counter or
+    the divider above it) for the log-area options: show/hide the **Log** and the
+    **Project / Geometry** panel, pick a log tab, auto-scroll, Save log…,
+    Pop out log…. In the text the entries Copy / Select All are above them.
+    The same menu is on the status bar at the bottom edge.
   • Check that the mesh lines pass through ports and thin substrates (cell size there).
   • Very large air margins shrink useful resolution — see Simulation Parameters.
   • The viewer holds the last built CSX — rebuild after geometry or mesh changes.
