@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Selectable FDTD excitation waveform** (`app/simulation/excitation.py`,
+  `app/models/project.py`, `app/simulation/script_gen.py`,
+  `app/ui/{main_window,mesh_params,sim_params,tab_help}.py`): the Mesh tab
+  (and Mesh Parameters window) gained an **Excitation** combo next to
+  f0/fc — *Gauss* (broadband, f0/fc, default and unchanged), *Sinus*
+  (`SetSinusExcite(f0)`, narrowband: S-params only meaningful near f0),
+  *Step* (`SetStepExcite(f_max)`) and *Dirac impulse*
+  (`SetDiracExcite(f_max)`), plus *Custom waveform (CSV)* when the installed
+  openEMS provides `SetCustomExcite` (0.0.36 does **not**, so the entry is
+  hidden there). The choice is stored as `mesh.excitation` /
+  `mesh.excitation_file` (old projects load as Gauss), applied by the generated
+  `project_run.py` through one shared helper, mirrored in the Mesh Parameters
+  window and the Sim Params readout, with fc disabled for non-Gauss kinds
+  (Start/Stop still define mesh + S-param band). Custom CSV: two columns
+  (time [s], amplitude), `,`/`;`/tab/space separated, optional header,
+  `#`/`%` comments, validated (>= 2 rows, time starts at 0 and increases).
+  Tests: `tests/test_excitation.py` (19 cases) + excitation checks in
+  `tests/generic_workflow_smoke.py`.
+
 - **Open a project from the command line** (`app/main.py`): a plain file
   argument (``python main.py work/My_Project.json`` — also with the EXE, e.g.
   *Open with*) is opened right after the window shows; non-file arguments and

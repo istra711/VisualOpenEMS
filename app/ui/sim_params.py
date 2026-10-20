@@ -76,6 +76,26 @@ def _fmt_len(v: float) -> str:
     return f"{v * 1000:.4g} um"
 
 
+def _excitation_text(mesh, f0: float, fc: float) -> str:
+    """Waveform as shown in the computed readout (Hz formatted)."""
+    from app.simulation.excitation import normalize_kind
+
+    kind = normalize_kind(getattr(mesh, "excitation", "gauss"))
+    f_max = max(float(mesh.start_frequency or 0.0), float(mesh.stop_frequency or 0.0))
+    if kind == "sinus":
+        return f"Sinus, f0 {_fmt_hz(f0)} (S-params meaningful near f0 only)"
+    if kind == "step":
+        return f"Step, f_max {_fmt_hz(f_max)}"
+    if kind == "dirac":
+        return f"Dirac impulse, f_max {_fmt_hz(f_max)}"
+    if kind == "custom":
+        from pathlib import Path
+
+        name = Path(str(getattr(mesh, "excitation_file", "") or "")).name or "?"
+        return f"Custom CSV ({name})"
+    return f"Gauss, f0 {_fmt_hz(f0)}, fc {_fmt_hz(fc)}"
+
+
 class SimParamsPanel(QWidget):
     """Edit + inspect simulation/mesh parameters that the tool auto-computes."""
 
@@ -694,7 +714,7 @@ class SimParamsPanel(QWidget):
             self.lbl_computed.setText("\n".join(lines))
 
             eff = [
-                f"Gauss excite   = f0 {_fmt_hz(f0)}, fc {_fmt_hz(fc)}",
+                f"Excitation     = {_excitation_text(p.mesh, f0, fc)}",
                 f"NrTS / EndCrit = {p.sim.max_timesteps} / "
                 f"{10.0 * math.log10(p.sim.end_criteria):.1f} dB",
                 f"Threads        = {int(getattr(p.sim, 'num_threads', 0) or 0) or 'auto (all cores)'}",

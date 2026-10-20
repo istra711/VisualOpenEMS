@@ -171,6 +171,15 @@ class MeshSpec:
     # "cylindrical" (polar (r, alpha, z) mesher; openEMS CoordSystem=1).
     # Old project JSONs miss the key and load with the default.
     coord_system: Literal["cartesian", "cylindrical"] = "cartesian"
+    # FDTD excitation waveform (app/simulation/excitation.py):
+    #   gauss  -> SetGaussExcite(f0, fc)     broadband, default
+    #   sinus  -> SetSinusExcite(f0)         narrowband (S-params only near f0)
+    #   step   -> SetStepExcite(f_max)       broadband step
+    #   dirac  -> SetDiracExcite(f_max)      broadband impulse
+    #   custom -> SetCustomExcite(time, values) from excitation_file (CSV,
+    #             time in seconds) — only if the installed openEMS has it.
+    excitation: str = "gauss"
+    excitation_file: str = ""
 
     @property
     def is_cylindrical(self) -> bool:

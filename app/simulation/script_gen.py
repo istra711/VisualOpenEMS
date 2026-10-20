@@ -173,6 +173,7 @@ from app.postproc import nf2ff as nf
 from app.postproc import sparams as sp
 from app.csxcad_builder.quantize import f32
 from app.simulation.msl import resolve_msl_axes
+from app.simulation.excitation import apply_excitation
 
 
 def load_project() -> Project:
@@ -476,7 +477,10 @@ def main() -> int:
     if getattr(_sim, "cell_constant_material", False):
         _init["CellConstantMaterial"] = 1
     FDTD = openEMS(**_init)
-    FDTD.SetGaussExcite(f0, fc)
+    # Excitation waveform from Mesh Parameters (gauss / sinus / step / dirac /
+    # custom CSV). A custom file path is resolved against this script's folder.
+    _exc = apply_excitation(FDTD, mesh, f0=f0, fc=fc, base_dir=PROJECT_JSON.parent)
+    print(f"FDTD excitation = {_exc} (f0={f0:g} Hz, fc={fc:g} Hz)")
     if getattr(_sim, "max_time", None):
         FDTD.SetMaxTime(float(_sim.max_time))
         print(f"FDTD max. simulated time = {float(_sim.max_time):g} s")
