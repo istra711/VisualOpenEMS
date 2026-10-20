@@ -97,10 +97,20 @@ class MainWindow(QMainWindow):
         # run-log session: monotonic start time (None when no run is active)
         self._run_t0: float | None = None
         self._abort_requested = False
-        self.setWindowTitle("FreeCAD OpenEMS GUI")
         self._build_ui()
         self._apply_window_geometry()
+        self._update_window_title()
         self.statusBar().showMessage("Ready")
+
+    def _update_window_title(self) -> None:
+        """Title = app name + project name (+ file name) so windows differ."""
+        try:
+            name = str(getattr(self.project, "name", "") or "no project").strip()
+        except Exception:  # noqa: BLE001
+            name = "no project"
+        path = getattr(self, "_current_file_path", None)
+        suffix = f"  —  {Path(path).name}" if path else ""
+        self.setWindowTitle(f"FreeCAD OpenEMS GUI — {name}{suffix}")
 
     def _screen_avail(self):
         screen = self.screen()
@@ -1973,6 +1983,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.sim_params, "set_patch_group_visible"):
             self.sim_params.set_patch_group_visible(False)
         self._refresh_tree()
+        self._update_window_title()
         self._log("New project created (generic — not patch-specific)")
 
     def _on_open(self) -> None:
@@ -2027,6 +2038,7 @@ class MainWindow(QMainWindow):
             self._refresh_materials()
             self._refresh_ports()
             self._log(f"Opened {path}")
+            self._update_window_title()
             self._log_computed_summary()
             # remember for File → Recent projects (persisted in the settings)
             try:
@@ -2428,6 +2440,7 @@ class MainWindow(QMainWindow):
         if self._current_file_path and self._current_file_path.exists():
             saved = self.project.save(self._current_file_path)
             self._ensure_project_dir()
+            self._update_window_title()
             self._log(f"Saved {saved}")
             return
         # No known file yet — behave like Save As
@@ -2450,6 +2463,7 @@ class MainWindow(QMainWindow):
         self._current_file_path = Path(path)
         saved = self.project.save(path)
         self._ensure_project_dir()
+        self._update_window_title()
         self._log(f"Saved {saved}")
         try:
             self.settings.remember_project(saved)
@@ -2876,6 +2890,7 @@ class MainWindow(QMainWindow):
             "Use Import Geometry / Add Primitive / Add Port for custom structures.\n"
             "Simulation Parameters window holds patch overrides when this preset is active."
         )
+        self._update_window_title()
         self._log("Patch antenna preset loaded")
         self._log_computed_summary()
 
@@ -2932,6 +2947,7 @@ class MainWindow(QMainWindow):
         for ln in lines:
             self._log(ln)
         self._log_computed_summary()
+        self._update_window_title()
 
     def _on_load_pcb(self, use_freecad: bool = True) -> None:
         self._current_file_path = None
@@ -3005,6 +3021,7 @@ class MainWindow(QMainWindow):
             f"Work dir: {work}",
         ]
         self.geom_info.setPlainText("\n".join(lines))
+        self._update_window_title()
         self._log("PCB filter preset loaded")
         for ln in lines:
             self._log(ln)
