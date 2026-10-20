@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Field Viewer: field info + selectable standard view**
+  (`app/ui/vtk_viewer.py`, `app/settings.py`, `app/ui/main_window.py`):
+  - the top row now shows **which field is on screen** — the loaded file name
+    without the frame number, e.g. `Field: E_substrate [V/m]` (bold; the
+    tooltip adds the file name, the number of frames of the series and the
+    array). New helper `_field_kind()` (``E_substrate_0118`` → ``E_substrate``,
+    also used for the pop-out window title `Field Viewer - E_substrate`);
+  - a **"View" box** picks the standard view of the 3D pane: Isometric, From
+    ±X/±Y/±Z or "Fit (keep direction)" (the old Reset view behaviour — camera
+    direction untouched, only fitted). Picking one applies it at once **and** is
+    remembered (`settings.field_viewer_view`), so every field loaded afterwards
+    starts in that view; the pop-out mirrors the choice, and the camera maths
+    lives in the testable `preset_camera()` helper (centre + axis direction +
+    up vector, fitted by `ResetCamera()`). The Settings dialog's Field Viewer
+    group got the same combo as "Default view".
+  Tests: `tests/vtk_viewer_smoke.py` (`_field_kind`, label text/tooltip, preset
+  camera maths incl. empty scene, combo → callback), `tests/test_settings.py`
+  (default "keep" + round-trip + old settings without the key).
+
 - **Hide the left "Project / Geometry" pane** (`app/ui/main_window.py`):
   right-click anywhere in the pane — the empty area below the tree, the tree
   background or its title — and pick *Hide Project / Geometry panel* (the

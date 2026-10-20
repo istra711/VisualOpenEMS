@@ -580,6 +580,14 @@ Buttons / controls
   • "Show" (representation): Surface (default, like ParaView), Wireframe, Slice
     (a cutting plane, axis + position — good for 3D boxes) or Iso-surface
     (a contour of the selected array; Iso-level slider).
+  • "View" (top row, right): standard view of the 3D pane — Isometric, From
+    ±X / ±Y / ±Z, or "Fit (keep direction)" (only fits the camera, like the old
+    Reset view). Picking one applies it immediately **and is remembered**: every
+    field loaded afterwards starts in that view (same setting as Settings →
+    Field Viewer → "Default view"; the pop-out mirrors it).
+  • Next to it the bold box tells **which field is on screen**: the loaded file
+    name without the frame number, e.g. "Field: E_substrate [V/m]". Hover it for
+    the file name, the series length (frames) and the array.
   • Slice position: the slider moves the cutting plane; the spinbox next to it
     shows the exact position in mm and takes a **direct numeric position**
     (mm, Enter applies). A typed value cuts exactly there (the slider only gets

@@ -656,6 +656,11 @@ class MainWindow(QMainWindow):
             getattr(self.settings, "field_viewer_axes", None)
         )
         self.vtk_viewer.on_axes_changed = self._on_field_axes_changed
+        # standard view (applied on every load; picked in the viewer or Settings)
+        self.vtk_viewer.set_view_default(
+            str(getattr(self.settings, "field_viewer_view", "keep") or "keep")
+        )
+        self.vtk_viewer.on_view_changed = self._on_field_view_changed
         tabs.addTab(self.vtk_viewer, "Field Viewer")
         self.vtk_tab_index = tabs.indexOf(self.vtk_viewer)
 
@@ -4670,6 +4675,21 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _on_field_view_changed(self, key: str) -> None:
+        """Persist the Field Viewer standard view and mirror it to the pop-out."""
+        key = str(key or "keep")
+        self.settings.field_viewer_view = key
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 - never block the viewer on a write error
+            pass
+        win = getattr(getattr(self, "vtk_viewer", None), "_popout_win", None)
+        if win is not None and getattr(win, "viewer", None) is not None:
+            try:
+                win.viewer.set_view_default(key)
+            except Exception:  # noqa: BLE001
+                pass
+
     def _on_settings(self) -> None:
         # Settings dialog: paths + port defaults
         from PySide6.QtWidgets import (
@@ -4761,6 +4781,19 @@ class MainWindow(QMainWindow):
             "Toggle in the viewer is remembered as well."
         )
         fvform.addRow("", chk_autoplay)
+        from app.ui.vtk_viewer import VIEW_PRESETS
+
+        cmb_view = QComboBox()
+        for key, label in VIEW_PRESETS:
+            cmb_view.addItem(label, key)
+        idx_view = cmb_view.findData(str(getattr(self.settings, "field_viewer_view", "keep")))
+        cmb_view.setCurrentIndex(idx_view if idx_view >= 0 else 0)
+        cmb_view.setToolTip(
+            "Standard view of the Field Viewer's 3D pane.\n"
+            "Applied to every newly loaded field; the viewer's 'View' box\n"
+            "changes the same setting."
+        )
+        fvform.addRow("Default view", cmb_view)
         root.addWidget(grp_fv)
 
         bb = QDialogButtonBox(
@@ -4783,9 +4816,14 @@ class MainWindow(QMainWindow):
         self.settings.default_port_mesh_dirs = cmb_mesh.currentText()
         self.settings.default_port_direction = cmb_dir.currentText()
         self.settings.field_viewer_autoplay = bool(chk_autoplay.isChecked())
+        self.settings.field_viewer_view = str(cmb_view.currentData() or "keep")
         self.settings.save()
         try:
             self.vtk_viewer.set_autoplay_default(self.settings.field_viewer_autoplay)
+        except Exception:  # noqa: BLE001 — viewer may not exist in early tests
+            pass
+        try:
+            self.vtk_viewer.set_view_default(self.settings.field_viewer_view)
         except Exception:  # noqa: BLE001 — viewer may not exist in early tests
             pass
         try:
