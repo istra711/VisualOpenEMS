@@ -10,12 +10,36 @@ magnitude as point data, so ParaView / the built-in VTK viewer can show it.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from app.postproc.fields import _field_from_group, _td_keys
+
+#: openEMS dumps store raw SI values; the field kind only shows in the name.
+FIELD_UNITS = {
+    "E": "V/m",
+    "H": "A/m",
+    "D": "As/m²",
+    "J": "A/m²",
+}
+
+
+def field_unit(name: str) -> str:
+    """Best-effort SI unit of an openEMS dump from its name ("" if unknown).
+
+    openEMS HDF5 dumps carry no unit attribute — only the dump name says which
+    field it is ("Et-E" / "Et-H" / "Et" / "Ht" …). The last name segment wins,
+    then earlier ones, so titles like "Et-E" and "E-field" both map to V/m.
+    """
+    base = re.sub(r"_\d+$", "", Path(name).stem)  # drop per-step "_0000"
+    for token in reversed([t for t in re.split(r"[-_\s.]+", base) if t]):
+        unit = FIELD_UNITS.get(token[0].upper(), "")
+        if unit:
+            return unit
+    return ""
 
 
 def read_dump_arrays(h5_path: Path | str):

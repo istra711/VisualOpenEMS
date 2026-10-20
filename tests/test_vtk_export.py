@@ -196,3 +196,25 @@ def test_degenerate_dump_raises(tmp_path):
         f.create_group("FieldData")
     with pytest.raises(ValueError):
         dump_to_vtr(p)
+
+
+@pytest.mark.parametrize(
+    "name, unit",
+    [
+        ("Et-E", "V/m"),
+        ("Et-E_0007", "V/m"),
+        ("Et-H", "A/m"),
+        ("E-field", "V/m"),
+        ("H-field", "A/m"),
+        ("Et", "V/m"),
+        ("Ht", "A/m"),
+        ("Dt", "As/m²"),
+        ("Jt", "A/m²"),
+        ("Field", ""),
+        ("", ""),
+    ],
+)
+def test_field_unit_from_dump_name(name, unit):
+    from app.postproc.vtk_export import field_unit
+
+    assert field_unit(name) == unit

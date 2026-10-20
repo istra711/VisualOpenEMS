@@ -40,7 +40,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.postproc.vtk_export import dump_to_vtr, export_dumps_to_vtk  # noqa: F401
+from app.postproc.vtk_export import (  # noqa: F401
+    dump_to_vtr,
+    export_dumps_to_vtk,
+    field_unit,
+)
 
 _AXIS_NORMAL = {"X": (1, 0, 0), "Y": (0, 1, 0), "Z": (0, 0, 1)}
 
@@ -248,6 +252,8 @@ class VtkFieldViewer(QWidget):
         #: exact slice position in metres typed into the spinbox (None = the
         #: slider governs the position)
         self._slice_pos_exact: float | None = None
+        #: SI unit of the loaded dump (V/m, A/m, …; "" when unknown)
+        self._field_unit = ""
         self._data_range = (0.0, 1.0)
         self._scalar_name = None  # kept for compatibility / status text
         self._scalar_range = (0.0, 1.0)
@@ -901,6 +907,12 @@ class VtkFieldViewer(QWidget):
             return False
         self._grid = grid
         self._vtk = vtk
+        # unit from the dump name (E -> V/m, H -> A/m …), shown in the colour bar
+        self._field_unit = field_unit(path.stem)
+        tip = "Field array to display (point or cell data)."
+        if self._field_unit:
+            tip += f"\nValues are in {self._field_unit}."
+        self.cmb_array.setToolTip(tip)
         # new bounds -> a previously typed slice position is meaningless
         self._slice_pos_exact = None
         self._sync_slice_readout()
@@ -1171,12 +1183,16 @@ class VtkFieldViewer(QWidget):
 
     # ------------------------------------------------------------- rendering
     @staticmethod
-    def _make_scalar_bar(vtk, lut, name: str):
+    def _make_scalar_bar(vtk, lut, name: str, unit: str = ""):
         """Compact colour bar: VTK otherwise scales title/labels with the bar
-        height, which produced a huge "field" filling the pane."""
+        height, which produced a huge "field" filling the pane.
+
+        ``unit`` (e.g. "V/m") is appended to the title so the physical unit of
+        the displayed values is visible.
+        """
         bar = vtk.vtkScalarBarActor()
         bar.SetLookupTable(lut)
-        bar.SetTitle(name)
+        bar.SetTitle(f"{name} [{unit}]" if unit else name)
         bar.SetNumberOfLabels(5)
         bar.UnconstrainedFontSizeOn()  # font size in points, not bar-relative
         # Pin the bar to the right edge in normalised viewport coordinates.
@@ -1256,7 +1272,9 @@ class VtkFieldViewer(QWidget):
                 actor.GetMapper().SetLookupTable(lut)
             self._renderer.AddActor(actor)
             if name:
-                self._renderer.AddActor2D(self._make_scalar_bar(vtk, lut, name))
+                self._renderer.AddActor2D(
+                    self._make_scalar_bar(vtk, lut, name, self._field_unit)
+                )
 
         if self.chk_outline.isChecked():
             outline = vtk.vtkOutlineFilter()
@@ -1341,7 +1359,10 @@ class VtkFieldViewer(QWidget):
         name = self._scalar_name
         lo, hi = self._data_range
         if name:
-            self.lbl_level.setText(f"{name} {lo:.3g} … {hi:.3g}  ({n} pts)")
+            unit = f" {self._field_unit}" if self._field_unit else ""
+            self.lbl_level.setText(
+                f"{name} {lo:.3g} … {hi:.3g}{unit}  ({n} pts)"
+            )
         else:
             self.lbl_level.setText(f"{n} points")
         if self._series:

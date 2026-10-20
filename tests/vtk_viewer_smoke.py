@@ -61,6 +61,20 @@ def main() -> int:
     assert v._renderer is None
     print("  viewer loaded grid:", v._grid.GetNumberOfPoints(), "points")
 
+    # --- physical unit of the dump (openEMS stores raw SI values) ---
+    from app.postproc.vtk_export import field_unit
+
+    assert field_unit("Et-E") == "V/m", field_unit("Et-E")
+    assert field_unit("Et-H") == "A/m", field_unit("Et-H")
+    assert field_unit("Et-E_0007") == "V/m", field_unit("Et-E_0007")
+    assert field_unit("E-field") == "V/m"
+    assert field_unit("H") == "A/m"
+    assert field_unit("Jt") == "A/m²"
+    assert field_unit("Field") == "", field_unit("Field")
+    assert v._field_unit == "V/m", v._field_unit  # Et-E dump
+    assert "V/m" in v.lbl_level.text(), v.lbl_level.text()
+    assert "V/m" in v.cmb_array.toolTip(), v.cmb_array.toolTip()
+
     # --- slice position readout (number + unit) and numeric input in mm ---
     v.cmb_rep.setCurrentText("Slice")
     v.cmb_slice_axis.setCurrentText("Z")  # dump z: 0..4 (metres)
@@ -257,6 +271,9 @@ def main() -> int:
     assert bar.GetTitleTextProperty().GetFontSize() == 12
     assert bar.GetLabelTextProperty().GetFontSize() == 10
     assert bar.GetUnconstrainedFontSize() == 1
+    # the colour bar title shows the physical unit of the dump
+    bar_u = v._make_scalar_bar(_vtk, v._lookup_table(), "magnitude", v._field_unit)
+    assert bar_u.GetTitle() == "magnitude [V/m]", bar_u.GetTitle()
     print("  compact colour bar OK")
 
     # log scale must actually engage even when the range starts at 0.0

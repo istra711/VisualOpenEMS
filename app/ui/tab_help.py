@@ -545,6 +545,10 @@ Buttons / controls
     .vtk (e.g. a ParaView example); the reader is picked by extension.
   • "Array": pick the field array to display (point or cell data), e.g.
     magnitude / field / RotH-Field — the ParaView "Cell/Point Array" step.
+    The values are raw openEMS SI field values, so the colour bar title shows
+    the unit ("magnitude [V/m]"), taken from the dump name: E → V/m, H → A/m,
+    D → As/m², J → A/m² (names without a field letter stay unit-less). The
+    status line next to the sliders repeats range + unit.
   • "Representation": Surface (default, like ParaView), Wireframe, Slice (a
     cutting plane, axis + position — good for 3D boxes) or Iso-surface
     (a contour of the selected array; Iso-level slider).
