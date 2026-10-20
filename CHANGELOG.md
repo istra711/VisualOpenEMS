@@ -44,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/vtk_viewer_smoke.py` (readout while dragging, exact typed value, clamp,
   slider/axis taking over, tooltips).
 
+- **Field Viewer: physical unit of the displayed values**
+  (`app/postproc/vtk_export.py`, `app/ui/vtk_viewer.py`): openEMS dumps carry
+  no unit attribute, so the unit is derived from the dump name
+  (``field_unit()``: E ? V/m, H ? A/m, D ? As/m?, J ? A/m?; per-step suffixes
+  and titles like "E-field" are handled, unknown names stay unit-less). The
+  colour bar title now shows it (`magnitude [V/m]`), the status line next to
+  the sliders repeats range + unit, and the "Array" combo tooltip names it.
+  Test: `tests/test_vtk_export.py::test_field_unit_from_dump_name` +
+  `tests/vtk_viewer_smoke.py` (loaded Et-E ? V/m, bar title, status text).
+
 ### Changed
 
 - **Mesh Viewer: finer slice-plane slider** (`app/ui/mesh_viewer.py`): the
