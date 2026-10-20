@@ -74,6 +74,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Smoke: `tests/mesh_viewer_smoke.py` (range, quantisation to every 10th step,
   Ctrl keeps the 1-step position AND skips snapping, label texts/tooltips).
 
+### Fixed
+
+- **S-Param Viewer: broken y-scale on traces that were never simulated**
+  (`app/ui/sparam_viewer.py`): a single-excitation S-parameter file stores the
+  other S-matrix cells as placeholders (NaN in `sparams.json`, 0 in Touchstone).
+  Selecting such a trace (e.g. **S12/S22** after exciting only port 1) plotted
+  -300 dB data with no usable autoscale, so the plot looked like a broken
+  scaling. Empty traces are now detected (`_trace_has_data`), the plot shows a
+  message with the reason and the fix (*Simulation ▸ Run All Ports (full
+  S-matrix)*), the info line lists the missing traces ("· no data: S12, S22"),
+  marker list/cursor report "no data", *Go to min* is a no-op, and Smith-chart
+  start/end/labels skip NaN samples. NaN-safe marker rows also fixed the
+  literal `\n` in Smith marker labels. Smoke:
+  `tests/sparam_viewer_smoke.py` (NaN fixture `work/pcb_notch_ports`).
+
 ## [0.5.3] - 2026-10-19
 
 ### Fixed

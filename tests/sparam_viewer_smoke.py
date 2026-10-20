@@ -65,6 +65,41 @@ def main() -> int:
                 return 4
             print("  smith: scikit-rf full grid + labels OK")
 
+    # Unsimulated S-matrix cells (NaN in sparams.json, zeros in Touchstone)
+    # must not drive autoscaling: show a hint and keep the marker machinery idle.
+    nan_case = work / "pcb_notch_ports" / "sparams" / "sparams.json"
+    if not nan_case.exists():
+        print("SKIP: no fixture with NaN S-matrix cells (work/pcb_notch_ports)")
+    else:
+        viewer.load_path(nan_case)
+        missing = viewer._missing_traces(viewer.network)
+        print("missing traces:", missing)
+        if not missing:
+            print("FAIL: expected NaN cells in", nan_case)
+            return 11
+        viewer.cmb_plot.setCurrentText("|S| dB")
+        viewer.cmb_port.setCurrentText(missing[0])
+        viewer._redraw()
+        texts = [t.get_text() for t in viewer.figure.axes[0].texts]
+        if not any("no data" in t for t in texts):
+            print("FAIL: empty trace shows no 'no data' hint")
+            return 11
+        if "no data:" not in viewer.lbl_info.text():
+            print("FAIL: info line does not list the missing traces")
+            return 11
+        if "no data" not in viewer._marker_list_text(missing[0], complex("nan"), 1.0, 50.0):
+            print("FAIL: marker row for an empty trace")
+            return 11
+        n_mark = len(viewer.markers)
+        viewer._goto_min()
+        if len(viewer.markers) != n_mark:
+            print("FAIL: marker added from an empty trace")
+            return 11
+        viewer.cmb_plot.setCurrentText("Smith")
+        viewer._redraw()
+        print("empty-trace handling OK:", missing[0])
+        viewer.load_path(touch)
+
     viewer.cmb_plot.setCurrentText("Smith")
     viewer._redraw()
     smith_png = work / "sparam_smith_full.png"
