@@ -552,6 +552,11 @@ Buttons / controls
     instant. A long time series writes many files, so the "per-step" checkbox
     next to the button can be unticked for a quick static conversion (then the
     time slider/video export have nothing to play).
+    How many step files you get equals the number of samples openEMS stored:
+    time-domain dumps are sampled automatically (about 8 samples per period of
+    the highest frequency — e.g. every ~27 ps for a 4.6 GHz band), so a dump from
+    a run that was stopped early only holds a few samples. The run log lists the
+    stored step count per dump after the export.
   • "Open…": open any VTK file — .vtr, .vti, .vtu, .vtp, .vts (XML) or a legacy
     .vtk (e.g. a ParaView example); the reader is picked by extension.
   • "Array": pick the field array to display (point or cell data), e.g.
