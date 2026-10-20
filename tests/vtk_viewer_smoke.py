@@ -247,6 +247,45 @@ def main() -> int:
     assert v._scalar_name == "temperature", v._scalar_name
     print("  .vtu (non-.vtr) loaded, scalar:", v._scalar_name)
 
+    # --- field info label + standard view presets ---------------------------
+    from app.ui.vtk_viewer import VIEW_PRESETS, _field_kind, preset_camera
+
+    assert _field_kind(vtu) == "u", _field_kind(vtu)
+    assert _field_kind(Path("E_substrate_0118.vtr")) == "E_substrate"
+    assert _field_kind(Path("Et-E.vtr")) == "Et-E"
+    # the label names the field without the frame number (+ the unit)
+    assert v.lbl_field.text() == "Field: u", v.lbl_field.text()
+    assert "u.vtu" in v.lbl_field.toolTip(), v.lbl_field.toolTip()
+
+    # camera maths of the presets (no GL needed): direction, focal point, up
+    bounds = (0.0, 10.0, 0.0, 4.0, 0.0, 2.0)
+    assert preset_camera(bounds, "keep") is None
+    assert preset_camera(bounds, "nonsense") is None
+    pos, focal, up = preset_camera(bounds, "z+")
+    assert focal == (5.0, 2.0, 1.0), focal
+    assert pos[2] > focal[2] and pos[0] == focal[0] and pos[1] == focal[1], pos
+    assert up == (0.0, 1.0, 0.0), up
+    pos_x, focal_x, _up = preset_camera(bounds, "x-")
+    assert pos_x[0] < focal_x[0] and pos_x[1] == focal_x[1], pos_x
+    # empty scene (VTK reports +1e308) -> no camera change
+    assert preset_camera((1e308, -1e308, 1e308, -1e308, 1e308, -1e308), "iso") is None
+
+    keys = [k for k, _ in VIEW_PRESETS]
+    assert [v.cmb_view_preset.itemData(i) for i in range(v.cmb_view_preset.count())] == keys
+    assert v.view_preset() == "keep", v.view_preset()  # default: only fit
+    seen: list[str] = []
+    v.on_view_changed = seen.append  # the main window persists this
+    v.set_view_default("iso")
+    assert v.view_preset() == "iso"
+    assert not seen, "set_view_default must not notify (no camera change)"
+    v.cmb_view_preset.setCurrentIndex(v.cmb_view_preset.findData("z+"))
+    assert v.view_preset() == "z+" and seen == ["z+"], seen
+    v.apply_view_preset("iso")  # no render window here -> must not raise
+    v.set_view_default("keep")
+    v.on_view_changed = None
+    assert v.view_preset() == "keep"
+    print("  field info + view presets OK")
+
     # --- time series: film playback (fps / loop / auto-play / fixed colours) ---
     import shutil
 

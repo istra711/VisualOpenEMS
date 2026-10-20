@@ -91,6 +91,70 @@ DEFAULT_AXES: dict = {
     "ruler": False,  # numeric coordinate ticks around the dataset bounds
 }
 
+#: Standard views of the 3D pane (key -> label). "keep" only fits the camera and
+#: keeps the direction it has (the old "Reset view" behaviour).
+VIEW_PRESETS: tuple[tuple[str, str], ...] = (
+    ("keep", "Fit (keep direction)"),
+    ("iso", "Isometric"),
+    ("x+", "From +X"),
+    ("x-", "From -X"),
+    ("y+", "From +Y"),
+    ("y-", "From -Y"),
+    ("z+", "From +Z (top)"),
+    ("z-", "From -Z (bottom)"),
+)
+
+#: Camera direction (from the dataset centre) + up vector per preset.
+VIEW_DIRECTIONS: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] = {
+    "iso": ((1.0, 1.0, 1.0), (0.0, 0.0, 1.0)),
+    "x+": ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+    "x-": ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+    "y+": ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    "y-": ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),
+    "z+": ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
+    "z-": ((0.0, 0.0, -1.0), (0.0, -1.0, 0.0)),
+}
+
+
+def preset_camera(bounds, key: str):
+    """Camera ``(position, focal point, view up)`` for a standard view.
+
+    ``bounds`` is a VTK 6-tuple (xmin, xmax, ymin, ymax, zmin, zmax); the
+    camera sits on the given axis at a unit distance from the centre — the
+    caller fits the real distance with ``ResetCamera()``. Returns ``None`` for
+    "keep"/unknown keys and when nothing visible is in the scene (VTK reports
+    ``(1e308, -1e308, …)`` then).
+    """
+    direction = VIEW_DIRECTIONS.get(str(key))
+    if direction is None:
+        return None
+    try:
+        xmin, xmax, ymin, ymax, zmin, zmax = (float(b) for b in bounds)
+    except (TypeError, ValueError):
+        return None
+    if xmax < xmin or xmin > 1e30:
+        return None
+    if not math.isfinite(xmin + xmax + ymin + ymax + zmin + zmax):
+        return None
+    pos, up = direction
+    cx, cy, cz = (xmin + xmax) / 2.0, (ymin + ymax) / 2.0, (zmin + zmax) / 2.0
+    return (
+        (cx + pos[0], cy + pos[1], cz + pos[2]),
+        (cx, cy, cz),
+        (float(up[0]), float(up[1]), float(up[2])),
+    )
+
+
+def _field_kind(path) -> str:
+    """File name without the frame number: ``E_substrate_0118`` -> ``E_substrate``.
+
+    Tells which field is on screen (the openEMS dump kind) for single files and
+    for per-step series (``<kind>_<index>.vtr``).
+    """
+    stem = getattr(path, "stem", None) or str(path)
+    m = re.match(r"(?P<base>.+)_(?P<idx>\d+)$", str(stem))
+    return m.group("base") if m else str(stem)
+
 
 def axes_total_length(bounds, scale: float = 1.0) -> float:
     """Edge length of the orientation triad, derived from the dataset bounds.
@@ -230,12 +294,15 @@ class FieldViewerWindow(QMainWindow):
         self.viewer = VtkFieldViewer(work_dir=source.work_dir)
         self.viewer.btn_popout.setVisible(False)  # no nested pop-outs
         self.viewer.on_axes_changed = self._on_viewer_axes_changed
+        self.viewer.on_view_changed = self._on_viewer_view_changed
         self.setWindowTitle("Field Viewer - pop-out")
         self.resize(1000, 780)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setCentralWidget(self.viewer)
 
         if source._current_path is not None:
+            # the title tells which field this window shows (no frame number)
+            self.setWindowTitle(f"Field Viewer - {_field_kind(source._current_path)}")
             self.viewer.load(source._current_path)
         self.viewer._copy_state_from(source)
 
@@ -245,6 +312,18 @@ class FieldViewerWindow(QMainWindow):
         if src is not None and src is not self.viewer:
             try:
                 src.set_axes_options(options, notify=True)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_viewer_view_changed(self, key: str) -> None:
+        """Standard view changed in the pop-out: mirror to the tab view + persist."""
+        src = self.source
+        if src is not None and src is not self.viewer:
+            try:
+                src.set_view_default(key)
+                src.apply_view_preset(key)
+                if callable(src.on_view_changed):
+                    src.on_view_changed(src.view_preset())
             except Exception:  # noqa: BLE001
                 pass
 
@@ -290,6 +369,8 @@ class VtkFieldViewer(QWidget):
         # axes display options (menu + persisted settings)
         self._axes = dict(DEFAULT_AXES)
         self.on_axes_changed = None  # callback(options: dict) for persistence
+        #: standard view key (VIEW_PRESETS), persisted as the Field Viewer default
+        self.on_view_changed = None  # callback(key: str) for persistence
         self._marker = None  # vtkOrientationMarkerWidget (corner axes)
         self._marker_axes = None  # its vtkAxesActor
         self._build_ui()
@@ -369,6 +450,32 @@ class VtkFieldViewer(QWidget):
                   self.chk_outline):
             bar.addWidget(w)
         bar.addStretch(1)
+        # standard view (applied now + used for every newly loaded field) and the
+        # info which field is on screen (file name without the frame number)
+        self.cmb_view_preset = QComboBox()
+        for key, label in VIEW_PRESETS:
+            self.cmb_view_preset.addItem(label, key)
+        self.cmb_view_preset.setToolTip(
+            "Standard view of the 3D pane.\n"
+            "Picking one applies it right away AND is remembered: every field\n"
+            "loaded afterwards starts in this view (also in the pop-out).\n"
+            "'Fit (keep direction)' only fits the camera, like the old Reset view."
+        )
+        self.cmb_view_preset.currentIndexChanged.connect(self._on_view_preset_changed)
+        lbl_view = QLabel("View")
+        lbl_view.setToolTip(self.cmb_view_preset.toolTip())
+        bar.addWidget(lbl_view)
+        bar.addWidget(self.cmb_view_preset)
+        self.lbl_field = QLabel("")
+        field_font = self.lbl_field.font()
+        field_font.setBold(True)
+        self.lbl_field.setFont(field_font)
+        self.lbl_field.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_field.setToolTip(
+            "Field on screen: the loaded file name without the frame number.\n"
+            "Hover for the file, the series length and the array."
+        )
+        bar.addWidget(self.lbl_field)
         root.addLayout(bar)
 
         bar_view = QHBoxLayout()
@@ -796,6 +903,8 @@ class VtkFieldViewer(QWidget):
         self.lbl_level.setText("")
         self.lbl_time_info.setText("")
         self.lbl_sim_time.setText("")
+        self.lbl_field.setText("")
+        self.lbl_field.setToolTip("No field loaded.")
         self._set_time_visible(False)
         self.btn_video.setEnabled(False)
         self.cmb_array.blockSignals(True)
@@ -889,6 +998,7 @@ class VtkFieldViewer(QWidget):
             lambda: self.chk_loop.setChecked(other.chk_loop.isChecked()),
             lambda: self.chk_autoplay.setChecked(other.chk_autoplay.isChecked()),
             lambda: self.set_axes_options(other.axes_options()),
+            lambda: self.set_view_default(other.view_preset()),
         ):
             try:
                 setter()
@@ -1005,7 +1115,7 @@ class VtkFieldViewer(QWidget):
         self._populate_arrays()
         if self._ensure_render_window():
             self._refresh_display()
-            self._reset_camera()
+            self.apply_view_preset()  # standard view (default: fit, keep direction)
         self._log_title(path)
         self._autoplay()
 
@@ -1450,12 +1560,76 @@ class VtkFieldViewer(QWidget):
             self._iren.GetRenderWindow().Render()
 
     def _reset_camera(self) -> None:
-        if self._renderer is not None:
-            self._renderer.ResetCamera()
-            # keep near/far planes tight around the fitted scene
-            self._renderer.ResetCameraClippingRange()
-            if self._iren is not None:
-                self._iren.GetRenderWindow().Render()
+        """Fit the camera without changing its direction (Reset view button)."""
+        self.apply_view_preset("keep")
+
+    # ------------------------------------------------------------ view presets
+    def view_preset(self) -> str:
+        """Key of the selected standard view (see VIEW_PRESETS)."""
+        data = self.cmb_view_preset.currentData()
+        return str(data) if data else "keep"
+
+    def set_view_default(self, key: str) -> None:
+        """Select the standard view without touching the camera (startup/mirror)."""
+        idx = self.cmb_view_preset.findData(str(key or "keep"))
+        if idx >= 0:
+            self.cmb_view_preset.blockSignals(True)
+            self.cmb_view_preset.setCurrentIndex(idx)
+            self.cmb_view_preset.blockSignals(False)
+
+    def _on_view_preset_changed(self, *_a) -> None:
+        """Apply the picked standard view now and remember it as the default."""
+        self.apply_view_preset()
+        if callable(self.on_view_changed):
+            self.on_view_changed(self.view_preset())
+
+    def apply_view_preset(self, key: str | None = None) -> None:
+        """Put the camera into a standard view and fit the scene.
+
+        ``key=None`` uses the combo selection; "keep" (or an unknown key) only
+        fits, i.e. behaves like the old Reset view.
+        """
+        if self._renderer is None:
+            return
+        key = str(key if key is not None else self.view_preset())
+        camera = preset_camera(self._renderer.ComputeVisiblePropBounds(), key)
+        if camera is not None:
+            position, focal, up = camera
+            cam = self._renderer.GetActiveCamera()
+            cam.SetPosition(*position)
+            cam.SetFocalPoint(*focal)
+            cam.SetViewUp(*up)
+            cam.OrthogonalizeViewUp()
+        self._renderer.ResetCamera()  # distance that fits the scene
+        # keep near/far planes tight around the fitted scene
+        self._renderer.ResetCameraClippingRange()
+        if self._iren is not None:
+            self._iren.GetRenderWindow().Render()
+
+    # -------------------------------------------------------------- field info
+    def _update_field_label(self, path: Path | None = None) -> None:
+        """Show "Field: E_substrate [V/m]" — the name without the frame number."""
+        p = path or self._current_path
+        if p is None:
+            self.lbl_field.setText("")
+            self.lbl_field.setToolTip("No field loaded.")
+            return
+        kind = _field_kind(p)
+        unit = f" [{self._field_unit}]" if self._field_unit else ""
+        self.lbl_field.setText(f"Field: {kind}{unit}")
+        tip = [f"Field on screen: {kind}", f"File: {Path(p).name}"]
+        if self._series:
+            tip.append(
+                f"Series: {len(self._series)} frames "
+                f"({self._series[0].name} … {self._series[-1].name})"
+            )
+        else:
+            tip.append("Single file (no per-step series found next to it)")
+        if self._field_unit:
+            tip.append(f"Values in {self._field_unit} (from the dump name)")
+        if self._scalar_name:
+            tip.append(f"Array: {self._scalar_name}")
+        self.lbl_field.setToolTip("\n".join(tip))
 
     # ------------------------------------------------------------ time series
     def _on_time_slider(self, idx: int) -> None:
@@ -1511,6 +1685,7 @@ class VtkFieldViewer(QWidget):
                 f"{i + 1}/{len(self._series)}  ({self._step_label(i)})"
             )
         self._update_sim_time_label()
+        self._update_field_label(path)
         print(f"VTK viewer: loaded {path.name} ({n} points, scalar={name})")
 
     def _step_label(self, i: int) -> str:

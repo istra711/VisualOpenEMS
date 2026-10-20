@@ -16,3 +16,17 @@ def test_field_viewer_autoplay_roundtrip(tmp_path):
     s.save(path)
 
     assert AppSettings.load(path).field_viewer_autoplay is True
+
+
+def test_field_viewer_view_default_and_roundtrip(tmp_path):
+    # "keep" = only fit the camera (the historic Reset view behaviour)
+    assert AppSettings().field_viewer_view == "keep"
+    path = tmp_path / "gui_settings.json"
+    s = AppSettings()
+    s.field_viewer_view = "iso"
+    s.save(path)
+    assert AppSettings.load(path).field_viewer_view == "iso"
+    # old settings files without the key load with the default
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text('{"work_dir": "x"}', encoding="utf-8")
+    assert AppSettings.load(legacy).field_viewer_view == "keep"

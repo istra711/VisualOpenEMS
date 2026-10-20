@@ -44,6 +44,9 @@ class AppSettings:
     field_viewer_autoplay: bool = False
     #: axes display options (see app.ui.vtk_viewer.DEFAULT_AXES)
     field_viewer_axes: dict = field(default_factory=dict)
+    #: standard view of the 3D pane (see app.ui.vtk_viewer.VIEW_PRESETS);
+    #: "keep" only fits the camera and keeps the current direction
+    field_viewer_view: str = "keep"
 
     # --- Port defaults (Settings dialog + FreeCAD import fallbacks) ---
     default_port_type: str = "lumped"  # lumped | msl | rect_waveguide
