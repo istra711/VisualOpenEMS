@@ -88,32 +88,30 @@ def main() -> int:
     assert "V/m" in v.lbl_level.text(), v.lbl_level.text()
     assert "V/m" in v.cmb_array.toolTip(), v.cmb_array.toolTip()
 
-    # --- slice position readout (number + unit) and numeric input in mm ---
+    # --- slice position numeric input in mm (spinbox is the only readout) ---
     v.cmb_rep.setCurrentText("Slice")
     v.cmb_slice_axis.setCurrentText("Z")  # dump z: 0..4 (metres)
     v.slider_slice.setValue(1000)
-    assert v.lbl_slice.text() == "z = 4000.000 mm", v.lbl_slice.text()
     assert abs(v.spn_slice.value() - 4000.0) < 1e-6, v.spn_slice.value()
     v.slider_slice.setValue(250)
-    assert v.lbl_slice.text() == "z = 1000.000 mm", v.lbl_slice.text()
+    assert abs(v.spn_slice.value() - 1000.0) < 1e-6, v.spn_slice.value()
     # typing a position cuts EXACTLY there (no 1/1000 slider quantisation)
     v.spn_slice.setValue(1234.5)
     assert v._slice_origin() == (0.0, 0.0, 1.2345), v._slice_origin()
-    assert v.lbl_slice.text() == "z = 1234.500 mm", v.lbl_slice.text()
     assert v.slider_slice.value() == 309, v.slider_slice.value()
     # out-of-range input is clamped to the data extent
     v.spn_slice.setValue(9999.0)
     assert v._slice_origin() == (0.0, 0.0, 4.0), v._slice_origin()
-    assert v.lbl_slice.text() == "z = 4000.000 mm", v.lbl_slice.text()
-    # moving the slider makes it authoritative again; readout follows
+    assert abs(v.spn_slice.value() - 4000.0) < 1e-6, v.spn_slice.value()
+    # moving the slider makes it authoritative again; the spinbox follows
     v.slider_slice.setValue(500)
     assert v._slice_origin() == (0.0, 0.0, 2.0), v._slice_origin()
-    assert v.lbl_slice.text() == "z = 2000.000 mm", v.lbl_slice.text()
+    assert abs(v.spn_slice.value() - 2000.0) < 1e-6, v.spn_slice.value()
     # axis switch re-derives the position from the slider (dump x: 0..10 m)
     v.cmb_slice_axis.setCurrentText("X")
-    assert v.lbl_slice.text() == "x = 5000.000 mm", v.lbl_slice.text()
+    assert abs(v.spn_slice.value() - 5000.0) < 1e-6, v.spn_slice.value()
     assert v._slice_origin() == (5.0, 0.0, 0.0), v._slice_origin()
-    assert v.slider_slice.toolTip() and v.spn_slice.toolTip() and v.lbl_slice.toolTip()
+    assert v.slider_slice.toolTip() and v.spn_slice.toolTip()
     print("  slice readout + numeric input OK")
 
     # orientation triad scales with the data (a fixed 10-unit actor dominated

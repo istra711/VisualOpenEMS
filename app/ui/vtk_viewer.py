@@ -380,16 +380,9 @@ class VtkFieldViewer(QWidget):
             "The 3D axes use metres (1 mm = 0.001 m); the value snaps the\n"
             "slider and cuts exactly at the typed position."
         )
-        self.lbl_slice = QLabel("—")
-        self.lbl_slice.setMinimumWidth(100)
-        self.lbl_slice.setToolTip(
-            "Current slice plane: axis, position and unit.\n"
-            "Follows both the slider and the numeric input."
-        )
         row2.addWidget(self.cmb_slice_axis)
         row2.addWidget(self.slider_slice, 1)
         row2.addWidget(self.spn_slice)
-        row2.addWidget(self.lbl_slice)
         row2.addWidget(QLabel("Iso-level"))
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)
@@ -747,7 +740,6 @@ class VtkFieldViewer(QWidget):
         self._series_range = None
         self._series_range_cache = {}
         self.lbl_level.setText("")
-        self.lbl_slice.setText("—")
         self.lbl_time_info.setText("")
         self.lbl_sim_time.setText("")
         self._set_time_visible(False)
@@ -1204,10 +1196,9 @@ class VtkFieldViewer(QWidget):
         return lo + (hi - lo) * (self.slider_slice.value() / 1000.0)
 
     def _sync_slice_readout(self) -> None:
-        """Keep the numeric input + position label in step with the slider."""
+        """Keep the numeric input in step with the slider."""
         pos = self._slice_pos_m()
         if pos is None:
-            self.lbl_slice.setText("—")
             return
         rng = self._slice_bounds()
         self.spn_slice.blockSignals(True)
@@ -1216,8 +1207,6 @@ class VtkFieldViewer(QWidget):
             self.spn_slice.setRange(rng[0] * 1000.0, rng[1] * 1000.0)
         self.spn_slice.setValue(pos * 1000.0)
         self.spn_slice.blockSignals(False)
-        axis = self.cmb_slice_axis.currentText().lower()
-        self.lbl_slice.setText(f"{axis} = {pos * 1000.0:.3f} mm")
 
     def _on_slice_slider(self, _value: int = 0) -> None:
         self._slice_pos_exact = None  # the slider is authoritative again

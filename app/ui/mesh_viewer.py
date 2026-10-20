@@ -268,11 +268,12 @@ class MeshGeometryViewer(QWidget):
             "lets you put the plane between mesh lines.\n"
             "Enabled once a mesh is built (Build Mesh)."
         )
-        # live readout next to the slider (which value / which mode)
+        # mode hint next to the plane spinbox (the position itself is in the box)
         self.lbl_plane = QLabel("")
         self.lbl_plane.setToolTip(
-            "Current slice plane. '· fine' appears while Ctrl is held:\n"
-            "10x finer steps and no snapping to mesh lines."
+            "Shows '· fine' while Ctrl is held:\n"
+            "10x finer steps and no snapping to mesh lines.\n"
+            "The plane position itself is in the spinbox next to this hint."
         )
         self.slider.installEventFilter(self)
         self.chk_mesh = QCheckBox("Show mesh grid")
@@ -1203,16 +1204,10 @@ class MeshGeometryViewer(QWidget):
         self.slider.blockSignals(False)
 
     def _update_plane_info(self) -> None:
-        """Readout next to the slider: axis, value and the Ctrl (fine) mode."""
+        """Ctrl-mode hint next to the plane spinbox (the value is in the box)."""
         key = _slice_key(self.cmb_view.currentText())
-        if key is None:
-            self.lbl_plane.setText("")
-            return
-        normal = _SLICE_AXES[key][2]
-        txt = f"{normal} = {self.spn_plane.value():.3f} mm"
-        if self._slider_fine():
-            txt += "  · fine"
-        self.lbl_plane.setText(txt)
+        fine = key is not None and self._slider_fine()
+        self.lbl_plane.setText("· fine" if fine else "")
 
     def _on_plane_changed(self, value: float) -> None:
         # keep the slider in sync (0..SLIDER_RANGE maps to the domain range)
