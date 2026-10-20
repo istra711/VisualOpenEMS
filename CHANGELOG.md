@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mesh Viewer: "Port mode" — place a port by clicking in a slice**
+  (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`, `app/ui/tab_help.py`): the
+  plot-area right-click menu gained a checkable **Port mode (click in a slice to
+  place)** entry. While it is on, a left click anywhere in an XY/XZ/YZ slice
+  reports the **unsnapped** coordinates (the two in-plane axes from the click,
+  the third from the current slice plane), draws a **red dot** with its (x, y)
+  label and opens the existing **Port dialog** with the clicked point prefilled
+  in **Start and Stop** (drawing units) — name/type/resistance/direction/
+  mesh-dirs stay editable, and Start/Stop must differ (otherwise a warning and
+  the dialog re-opens). On OK the port is appended to the project, immediately
+  drawn in the slices (`MeshGeometryViewer.set_ports`) and listed in the
+  component tree + the Ports / Dumps window; the red marker is removed when the
+  dialog closes. Port mode shows a crosshair cursor and logs a hint; the normal
+  line-editing click behaviour returns when it is switched off.
+  Test: `tests/mesh_port_place_smoke.py` (toggle, unsnapped placement, marker
+  lifetime, list/overlay update, no manual-line side effect).
+
 ## [0.5.3] - 2026-10-19
 
 ### Fixed

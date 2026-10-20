@@ -406,6 +406,8 @@ class MainWindow(QMainWindow):
         self.mesh_viewer = MeshGeometryViewer(work_dir=self.settings.work_path())
         self.mesh_viewer.mesh_edited.connect(self._on_mesh_edited)
         self.mesh_viewer.rebuild_requested.connect(self._on_rebuild_scratch)
+        self.mesh_viewer.port_place_requested.connect(self._on_mesh_port_place)
+        self.mesh_viewer.port_mode_changed.connect(self._on_mesh_port_mode_changed)
         viewer_layout.addWidget(self.mesh_viewer)
         self.mesh_viewer_tab_index = tabs.addTab(viewer_tab, "Mesh Viewer")
 
@@ -3156,6 +3158,72 @@ class MainWindow(QMainWindow):
                 f"Port {dlg.result_port.name}: {dlg.result_port.type} "
                 f"{dlg.result_port.start}→{dlg.result_port.stop} R={dlg.result_port.resistance}"
             )
+
+    def _on_mesh_port_mode_changed(self, on: bool) -> None:
+        """Port mode toggled in the Mesh Viewer's right-click menu."""
+        if on:
+            self._log(
+                "Port mode ON — left-click in a slice view (XY/XZ/YZ) to place a "
+                "port at exactly those coordinates (no snapping); right-click → "
+                "'Port mode' turns it off."
+            )
+        else:
+            self._log("Port mode OFF")
+
+    def _on_mesh_port_place(self, x: float, y: float, z: float) -> None:
+        """A click in the Mesh Viewer's port mode: configure a port there.
+
+        The clicked point (drawing units, unsnapped) prefills BOTH Start and Stop;
+        the dialog is modal, then the port is appended and the scene refreshed.
+        """
+        viewer = self.mesh_viewer
+        if self._polar_ports_blocked():  # lumped ports need a cartesian mesh
+            viewer.clear_port_marker()
+            return
+
+        from app.models.project import PortDef as _PD
+        from app.ui.geometry_editors import PortDialog
+
+        pd = self.settings.port_defaults()
+        center = [float(x), float(y), float(z)]
+        seed = _PD(
+            name=f"in{len(self.project.ports) + 1}",
+            type=pd.get("type", "lumped"),  # type: ignore[arg-type]
+            start=list(center),
+            stop=list(center),
+            resistance=float(pd.get("resistance", 50.0)),
+            excite_port=bool(pd.get("excite_port", True)),
+            mesh_dirs=str(pd.get("mesh_dirs") or "xyz"),
+            direction=str(pd.get("direction") or "z"),
+        )
+        self._log(
+            "Placed port candidate at "
+            f"x={center[0]:.4g}, y={center[1]:.4g}, z={center[2]:.4g}"
+        )
+        dlg = PortDialog(self, port=seed, coord_system=self.project.mesh.coord_system)
+        try:
+            while dlg.exec():
+                port = dlg.result_port
+                if port is None or port.start != port.stop:
+                    break
+                QMessageBox.warning(
+                    self,
+                    "Port",
+                    "Start and Stop are identical - the port has no length.\n"
+                    "Give it a gap (e.g. change one end) so openEMS can excite it.",
+                )
+        finally:
+            viewer.clear_port_marker()
+        port = dlg.result_port
+        if port is None or port.start == port.stop:
+            return  # cancelled / still degenerate
+        self.project.ports.append(port)
+        self._refresh_ports()
+        self.mesh_viewer.set_ports(self.project.ports)
+        self._log(
+            f"Port {port.name}: {port.type} {port.start}→{port.stop} "
+            f"R={port.resistance}"
+        )
 
     def _selected_port_index(self) -> int:
         row = self.port_list.currentRow()

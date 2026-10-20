@@ -202,6 +202,12 @@ class MeshGeometryViewer(QWidget):
     #: emitted by "Rebuild from scratch" — the caller clears the overrides and
     #: runs a full (easyMesh) build, discarding the manual lines.
     rebuild_requested = Signal()
+    #: Port mode: a left click in a slice placed a port there (x, y, z in the
+    #: project's drawing units, NOT snapped to the grid). The caller opens the
+    #: port dialog and then calls :meth:`clear_port_marker`.
+    port_place_requested = Signal(float, float, float)
+    #: Port mode was switched on/off (right-click menu) — for a log hint.
+    port_mode_changed = Signal(bool)
 
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -222,6 +228,10 @@ class MeshGeometryViewer(QWidget):
         self._scene_area = None
         self._editor_panel = None
         self._split = None
+        # port mode (right-click menu): click in a slice -> red dot + dialog
+        self._port_mode = False
+        #: (slice key "XY"/"XZ"/"YZ", x, y) of the unconfirmed placement
+        self._port_marker: tuple[str, float, float] | None = None
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -748,6 +758,15 @@ class MeshGeometryViewer(QWidget):
         act_editor = menu.addAction("Mesh editor")
         act_editor.setCheckable(True)
         act_editor.setChecked(bool(self.chk_editor.isChecked()))
+        act_port = menu.addAction("Port mode (click in a slice to place)")
+        act_port.setCheckable(True)
+        act_port.setChecked(bool(self._port_mode))
+        act_port.setToolTip(
+            "Left-click anywhere in a slice view (XY/XZ/YZ) to place a port at\n"
+            "exactly those coordinates (no snapping): a red dot marks the spot\n"
+            "and the port dialog opens with the coordinates prefilled.\n"
+            "The third coordinate is the current slice plane."
+        )
         act_pop = menu.addAction("Pop-out viewer…")
         menu.addSeparator()
         n_sel = len(getattr(self, "_selected_lines", []) or [])
@@ -762,6 +781,8 @@ class MeshGeometryViewer(QWidget):
         chosen = menu.exec(QCursor.pos())
         if chosen is act_editor:
             self.chk_editor.setChecked(not self.chk_editor.isChecked())
+        elif chosen is act_port:
+            self.set_port_mode(not self._port_mode)
         elif chosen is act_pop:
             self._on_popout()
         elif chosen is act_del:
@@ -788,6 +809,9 @@ class MeshGeometryViewer(QWidget):
                 self._last_click_t = now
                 return
             self._last_click_t = now
+            if self._port_mode:
+                self._place_port_at(event)  # port mode: no line snapping
+                return
             self._handle_slice_click(event, shift=(event.key == "shift"))
         except Exception as e:  # noqa: BLE001 — never crash on a stray click
             print(f"mesh editor click error: {e}")
@@ -953,6 +977,73 @@ class MeshGeometryViewer(QWidget):
             self._redraw()
         except Exception as e:  # noqa: BLE001 — never crash the GUI on redraw
             print(f"mesh viewer nf2ff update error: {e}")
+
+    def set_ports(self, ports: list | None = None) -> None:
+        """Update the port overlay in place (after Add/Edit port) and redraw.
+
+        Like :meth:`set_nf2ff` only the overlay changed, so a plain redraw is safe
+        (no CSX swap, which would risk the retired-object crash).
+        """
+        self._ports = list(ports or [])
+        try:
+            self._redraw()
+        except Exception as e:  # noqa: BLE001 — never crash the GUI on redraw
+            print(f"mesh viewer ports update error: {e}")
+
+    # --------------------------------------------------------------- port mode
+    def set_port_mode(self, on: bool) -> None:
+        """Arm / disarm "click in a slice to place a port" (right-click menu)."""
+        self._port_mode = bool(on)
+        if not self._port_mode:
+            self._port_marker = None
+        cursor = (
+            Qt.CursorShape.CrossCursor
+            if self._port_mode
+            else Qt.CursorShape.ArrowCursor
+        )
+        for canvas in (self.canvas_slice, self.canvas_cells):
+            if canvas is not None:
+                canvas.setCursor(cursor)
+        self.port_mode_changed.emit(self._port_mode)
+        try:
+            self._redraw()
+        except Exception as e:  # noqa: BLE001 — never crash on a toggle
+            print(f"mesh viewer port mode redraw error: {e}")
+
+    def clear_port_marker(self) -> None:
+        """Drop the red 'placed port' dot (the dialog was handled)."""
+        if self._port_marker is None:
+            return
+        self._port_marker = None
+        try:
+            self._redraw()
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer port marker redraw error: {e}")
+
+    def _place_port_at(self, event) -> None:
+        """Port mode: report the clicked point (NO snapping) and mark it red.
+
+        The two in-plane coordinates come straight from the click, the third one
+        from the current slice plane (the plane slider snaps to mesh lines, the
+        click itself does not).
+        """
+        key = _slice_key(self.cmb_view.currentText())
+        if key is None:
+            return  # Overview / Cell sizes: no 2D coordinate system
+        ax_a, ax_b, normal = _SLICE_AXES[key]
+        ia, ib, inorm = _AXIS[ax_a], _AXIS[ax_b], _AXIS[normal]
+        if event.xdata is None or event.ydata is None:
+            return
+        pt = [0.0, 0.0, 0.0]
+        pt[ia] = float(event.xdata)
+        pt[ib] = float(event.ydata)
+        pt[inorm] = float(self.spn_plane.value())
+        self._port_marker = (key, pt[ia], pt[ib])
+        try:
+            self._redraw()
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer port marker redraw error: {e}")
+        self.port_place_requested.emit(pt[0], pt[1], pt[2])
 
     def clear(self) -> None:
         """Drop scene data only — do NOT touch matplotlib figures here.
@@ -1610,6 +1701,19 @@ class MeshGeometryViewer(QWidget):
                             label="Ports",
                         )
                     )
+
+        # Port mode: the unconfirmed click is marked with a red dot (+ coords)
+        if self._port_marker is not None and self._port_marker[0] == view:
+            _mk, mx, my = self._port_marker
+            ax.plot(
+                [mx], [my], marker="o", markersize=11, color="red",
+                markeredgecolor="white", markeredgewidth=1.2, zorder=9,
+                label="New port",
+            )
+            ax.annotate(
+                f"({mx:.4g}, {my:.4g})", (mx, my), textcoords="offset points",
+                xytext=(8, 8), color="red", fontsize=8, zorder=9,
+            )
 
         # NF2FF box footprint
         if self.chk_nf2ff.isChecked() and nf2ff is not None:
