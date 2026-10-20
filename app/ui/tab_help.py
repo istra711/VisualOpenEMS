@@ -548,6 +548,12 @@ Buttons / controls
   • "Representation": Surface (default, like ParaView), Wireframe, Slice (a
     cutting plane, axis + position — good for 3D boxes) or Iso-surface
     (a contour of the selected array; Iso-level slider).
+  • Slice position: the slider moves the cutting plane, the label next to it
+    shows the exact position as number + unit ("z = 12.345 mm") and the box
+    next to it takes a **direct numeric position** (mm, Enter applies). A typed
+    value cuts exactly there (the slider only gets nudged along and the value
+    is clamped to the data extent). Note: the 3D axes are in metres
+    (1 mm = 0.001 m) — the slice controls use mm.
   • "Colour": Auto (data range) / manual min-max + Log scale (log colour
     mapping, like ParaView's "Use log scale") + "Rescale to data range".
   • "Time" slider + "Play": step through / animate a per-step series. Next to
