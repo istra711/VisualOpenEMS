@@ -235,6 +235,8 @@ class MeshGeometryViewer(QWidget):
         self._split = None
         # port mode (right-click menu): click in a slice -> red dot + dialog
         self._port_mode = False
+        #: modifier state at the last slider mouse event (Ctrl = fine/free)
+        self._slider_mods = Qt.KeyboardModifier.NoModifier
         #: (slice key "XY"/"XZ"/"YZ", x, y) of the unconfirmed placement
         self._port_marker: tuple[str, float, float] | None = None
         self._build_ui()
@@ -260,11 +262,19 @@ class MeshGeometryViewer(QWidget):
         self.slider.setValue(0)
         self.slider.setMinimumWidth(320)  # ~2x the old default travel
         self.slider.setToolTip(
-            "Slice plane along the view normal — snaps to the nearest mesh line.\n"
-            f"Resolution: {SLIDER_RANGE // SLIDER_BASE_STEP} steps;\n"
-            "hold Ctrl while dragging for 10x finer steps.\n"
+            "Slice plane along the view normal.\n"
+            f"Normal: snaps to the nearest mesh line, {SLIDER_RANGE // SLIDER_BASE_STEP} steps.\n"
+            "Ctrl while dragging: 10x finer AND free (no mesh snapping) — "
+            "lets you put the plane between mesh lines.\n"
             "Enabled once a mesh is built (Build Mesh)."
         )
+        # live readout next to the slider (which value / which mode)
+        self.lbl_plane = QLabel("")
+        self.lbl_plane.setToolTip(
+            "Current slice plane. '· fine' appears while Ctrl is held:\n"
+            "10x finer steps and no snapping to mesh lines."
+        )
+        self.slider.installEventFilter(self)
         self.chk_mesh = QCheckBox("Show mesh grid")
         self.chk_mesh.setChecked(True)
         self.slider_mesh = QSlider(Qt.Orientation.Horizontal)
@@ -273,10 +283,15 @@ class MeshGeometryViewer(QWidget):
         self.slider_mesh.setValue(35)
         self.slider_mesh.setFixedWidth(90)
         self.slider_mesh.setToolTip(
-            "Mesh grid lines: visibility (opacity and line width).\n"
-            "Left = fainter (less clutter next to geometry/ports), "
-            "right = stronger."
+            "Mesh grid lines in the slice plot — opacity and line width.\n"
+            "Left = faint and thin (less clutter next to geometry/ports),\n"
+            "right = opaque and thick (easier to read the cells).\n"
+            "Only drawn while 'Show mesh grid' is ticked."
         )
+        # live readout next to the grid slider (value in %)
+        self.lbl_mesh = QLabel("")
+        self.lbl_mesh.setMinimumWidth(40)
+        self.lbl_mesh.setToolTip(self.slider_mesh.toolTip())
         self.chk_geom = QCheckBox("Show geometry")
         self.chk_geom.setChecked(True)
         self.chk_ports = QCheckBox("Show ports")
@@ -297,8 +312,11 @@ class MeshGeometryViewer(QWidget):
             QLabel("Plane"),
             self.spn_plane,
             self.slider,
+            self.lbl_plane,
             self.chk_mesh,
+            QLabel("Grid"),
             self.slider_mesh,
+            self.lbl_mesh,
             self.chk_geom,
             self.chk_ports,
             self.chk_nf2ff,
@@ -361,6 +379,10 @@ class MeshGeometryViewer(QWidget):
         self.btn_appcsxcad.clicked.connect(self._on_open_appcsxcad)
         self.btn_export_xml.clicked.connect(self._on_export_xml)
         self.btn_popout.clicked.connect(self._on_popout)
+
+        # initial readouts (slider values are set before the signals hook up)
+        self._update_plane_info()
+        self._update_mesh_info()
 
         # Mesh editor
         self.chk_editor.toggled.connect(self._on_editor_toggled)
@@ -826,10 +848,20 @@ class MeshGeometryViewer(QWidget):
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
         """Del / Backspace on the editor list removes the selected line(s)."""
-        if obj is self.lst_edit_lines and event.type() == QEvent.Type.KeyPress:
+        if obj is getattr(self, "lst_edit_lines", None) and event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
                 self._editor_remove_selected()
                 return True
+        if obj is self.slider and event.type() in (
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseMove,
+            QEvent.Type.MouseButtonRelease,
+        ):
+            # remember Ctrl for the valueChanged() that follows this event
+            mods = event.modifiers()
+            if mods != self._slider_mods:
+                self._slider_mods = mods
+                self._update_plane_info()
         return super().eventFilter(obj, event)
 
     def _on_popout(self) -> None:
@@ -1109,6 +1141,7 @@ class MeshGeometryViewer(QWidget):
             # different axis and may cut nothing)
             self._update_plane_range(reset=True)
         self._update_controls_enabled()
+        self._update_plane_info()
         self._redraw()
 
     def _update_controls_enabled(self) -> None:
@@ -1118,6 +1151,8 @@ class MeshGeometryViewer(QWidget):
         self.spn_plane.setEnabled(active)
         self.slider.setEnabled(active)
         self.slider_mesh.setEnabled(active and self.chk_mesh.isChecked())
+        self._update_plane_info()
+        self._update_mesh_info()
 
     def _mesh_alpha(self) -> float:
         """Mesh grid line alpha (0..1) from the visibility slider."""
@@ -1128,18 +1163,32 @@ class MeshGeometryViewer(QWidget):
         self._redraw()
 
     def _on_mesh_style_changed(self, _value: int = 0) -> None:
+        self._update_mesh_info()
         self._redraw()
 
+    def _update_mesh_info(self) -> None:
+        """Readout next to the grid slider (alpha / line-width strength in %)."""
+        txt = f"{int(self.slider_mesh.value())}%"
+        if not self.chk_mesh.isChecked():
+            txt += " (grid off)"
+        self.lbl_mesh.setText(txt)
+
     @staticmethod
-    def _slider_fine() -> bool:
-        """Ctrl held -> finest slider resolution (10x the base resolution)."""
+    def _ctrl_down_static() -> bool:
         try:
             from PySide6.QtWidgets import QApplication
 
-            mods = QApplication.keyboardModifiers()
-            return bool(mods & Qt.KeyboardModifier.ControlModifier)
-        except Exception:  # noqa: BLE001 — headless / no app: use the base step
+            return bool(
+                QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier
+            )
+        except Exception:  # noqa: BLE001 — headless: no Ctrl
             return False
+
+    def _slider_fine(self) -> bool:
+        """Ctrl held -> 10x finer steps and no snapping to mesh lines."""
+        if self._slider_mods & Qt.KeyboardModifier.ControlModifier:
+            return True
+        return self._ctrl_down_static()
 
     def _slider_step(self) -> int:
         """Internal steps per slider position (10 by default, 1 with Ctrl)."""
@@ -1153,6 +1202,18 @@ class MeshGeometryViewer(QWidget):
         self.slider.setValue(int(np.clip(pos, 0, SLIDER_RANGE)))
         self.slider.blockSignals(False)
 
+    def _update_plane_info(self) -> None:
+        """Readout next to the slider: axis, value and the Ctrl (fine) mode."""
+        key = _slice_key(self.cmb_view.currentText())
+        if key is None:
+            self.lbl_plane.setText("")
+            return
+        normal = _SLICE_AXES[key][2]
+        txt = f"{normal} = {self.spn_plane.value():.3f} mm"
+        if self._slider_fine():
+            txt += "  · fine"
+        self.lbl_plane.setText(txt)
+
     def _on_plane_changed(self, value: float) -> None:
         # keep the slider in sync (0..SLIDER_RANGE maps to the domain range)
         key = _slice_key(self.cmb_view.currentText())
@@ -1164,6 +1225,7 @@ class MeshGeometryViewer(QWidget):
             lo, hi = area[0][_AXIS[normal]], area[1][_AXIS[normal]]
             if hi > lo:
                 self._set_slider_from_frac((value - lo) / (hi - lo))
+        self._update_plane_info()
         self._redraw()
 
     def _on_slider(self, pos: int) -> None:
@@ -1184,11 +1246,15 @@ class MeshGeometryViewer(QWidget):
             self.slider.blockSignals(False)
         lo, hi = float(area[0][_AXIS[normal]]), float(area[1][_AXIS[normal]])
         value = lo + (hi - lo) * (pos / SLIDER_RANGE)
-        # Snap onto the nearest mesh line so the section visibly jumps.
-        value = self._nearest_mesh_line(normal, value)
+        # Normal mode snaps onto the nearest mesh line so the section visibly
+        # jumps; Ctrl (fine) keeps the exact position so the finer steps (and
+        # planes between mesh lines) are actually reachable.
+        if not self._slider_fine():
+            value = self._nearest_mesh_line(normal, value)
         self.spn_plane.blockSignals(True)
         self.spn_plane.setValue(value)
         self.spn_plane.blockSignals(False)
+        self._update_plane_info()
         self._redraw()
 
     def _on_export_xml(self) -> None:
@@ -1299,6 +1365,7 @@ class MeshGeometryViewer(QWidget):
         self.slider.blockSignals(False)
         frac = (self.spn_plane.value() - lo) / (hi - lo) if hi > lo else 0.0
         self._set_slider_from_frac(frac)
+        self._update_plane_info()
 
     def _nearest_mesh_line(self, normal: str, value: float) -> float:
         """Snap the plane value to the closest mesh line on the slice normal."""
