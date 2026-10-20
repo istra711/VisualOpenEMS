@@ -38,10 +38,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plane slider now spans **2000 steps** across the domain (2× the old 0..1000)
   and its widget got a wider minimum (320 px) so dragging is less twitchy.
   Holding **Ctrl** while dragging switches to the raw slider resolution —
-  **10× finer (20000 steps)**, e.g. to land exactly on one line of a fine grid;
-  the value still snaps to the nearest mesh line and the plane spinbox stays the
-  exact/free input. Smoke: `tests/mesh_viewer_smoke.py` (range, base
-  quantisation to every 10th step, Ctrl keeps the 1-step position).
+  **10× finer (20000 steps)** — **and turns the mesh-line snapping off**, so the
+  finer steps are actually usable (normal mode kept snapping, which made both
+  modes land on the same mesh line: the fine mode had no visible effect).
+  Ctrl is read from the slider's mouse events (event filter) with
+  `QApplication.keyboardModifiers()` as fallback.
+- **Mesh Viewer: readouts + tooltips for both sliders**
+  (`app/ui/mesh_viewer.py`): a live label next to the plane slider shows the
+  axis and value ("z = 12.345 mm", "· fine" while Ctrl is held); a label next
+  to the grid slider shows its strength ("35%", "(grid off)" while hidden).
+  Both sliders and labels have explicit tooltips (plane: snapping / Ctrl mode /
+  needs a built mesh; grid: opacity + line width, only while "Show mesh grid").
+  Smoke: `tests/mesh_viewer_smoke.py` (range, quantisation to every 10th step,
+  Ctrl keeps the 1-step position AND skips snapping, label texts/tooltips).
 
 ## [0.5.3] - 2026-10-19
 

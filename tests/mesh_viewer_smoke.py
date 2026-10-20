@@ -182,13 +182,29 @@ def main() -> int:
         # base resolution: positions quantise to every SLIDER_BASE_STEP-th step
         viewer.slider.setValue(12345)
         assert viewer.slider.value() == 12340, viewer.slider.value()
-        # ... and Ctrl (faked) keeps the raw 1-step = 10x finer position
-        with patch.object(
-            MeshGeometryViewer, "_slider_fine", staticmethod(lambda: True)
-        ):
+        assert viewer._slider_step() == SLIDER_BASE_STEP, "no Ctrl -> base step"
+        assert "fine" not in viewer.lbl_plane.text(), viewer.lbl_plane.text()
+        # Ctrl (faked): raw 1-step positions (10x finer) AND no mesh-line
+        # snapping — otherwise the finer steps would be invisible because both
+        # modes snap onto the same mesh line anyway
+        viewer.slider.setValue(0)
+        with patch.object(MeshGeometryViewer, "_slider_fine", lambda self: True):
             viewer.slider.setValue(12345)
         assert viewer.slider.value() == 12345, viewer.slider.value()
-        assert viewer._slider_step() == SLIDER_BASE_STEP, "no Ctrl -> base step"
+        want_free = lo0 + (hi0 - lo0) * (12345 / SLIDER_RANGE)
+        assert abs(viewer.spn_plane.value() - want_free) < 1e-3, (
+            viewer.spn_plane.value(),
+            want_free,
+        )
+        assert "fine" in viewer.lbl_plane.text(), viewer.lbl_plane.text()
+        # slider / grid readouts must be populated (info next to the sliders)
+        assert "mm" in viewer.lbl_plane.text(), viewer.lbl_plane.text()
+        assert viewer.lbl_mesh.text().endswith("%"), viewer.lbl_mesh.text()
+        assert viewer.slider.toolTip() and viewer.slider_mesh.toolTip()
+        assert viewer.lbl_mesh.toolTip(), "grid readout needs its own tooltip"
+        # grid readout follows the slider
+        viewer.slider_mesh.setValue(70)
+        assert viewer.lbl_mesh.text().startswith("70%"), viewer.lbl_mesh.text()
         # switching the slice axis must recalibrate the plane spinbox range
         viewer.cmb_view.setCurrentText("XZ slice")  # normal y
         n1 = _SLICE_AXES["XZ"][2]
