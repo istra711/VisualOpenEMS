@@ -36,6 +36,8 @@ class AppSettings:
     recent_projects: list[str] = field(default_factory=list)
     window_geometry: str = ""  # base64 QByteArray from QMainWindow.saveGeometry()
     log_panel_visible: bool = True  # simulator log panel under the tabs
+    #: left "Project / Geometry" pane (View menu / its right-click menu)
+    project_panel_visible: bool = True
 
     # --- Field Viewer (VTK) ---
     #: start playback automatically when a time series is loaded/exported

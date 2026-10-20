@@ -81,8 +81,13 @@ python app\main.py
 `Project` (Presets), `Geometry` (Box/Cylinder/Port/Dump, Ports / Dumps… = **Ctrl+Shift+D**, Edit/Duplicate/Delete Selected = **Ctrl+D**/**Del**, Fit NF2FF — the same via right-click on a tree entry),
 `Mesh` (`Build CSX + Mesh + Validate` = **Ctrl+M**), `Simulation` (`Run Simulation` = **Ctrl+R**, Script,
 S-Params Viewer, Antenna Pattern Viewer / Pop-out Antenna Graph),
-`View` (Tabs, Log Panel = **Ctrl+L**), `Tools` (Settings…),
+`View` (Tabs, Log Panel = **Ctrl+L**, Project / Geometry Panel = **Ctrl+B**),
+`Tools` (Settings…),
 `Help` (Help = **F1**, ANLEITUNG, README, About).
+
+The **Project / Geometry panel** on the left (the tree) can be hidden and shown
+again with a **right-click** on the empty area below the tree or via `View` →
+**Project / Geometry Panel** (**Ctrl+B**); the state is remembered.
 
 The **log panel** (below the tabs, toggled with **Ctrl+L**) has two
 tabs: **Log** (openEMS/app log) and **Mesh Report** (the mesh-check report,

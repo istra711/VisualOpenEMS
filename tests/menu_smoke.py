@@ -83,6 +83,7 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("Simulation"), "Export field dumps to VTK\u2026") is not None
     assert _find(_menu("Simulation"), "Export field video (MP4)\u2026") is not None
     assert _find(_menu("View"), "Log Panel").shortcut().toString() == "Ctrl+L"
+    assert _find(_menu("View"), "Project / Geometry Panel").shortcut().toString() == "Ctrl+B"
     assert _find(_menu("Help"), "Help for Current Tab").shortcut().toString() == "F1"
     assert _find(_menu("Geometry"), "Delete Selected").shortcut().toString() == "Del"
     assert _find(_menu("Geometry"), "Duplicate Selected").shortcut().toString() == "Ctrl+D"
@@ -294,12 +295,44 @@ def test_field_viewer_axes_menu() -> None:
     print("FIELD VIEWER AXES MENU OK")
 
 
+def test_project_panel_toggle() -> None:
+    """Left Project / Geometry pane: View action + its right-click menu."""
+    w = _win()
+    act = _find(_menu("View"), "Project / Geometry Panel")
+    assert act.shortcut().toString() == "Ctrl+B"
+    assert act.isEnabled()
+    # shown by default, and the tree context menu offers the hide entry
+    assert not w.project_panel.isHidden()
+    menu = w._build_project_panel_menu()
+    texts = [_strip(a.text()) for a in menu.actions() if not a.isSeparator()]
+    assert "Hide Project / Geometry panel" in texts, texts
+    # triggering the entry hides the pane (same state as the View action)
+    for a in menu.actions():
+        if _strip(a.text()) == "Hide Project / Geometry panel":
+            a.trigger()
+    assert w.project_panel.isHidden(), "pane not hidden"
+    assert not w.btn_project_toggle.isChecked()
+    assert not act.isChecked()
+    # View action brings it back
+    act.trigger()
+    assert not w.project_panel.isHidden(), "pane not restored"
+    assert w.btn_project_toggle.isChecked()
+    # the settings flag follows (persisted on close/toggle)
+    assert w.settings.project_panel_visible is True
+    w._set_project_panel_visible(False)
+    assert w.project_panel.isHidden() and w.settings.project_panel_visible is False
+    w._set_project_panel_visible(True)
+    assert not w.project_panel.isHidden()
+    print("PROJECT PANEL TOGGLE OK")
+
+
 def main() -> int:
     failed = 0
     for t in (
         test_menu_structure_and_shortcuts,
         test_menu_action_hits_button,
         test_view_menu_switches_tabs,
+        test_project_panel_toggle,
         test_field_viewer_axes_menu,
         test_sim_params_dialog,
         test_mesh_params_dialog,
