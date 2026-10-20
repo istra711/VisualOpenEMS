@@ -522,17 +522,21 @@ class VtkFieldViewer(QWidget):
             "slider and cuts exactly at the typed position."
         )
         row2.addWidget(self.cmb_slice_axis)
-        # stretch 3:1 -> the iso-level slider gets a quarter of the free space,
-        # i.e. half of what it had with an even 1:1 split (it does not need the
-        # travel; the slice position does)
+        # Capped lengths: both sliders used to stretch over the whole row (the
+        # slice slider ~740 px at a 1600 px window). 3:2 keeps them at their caps
+        # from ~1500 px on, and the leftover space collects in front of the
+        # range/unit readout instead of stretching the sliders.
+        self.slider_slice.setMaximumWidth(320)
         row2.addWidget(self.slider_slice, 3)
         row2.addWidget(self.spn_slice)
         row2.addWidget(QLabel("Iso-level"))
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)
         self.slider.setValue(500)
+        self.slider.setMaximumWidth(200)
         self.slider.valueChanged.connect(self._on_slider)
-        row2.addWidget(self.slider, 1)
+        row2.addWidget(self.slider, 2)
+        row2.addStretch(1)
         self.lbl_level = QLabel("—")
         self.lbl_level.setMinimumWidth(160)
         row2.addWidget(self.lbl_level)
