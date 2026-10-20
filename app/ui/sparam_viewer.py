@@ -382,11 +382,44 @@ class SParamViewer(QWidget):
         self.markers = []
         self._populate_ports()
         self._refresh_markers()
-        self.lbl_info.setText(
+        info = (
             f"{path.name}: {ntwk.nports} port(s), {len(ntwk.f)} pts, "
             f"{ntwk.f[0]/1e9:.4g}–{ntwk.f[-1]/1e9:.4g} GHz"
         )
+        missing = self._missing_traces(ntwk)
+        if missing:
+            info += "  · no data: " + ", ".join(missing)
+        self.lbl_info.setText(info)
         self._redraw()
+
+    @staticmethod
+    def _trace_has_data(s) -> bool:
+        """False for placeholder traces: all NaN (or all exactly zero).
+
+        ``sparams.json`` stores unmeasured S-matrix cells as NaN, Touchstone
+        exports may write them as 0; both mean "this column was not
+        simulated" and must not drive autoscaling.
+        """
+        arr = np.asarray(s, dtype=complex)
+        if arr.size == 0 or not np.any(np.isfinite(arr)):
+            return False
+        return bool(np.any(arr != 0))
+
+    @staticmethod
+    def _missing_traces(ntwk) -> list[str]:
+        """S-params of the matrix whose data is empty (never simulated)."""
+        try:
+            s = np.asarray(ntwk.s)
+        except Exception:  # noqa: BLE001
+            return []
+        if s.ndim != 3:
+            return []
+        missing = []
+        for i in range(s.shape[1]):
+            for j in range(s.shape[2]):
+                if not SParamViewer._trace_has_data(s[:, i, j]):
+                    missing.append(f"S{i + 1}{j + 1}")
+        return missing
 
     def _populate_ports(self) -> None:
         self.cmb_port.blockSignals(True)
@@ -539,6 +572,9 @@ class SParamViewer(QWidget):
 
     def _marker_list_text(self, key: str, val: complex, f_ghz: float, z0: float) -> str:
         """List row: all formats combined, or the selected marker style only."""
+        head = f"{f_ghz:.4f} GHz {key}"
+        if not (math.isfinite(val.real) and math.isfinite(val.imag)):
+            return f"{head}  no data"
         mag = abs(val)
         db = 20 * math.log10(max(mag, 1e-15))
         vswr = self._s_to_vswr(val)
@@ -591,9 +627,11 @@ class SParamViewer(QWidget):
             return
         key = self.cmb_port.currentText()
         s = self._trace(key)
-        if s is None:
+        if s is None or not self._trace_has_data(s):
             return
         db = 20 * np.log10(np.maximum(np.abs(s), 1e-15))
+        if not np.any(np.isfinite(db)):
+            return
         i = int(np.nanargmin(db))
         f = float(self.network.f[i])
         if f not in self.markers:
@@ -637,6 +675,16 @@ class SParamViewer(QWidget):
             return
         idx = int(np.argmin(np.abs(self.network.f - f)))
         val = complex(s[idx])
+        if not self._trace_has_data(s) or not (
+            math.isfinite(val.real) and math.isfinite(val.imag)
+        ):
+            base = self.lbl_info.text().split(" | cursor")[0]
+            self.lbl_info.setText(
+                f"{base} | cursor {self.network.f[idx]/1e9:.4f} GHz {key} "
+                "no data (not simulated)"
+            )
+            self._draw_cursor(idx)
+            return
         mag = abs(val)
         db = 20 * np.log10(max(mag, 1e-15))
         ang = float(np.degrees(np.angle(val)))
@@ -687,6 +735,8 @@ class SParamViewer(QWidget):
             if s is None:
                 return None
             d = np.hypot(np.real(s) - event.xdata, np.imag(s) - event.ydata)
+            if not np.any(np.isfinite(d)):
+                return None
             return float(f[int(np.nanargmin(d))])
         if event.xdata is None:
             return None
@@ -843,6 +893,28 @@ class SParamViewer(QWidget):
             ax.text(0.5, 0.5, f"No data for {key}", ha="center", va="center")
             self.canvas.draw_idle()
             return
+        if not self._trace_has_data(s):
+            # untouched S-matrix cell (NaN/0): do not autoscale to it, which
+            # leaves a meaningless axis and looks like a broken scale
+            ports = "port" if self.network.nports == 1 else "ports"
+            ax.text(
+                0.5,
+                0.5,
+                f"{key}: no data in this file\n\n"
+                f"This {self.network.nports}-{ports} network stores the cell, but it\n"
+                "was never simulated (each FDTD run measures only the\n"
+                "column of its excited port).\n\n"
+                "Simulation ▸ Run All Ports (full S-matrix)\n"
+                "runs one FDTD run per port and merges the columns.",
+                ha="center",
+                va="center",
+                fontsize=10,
+            )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            self.canvas.draw_idle()
+            self._refresh_markers()
+            return
 
         f_ghz = self.network.f / 1e9
         z0 = self._z0_from_network()
@@ -934,6 +1006,8 @@ class SParamViewer(QWidget):
         for f in self.markers:
             idx = int(np.argmin(np.abs(self.network.f - f)))
             val = complex(s[idx])
+            if not (math.isfinite(val.real) and math.isfinite(val.imag)):
+                continue
             re, im = float(np.real(val)), float(np.imag(val))
             artist = ax.plot(
                 re,
@@ -948,11 +1022,11 @@ class SParamViewer(QWidget):
             if refl:
                 z = self._s_to_z(val, z0)
                 if math.isfinite(z.real) and math.isfinite(z.imag):
-                    label += f"\\n{z.real:.1f}+j{z.imag:.1f}"
+                    label += f"\n{z.real:.1f}+j{z.imag:.1f}"
                 else:
-                    label += "\\n∞"
+                    label += "\n∞"
             else:
-                label += f"\\n{abs(val):.3g}"
+                label += f"\n{abs(val):.3g}"
             # Keep labels readable: only annotate first few + last
             n_markers = len(self.markers)
             if idx == int(np.argmin(np.abs(self.network.f - self.markers[0]))) or n_markers <= 4:
@@ -999,11 +1073,15 @@ class SParamViewer(QWidget):
             ax.set_ylim(-1.05, 1.05)
             ax.set_aspect("equal")
 
-        # Trace + start/end (skrf Network.plot_s_smith style)
+        # Trace + start/end (skrf Network.plot_s_smith style); NaN samples
+        # (unmeasured cells) are skipped and never become start/end points.
+        ok = np.isfinite(s)
         re, im = np.real(s), np.imag(s)
         ax.plot(re, im, "-", color="tab:blue", lw=1.6, zorder=4, label=key)
-        ax.plot(re[0], im[0], "g+", ms=10, mew=2, zorder=5, label="start")
-        ax.plot(re[-1], im[-1], "ks", ms=6, zorder=5, label="end")
+        if ok.any():
+            first, last = int(np.flatnonzero(ok)[0]), int(np.flatnonzero(ok)[-1])
+            ax.plot(re[first], im[first], "g+", ms=10, mew=2, zorder=5, label="start")
+            ax.plot(re[last], im[last], "ks", ms=6, zorder=5, label="end")
         # frequency-colored dots every N points for readability
         n = len(s)
         step = max(1, n // 25)
@@ -1044,6 +1122,11 @@ class SParamViewer(QWidget):
             self._cursor_text = None
 
         val = complex(s[idx])
+        if not self._trace_has_data(s) or not (
+            math.isfinite(val.real) and math.isfinite(val.imag)
+        ):
+            self.canvas.draw_idle()
+            return
         mag = abs(val)
         db = 20 * np.log10(max(mag, 1e-15))
         ang = float(np.degrees(np.angle(val)))
