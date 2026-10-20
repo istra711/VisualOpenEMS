@@ -101,6 +101,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Field Viewer: Auto / Log scale / Rescale corrupted each other**
+  (`app/ui/vtk_viewer.py`, `app/ui/number_field.py`): the colour limits were a
+  `QDoubleSpinBox` with 6 decimals, so field magnitudes like `1.26e-9` were
+  displayed as `0.000000` and a manual limit below ~5e-7 could not be entered
+  at all (it silently became 0) — log scaling looked broken. On top of that
+  the min/max fields were rewritten with the *current frame's* range on every
+  time step (manual limits did not survive playback), the log minimum was
+  taken per frame (colours drifted while playing), and "Rescale to data range"
+  used the current frame instead of the series. Now:
+  - the limits use a new scientific field (`app/ui/number_field.py`,
+    `SciSpinBox`; text helpers in `app/numfmt.py`): shows `%.6g`
+    (`0.095199`, `1.264e-09`) and accepts `1.5e-9` as well as `1,5e-9`;
+  - **Auto**: the fields show the range actually used (series range, and in log
+    mode the positive minimum) and are read-only; "Rescale to data range" is
+    disabled while Auto is on (that is exactly what Auto does);
+  - **manual**: the values are the user's range and are no longer overwritten
+    by a frame change; in log mode a minimum of 0 is replaced by the smallest
+    usable positive value (and shown), so the numbers match the colour bar;
+  - **Auto + Log** uses ONE positive floor for the whole series (cached in
+    `_series_pos_cache`), so the mapping no longer shifts from frame to frame;
+    the floor is at least `1e-7 × maximum` — real dumps contain denormal
+    magnitudes (5e-35 next to 35) that previously stretched the log table over
+    30 decades and painted the whole map in one colour;
+  - **"Rescale to data range"** spans all time steps of a loaded series.
+  Smoke: `tests/vtk_viewer_smoke.py` (scientific input incl. comma/invalid
+  text, limits survive frame changes, series-wide log floor, rescale over all
+  steps, button gating) + `tests/test_number_field.py` (format/parse round
+  trip).
+
 - **Field Viewer: "Export project dumps → VTK" froze the GUI on large dumps**
   (`app/postproc/vtk_export.py`, `app/ui/vtk_viewer.py`): the export ran
   synchronously, wrote a per-step `.vtr` for **every** stored time step of
