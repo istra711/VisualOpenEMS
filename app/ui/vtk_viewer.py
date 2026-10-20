@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.postproc.vtk_export import (  # noqa: F401
+    count_dump_steps,
     dump_to_vtr,
     export_dumps_to_vtk,
     field_unit,
@@ -914,6 +915,11 @@ class VtkFieldViewer(QWidget):
             return
         self.load(written[0])
         print(f"VTK: converted {len(written)} file(s) -> {written[0].parent}")
+        # one .vtr per *stored* sample: make it obvious why a dump has few steps
+        for h5 in sorted(sim.glob("*.h5")):
+            if "nf2ff" in h5.name.lower():
+                continue
+            print(f"VTK:   {h5.stem}: {count_dump_steps(h5)} stored step(s) in {h5.name}")
 
     def load(self, path: Path | str) -> None:
         path = Path(path)
