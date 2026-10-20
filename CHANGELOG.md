@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Test: `tests/mesh_port_place_smoke.py` (toggle, unsnapped placement, marker
   lifetime, list/overlay update, no manual-line side effect).
 
+- **Field Viewer: slice position readout + numeric input**
+  (`app/ui/vtk_viewer.py`): next to the Slice slider there is now a label with
+  the exact position as number and unit (`z = 12.345 mm`) and a spin box for
+  **direct numeric input** (mm, Enter/focus-out applies; range follows the data
+  extent). A typed value is used exactly (`_slice_pos_exact`) instead of the
+  slider's 1/1000 quantisation, is clamped to the data extent and moves the
+  slider along; dragging the slider takes over again (and a slice-axis change
+  re-derives the position from the slider). The slice controls use mm while the
+  3D axes keep metres (tooltips + Help tab say so). Smoke:
+  `tests/vtk_viewer_smoke.py` (readout while dragging, exact typed value, clamp,
+  slider/axis taking over, tooltips).
+
 ### Changed
 
 - **Mesh Viewer: finer slice-plane slider** (`app/ui/mesh_viewer.py`): the

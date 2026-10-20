@@ -245,6 +245,9 @@ class VtkFieldViewer(QWidget):
         self._iren = None
         self._renderer = None
         self._grid = None
+        #: exact slice position in metres typed into the spinbox (None = the
+        #: slider governs the position)
+        self._slice_pos_exact: float | None = None
         self._data_range = (0.0, 1.0)
         self._scalar_name = None  # kept for compatibility / status text
         self._scalar_range = (0.0, 1.0)
@@ -324,13 +327,37 @@ class VtkFieldViewer(QWidget):
         row2.addWidget(QLabel("Slice axis"))
         self.cmb_slice_axis = QComboBox()
         self.cmb_slice_axis.addItems(["X", "Y", "Z"])
-        self.cmb_slice_axis.currentIndexChanged.connect(self._refresh_display)
+        self.cmb_slice_axis.currentIndexChanged.connect(self._on_slice_axis_changed)
         self.slider_slice = QSlider(Qt.Orientation.Horizontal)
         self.slider_slice.setRange(0, 1000)
         self.slider_slice.setValue(500)
-        self.slider_slice.valueChanged.connect(self._refresh_display)
+        self.slider_slice.setMinimumWidth(160)
+        self.slider_slice.valueChanged.connect(self._on_slice_slider)
+        self.slider_slice.setToolTip(
+            "Slice position along the selected axis (0…1000 of the bounds).\n"
+            "The exact position is shown next to it and can be typed in (mm)."
+        )
+        self.spn_slice = QDoubleSpinBox()
+        self.spn_slice.setDecimals(3)
+        self.spn_slice.setRange(-1e9, 1e9)
+        self.spn_slice.setSuffix(" mm")
+        self.spn_slice.setKeyboardTracking(False)  # apply on Enter / focus-out
+        self.spn_slice.valueChanged.connect(self._on_slice_value)
+        self.spn_slice.setToolTip(
+            "Slice position — direct numeric input in mm.\n"
+            "The 3D axes use metres (1 mm = 0.001 m); the value snaps the\n"
+            "slider and cuts exactly at the typed position."
+        )
+        self.lbl_slice = QLabel("—")
+        self.lbl_slice.setMinimumWidth(100)
+        self.lbl_slice.setToolTip(
+            "Current slice plane: axis, position and unit.\n"
+            "Follows both the slider and the numeric input."
+        )
         row2.addWidget(self.cmb_slice_axis)
         row2.addWidget(self.slider_slice, 1)
+        row2.addWidget(self.spn_slice)
+        row2.addWidget(self.lbl_slice)
         row2.addWidget(QLabel("Iso-level"))
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)
@@ -681,12 +708,14 @@ class VtkFieldViewer(QWidget):
         self._series_times, self._series_freqs = [], []
         self._current_path = None
         self._grid = None
+        self._slice_pos_exact = None
         self._scalar_name = None
         self._data_range = (0.0, 1.0)
         self._scalar_range = (0.0, 1.0)
         self._series_range = None
         self._series_range_cache = {}
         self.lbl_level.setText("")
+        self.lbl_slice.setText("—")
         self.lbl_time_info.setText("")
         self.lbl_sim_time.setText("")
         self._set_time_visible(False)
@@ -770,6 +799,7 @@ class VtkFieldViewer(QWidget):
             lambda: self.chk_outline.setChecked(other.chk_outline.isChecked()),
             lambda: self.cmb_slice_axis.setCurrentText(other.cmb_slice_axis.currentText()),
             lambda: self.slider_slice.setValue(other.slider_slice.value()),
+            lambda: self.spn_slice.setValue(other.spn_slice.value()),
             lambda: self.slider.setValue(other.slider.value()),
             lambda: self.chk_log.setChecked(other.chk_log.isChecked()),
             lambda: self.chk_auto.setChecked(other.chk_auto.isChecked()),
@@ -871,6 +901,9 @@ class VtkFieldViewer(QWidget):
             return False
         self._grid = grid
         self._vtk = vtk
+        # new bounds -> a previously typed slice position is meaningless
+        self._slice_pos_exact = None
+        self._sync_slice_readout()
         return True
 
     def _detect_series(self, path: Path) -> None:
@@ -1062,15 +1095,79 @@ class VtkFieldViewer(QWidget):
         lo, hi = self._color_range()
         return lo + (hi - lo) * (self.slider.value() / 1000.0)
 
-    def _slice_origin(self):
+    # ------------------------------------------------------------ slice plane
+    def _slice_bounds(self) -> tuple[float, float] | None:
+        """``(lo, hi)`` of the current slice axis from the loaded grid."""
+        if self._grid is None:
+            return None
         b = self._grid.GetBounds()  # x0,x1,y0,y1,z0,z1
+        return {
+            "X": (b[0], b[1]),
+            "Y": (b[2], b[3]),
+        }.get(self.cmb_slice_axis.currentText(), (b[4], b[5]))
+
+    def _slice_pos_m(self) -> float | None:
+        """Slice position along the current axis in metres (None = no grid)."""
+        if self._slice_pos_exact is not None:
+            return self._slice_pos_exact
+        rng = self._slice_bounds()
+        if rng is None:
+            return None
+        lo, hi = rng
+        return lo + (hi - lo) * (self.slider_slice.value() / 1000.0)
+
+    def _sync_slice_readout(self) -> None:
+        """Keep the numeric input + position label in step with the slider."""
+        pos = self._slice_pos_m()
+        if pos is None:
+            self.lbl_slice.setText("—")
+            return
+        rng = self._slice_bounds()
+        self.spn_slice.blockSignals(True)
+        if rng is not None:
+            # numeric input follows the data extent (mm)
+            self.spn_slice.setRange(rng[0] * 1000.0, rng[1] * 1000.0)
+        self.spn_slice.setValue(pos * 1000.0)
+        self.spn_slice.blockSignals(False)
+        axis = self.cmb_slice_axis.currentText().lower()
+        self.lbl_slice.setText(f"{axis} = {pos * 1000.0:.3f} mm")
+
+    def _on_slice_slider(self, _value: int = 0) -> None:
+        self._slice_pos_exact = None  # the slider is authoritative again
+        self._sync_slice_readout()
+        self._refresh_display()
+
+    def _on_slice_value(self, mm: float) -> None:
+        """Numeric slice input (mm): cut exactly there, move the slider along."""
+        pos = mm / 1000.0
+        rng = self._slice_bounds()
+        if rng is not None:
+            lo, hi = rng
+            if hi > lo:
+                pos = min(max(pos, lo), hi)  # keep the cut inside the data
+                self.slider_slice.blockSignals(True)
+                self.slider_slice.setValue(int(round((pos - lo) / (hi - lo) * 1000)))
+                self.slider_slice.blockSignals(False)
+        self._slice_pos_exact = pos
+        self._sync_slice_readout()
+        self._refresh_display()
+
+    def _on_slice_axis_changed(self, *_args) -> None:
+        # a typed position belongs to the old axis -> fall back to the slider
+        self._slice_pos_exact = None
+        self._sync_slice_readout()
+        self._refresh_display()
+
+    def _slice_origin(self):
         axis = self.cmb_slice_axis.currentText()
-        frac = self.slider_slice.value() / 1000.0
+        pos = self._slice_pos_m()
+        if pos is None:
+            return (0.0, 0.0, 0.0)
         if axis == "X":
-            return (b[0] + (b[1] - b[0]) * frac, 0.0, 0.0)
+            return (pos, 0.0, 0.0)
         if axis == "Y":
-            return (0.0, b[2] + (b[3] - b[2]) * frac, 0.0)
-        return (0.0, 0.0, b[4] + (b[5] - b[4]) * frac)
+            return (0.0, pos, 0.0)
+        return (0.0, 0.0, pos)
 
     # ------------------------------------------------------------- rendering
     @staticmethod
@@ -1146,7 +1243,9 @@ class VtkFieldViewer(QWidget):
         loc, name = self._array()
         self.slider.setEnabled(rep == "Iso-surface")
         self.slider_slice.setEnabled(rep == "Slice")
+        self.spn_slice.setEnabled(rep == "Slice")
         self.cmb_slice_axis.setEnabled(rep == "Slice")
+        self._sync_slice_readout()
 
         lut = self._lookup_table()
         mapper = self._make_mapper(vtk, lut, loc, name)
