@@ -280,12 +280,15 @@ def _is_fresh(out_path: Path, src: Path) -> bool:
         return False
 
 
-def _load_series_state(h5_path: Path, out_dir: Path) -> tuple[list[Path] | None, list[str]]:
+def _load_series_state(
+    h5_path: Path, out_dir: Path, step_stride: int = 1
+) -> tuple[list[Path] | None, list[str]]:
     """Return the up-to-date series files/labels of a dump (``(None, [])`` if stale).
 
-    A series counts as up to date when its sidecar is newer than the dump and
-    every file it lists still exists — so a re-run (newer HDF5) or a deleted
-    ``.vtr`` triggers a re-export, while repeated "Generate VTK" clicks are free.
+    A series counts as up to date when its sidecar is newer than the dump,
+    every file it lists still exists and it was written with the same
+    ``step_stride`` — so a re-run (newer HDF5), a deleted ``.vtr`` or a changed
+    stride triggers a re-export, while repeated "Generate VTK" clicks are free.
     """
     import json
 
@@ -294,9 +297,11 @@ def _load_series_state(h5_path: Path, out_dir: Path) -> tuple[list[Path] | None,
         return None, []
     try:
         data = json.loads(sidecar.read_text(encoding="utf-8"))
+        if max(1, int(data.get("stride", 1) or 1)) != max(1, int(step_stride)):
+            return None, []
         files = [out_dir / str(name) for name in data.get("files") or []]
         labels = [str(lab) for lab in data.get("labels") or []]
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, TypeError, AttributeError):
         return None, []
     if not files or len(files) != len(labels) or not all(p.exists() for p in files):
         return None, []
@@ -308,12 +313,14 @@ def dump_series_to_vtr(
     out_dir: Path | str | None = None,
     on_step: Any = None,
     should_stop: Any = None,
+    step_stride: int = 1,
 ) -> tuple[list[Path], list[str]]:
     """Write one ``.vtr`` per stored step (for animation) plus a sidecar.
 
     Files: ``<stem>_0000.vtr``, ``<stem>_0001.vtr`` … and ``<stem>.series.json``
     (the ordered step labels). Returns ``(paths, labels)``. Empty dumps raise
-    ``ValueError``.
+    ``ValueError``. ``step_stride`` keeps only every N-th stored step (1 = all),
+    which cuts the disk usage and the time-slider frame count roughly by N.
 
     The steps are streamed from the HDF5 file one at a time (a TD dump can hold
     hundreds of time steps — loading them all at once needs gigabytes of RAM).
@@ -328,6 +335,7 @@ def dump_series_to_vtr(
     from vtk.util import numpy_support as ns
 
     h5_path = Path(h5_path)
+    stride = max(1, int(step_stride))
     if out_dir is None:
         out_dir = h5_path.parent
     out_dir = Path(out_dir)
@@ -347,7 +355,9 @@ def dump_series_to_vtr(
         else:
             x = y = z = None
         root = f["FieldData"] if "FieldData" in f else f
-        for label, ds, imag_ds in _iter_step_datasets(root):
+        for index, (label, ds, imag_ds) in enumerate(_iter_step_datasets(root)):
+            if index % stride:  # keep every N-th stored step (0, N, 2N, …)
+                continue
             if should_stop is not None and should_stop():
                 cancelled = True
                 break
@@ -392,6 +402,8 @@ def dump_series_to_vtr(
                     # physical step positions (openEMS dataset attributes)
                     "times": times,
                     "frequencies": freqs,
+                    # kept steps: 0, N, 2N, … of the stored dump (1 = all)
+                    "stride": stride,
                 },
                 indent=2,
             ),
@@ -406,13 +418,14 @@ def export_dumps_to_vtk(
     per_step: bool = False,
     progress: Any = None,
     should_stop: Any = None,
+    step_stride: int = 1,
 ) -> list[Path]:
     """Convert every field dump (``*.h5`` without ``nf2ff``) in ``sim_dir``.
 
     Returns the ``.vtr`` paths (one static grid per dump, plus the per-step
     series when ``per_step`` is set). With ``per_step`` each dump also gets one
     ``<stem>_NNNN.vtr`` file per stored step (+ ``<stem>.series.json``) so the
-    viewer can animate. Empty/degenerate dumps are skipped (error printed).
+    viewer can animate. ``step_stride`` exports only every N-th step (1 = all).
 
     Incremental: outputs that are newer than their dump are reused, so a second
     click only converts changed dumps. ``progress(done, total, text)`` is called
@@ -420,6 +433,7 @@ def export_dumps_to_vtk(
     dump can mean hundreds of files — the GUI shows a cancelable dialog).
     """
     sim_dir = Path(sim_dir)
+    stride = max(1, int(step_stride))
     if out_dir is None:
         out_dir = sim_dir.parent / "vtk"
     out_dir = Path(out_dir)
@@ -432,8 +446,13 @@ def export_dumps_to_vtk(
     for h5 in dumps:
         single = out_dir / (h5.stem + ".vtr")
         fresh_single = _is_fresh(single, h5)
-        series, labels = _load_series_state(h5, out_dir) if per_step else (None, [])
-        steps = len(labels) if labels else (count_dump_steps(h5) if per_step else 0)
+        series, labels = _load_series_state(h5, out_dir, stride) if per_step else (None, [])
+        if labels:
+            steps = len(labels)
+        elif per_step:
+            steps = (count_dump_steps(h5) + stride - 1) // stride
+        else:
+            steps = 0
         plan.append((h5, series, labels, steps, fresh_single))
         total += 1 + steps
 
@@ -470,6 +489,7 @@ def export_dumps_to_vtk(
                 out_dir,
                 on_step=lambda label, h5=h5: _advance(1, f"{h5.name}: step {label} written"),
                 should_stop=should_stop,
+                step_stride=stride,
             )
             written.extend(series)
         except Exception as e:  # noqa: BLE001 — keep going over the other dumps

@@ -306,6 +306,20 @@ class VtkFieldViewer(QWidget):
             "A time-domain dump can have hundreds of steps — untick for a quick\n"
             "static view (much faster, far less disk space)."
         )
+        self.spin_stride = QSpinBox()
+        self.spin_stride.setRange(1, 50)
+        self.spin_stride.setValue(1)
+        self.spin_stride.setPrefix("every ")
+        self.spin_stride.setSuffix(". step")
+        self.spin_stride.setFixedWidth(110)
+        self.spin_stride.setToolTip(
+            "Per-step export: keep only every N-th stored sample.\n"
+            "470 samples at 27 ps → every 4th step = ~118 frames (~3.5 GB\n"
+            "instead of ~14 GB); the time slider still spans the full run.\n"
+            "Changing this re-exports the series (the stride is stored in the\n"
+            "sidecar)."
+        )
+        self.chk_per_step.toggled.connect(self.spin_stride.setEnabled)
         self.cmb_rep = QComboBox()
         self.cmb_rep.addItems(["Surface", "Wireframe", "Slice", "Iso-surface"])
         self.cmb_rep.setCurrentText("Surface")  # ParaView-like default
@@ -330,8 +344,9 @@ class VtkFieldViewer(QWidget):
         self.btn_popout = QPushButton("Pop out")
         self.btn_popout.setToolTip("Show the 3D view in a separate window (click again to dock).")
         self.btn_popout.clicked.connect(self.popout)
-        for w in (self.btn_open, self.btn_export, self.chk_per_step, QLabel("Representation"),
-                  self.cmb_rep, QLabel("Array"), self.cmb_array, self.chk_outline):
+        for w in (self.btn_open, self.btn_export, self.chk_per_step, self.spin_stride,
+                  QLabel("Representation"), self.cmb_rep, QLabel("Array"), self.cmb_array,
+                  self.chk_outline):
             bar.addWidget(w)
         bar.addStretch(1)
         bar.addWidget(self.btn_video)
@@ -815,6 +830,7 @@ class VtkFieldViewer(QWidget):
             lambda: self.cmb_rep.setCurrentText(other.cmb_rep.currentText()),
             lambda: self.chk_outline.setChecked(other.chk_outline.isChecked()),
             lambda: self.chk_per_step.setChecked(other.chk_per_step.isChecked()),
+            lambda: self.spin_stride.setValue(other.spin_stride.value()),
             lambda: self.cmb_slice_axis.setCurrentText(other.cmb_slice_axis.currentText()),
             lambda: self.slider_slice.setValue(other.slider_slice.value()),
             lambda: self.spn_slice.setValue(other.spn_slice.value()),
@@ -868,6 +884,7 @@ class VtkFieldViewer(QWidget):
             return
 
         per_step = self.chk_per_step.isChecked()
+        stride = self.spin_stride.value() if per_step else 1
         progress = QProgressDialog("Converting field dumps to VTK…", "Cancel", 0, 100, self)
         progress.setWindowTitle("Generate VTK")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -892,6 +909,7 @@ class VtkFieldViewer(QWidget):
                 per_step=per_step,
                 progress=_on_progress,
                 should_stop=progress.wasCanceled,
+                step_stride=stride,
             )
             cancelled = progress.wasCanceled()
         except Exception as e:  # noqa: BLE001
