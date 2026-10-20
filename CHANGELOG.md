@@ -114,9 +114,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - leftover `<stem>_NNNN.vtr` steps of an earlier, longer run are removed after
     a successful series export (no phantom frames in the time slider);
   - new **"per-step" checkbox** next to the button (default on, keeps the time
-    slider / video export); untick it for a quick static conversion.
+    slider / video export); untick it for a quick static conversion, and
+    **"every N. step"** (1…50) keeps only every Nth stored sample — a 470-frame
+    12 ns run drops to ~118 frames (~1/4 the disk space) while the Time slider
+    still spans the full run. The stride is stored in the sidecar, so changing
+    it re-exports the series.
   Tests: `tests/test_vtk_export.py` (progress/total, incremental, stale-step
-  cleanup, cancel) + export-button check in `tests/vtk_viewer_smoke.py`.
+  cleanup, cancel, stride) + export-button check in `tests/vtk_viewer_smoke.py`.
+
+- **Zero-thickness PEC sheets could vanish from the simulation**
+  (`app/csxcad_builder/quantize.py`, `app/meshing/build_task.py`,
+  `app/simulation/script_gen.py`): a zero-thickness metal box (ground plane,
+  MSL line/stub) is only applied when the grid plane lies *inside* the box.
+  float32 quantization puts 1.6 at 1.6000000238 and the mesher can return the
+  line a few 1e-15 above that, so CSXCAD silently skipped the primitive
+  ("Warning: Unused primitive") — the model lost that metal (a ground plane at
+  0 mm then gave S21 = -80 dB). Sheet boxes are now widened by 1 nm per side
+  **after** the mesh is generated (the mesher still sees the authored,
+  zero-thickness geometry), so the plane cannot fall through the grid. Tests:
+  `tests/test_quantize.py`.
 
 - **S-Param Viewer: broken y-scale on traces that were never simulated**
   (`app/ui/sparam_viewer.py`): a single-excitation S-parameter file stores the

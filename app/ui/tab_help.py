@@ -411,7 +411,11 @@ Dumps
     control the time steps; leave it at 1 unless the dump is huge.
   • To SEE the temporal evolution: make a time-domain dump, Run, then open the
     Field Viewer -> "Export project dumps to VTK" (writes one .vtr per stored
-    step + <name>.series.json) and use the "Time" slider / "Play". With
+    step + <name>.series.json) and use the "Time" slider / "Play". openEMS
+    stores about 8 samples per period of the highest frequency, so a 12 ns run
+    is ~470 frames and several GB per field. "every N. step" next to per-step
+    keeps only every Nth sample (e.g. every 4th ≈ 118 frames, 1/4 the disk
+    space); the Time slider still spans the whole run. With
     File type = VTK, openEMS writes the .vtr series directly.
 
 NF2FF

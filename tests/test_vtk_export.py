@@ -280,6 +280,45 @@ def test_export_is_incremental(tmp_path):
     assert all("up to date" in text for text in calls)
 
 
+def test_series_stride_keeps_every_nth_step(tmp_path):
+    import json
+
+    p = tmp_path / "Et-H.h5"
+    _make_td_dump(p, 6)
+    paths, labels = dump_series_to_vtr(p, tmp_path / "out", step_stride=2)
+
+    assert labels == ["t0", "t124", "t248"]
+    assert [q.name for q in paths] == ["Et-H_0000.vtr", "Et-H_0001.vtr", "Et-H_0002.vtr"]
+    data = json.loads((tmp_path / "out" / "Et-H.series.json").read_text(encoding="utf-8"))
+    assert data["stride"] == 2
+    assert data["times"] == pytest.approx([0.0, 2e-11, 4e-11], rel=1e-5)
+
+
+def test_export_stride_is_incremental_and_stride_aware(tmp_path):
+    sim = tmp_path / "simulation"
+    sim.mkdir()
+    _make_td_dump(sim / "Et-H.h5", 6)
+
+    first = export_dumps_to_vtk(sim, per_step=True, step_stride=2)
+    assert len(first) == 4  # 1 static grid + 3 steps
+    mtimes = {p: p.stat().st_mtime_ns for p in first}
+
+    calls: list[str] = []
+    again = export_dumps_to_vtk(
+        sim, per_step=True, step_stride=2,
+        progress=lambda _d, _t, text: calls.append(text),
+    )
+    assert sorted(p.name for p in again) == sorted(p.name for p in first)
+    assert all(p.stat().st_mtime_ns == mtimes[p] for p in first)
+    assert all("up to date" in text for text in calls)
+
+    # a different stride must re-export the whole series (sidecar records it)
+    full = export_dumps_to_vtk(sim, per_step=True, step_stride=1)
+    step_files = sorted(q.name for q in full if q.name != "Et-H.vtr")
+    assert len(full) == 7  # 1 static grid + 6 steps
+    assert step_files == [f"Et-H_{i:04d}.vtr" for i in range(6)]
+
+
 def test_series_export_removes_stale_steps(tmp_path):
     import json
     import os
