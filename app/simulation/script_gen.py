@@ -171,7 +171,7 @@ from app.meshing.validators import validate_mesh, report_to_lines
 from app.postproc import fields as fld
 from app.postproc import nf2ff as nf
 from app.postproc import sparams as sp
-from app.csxcad_builder.quantize import f32
+from app.csxcad_builder.quantize import f32, inflate_sheet_box, zero_extent_axes
 from app.simulation.msl import resolve_msl_axes
 from app.simulation.excitation import apply_excitation
 
@@ -504,6 +504,7 @@ def main() -> int:
     # Create materials ONCE and reuse the same CSX properties for primitives.
     # (Creating twice left empty Property #0..#2 placeholders in openEMS dumps.)
     props = {}
+    sheet_boxes = []  # (box, axes) widened after the mesh is built
     for mat in project.materials:
         if mat.kind == "pec":
             props[mat.name] = CSX.AddMetal(mat.name)
@@ -528,11 +529,22 @@ def main() -> int:
             props[mat] = get_or_create_prop(CSX, mat, project.materials)
         prop = props[mat]
         if kind == "box":
-            prop.AddBox(
-                start=[f32(x) for x in pr["start"]],
-                stop=[f32(x) for x in pr["stop"]],
+            _start = [f32(x) for x in pr["start"]]
+            _stop = [f32(x) for x in pr["stop"]]
+            _box = prop.AddBox(
+                start=_start,
+                stop=_stop,
                 priority=pri,
             )
+            _md = next((m for m in project.materials if m.name == mat), None)
+            if _md is not None:
+                _sheet = _md.kind in ("pec", "conducting_sheet")
+            else:
+                _sheet = mat in ("copper", "pec") or "copper" in mat
+            if _sheet:
+                _axes = zero_extent_axes(_start, _stop)
+                if _axes:  # widened after meshing, see inflate_sheet_box()
+                    sheet_boxes.append((_box, _axes))
             if pr.get("edges2grid"):
                 dirs = pr.get("edges2grid", "xy")
                 try:
@@ -671,6 +683,10 @@ def main() -> int:
             properties_mesh_setup=properties_mesh_setup,
             ports=project.ports,
         )
+    # Zero-thickness PEC sheets only get their 1 nm thickness once the grid
+    # exists — the mesher must see the authored geometry.
+    for _box, _axes in sheet_boxes:
+        inflate_sheet_box(_box, _axes)
     print("Mesh setup:", json.dumps(setup, indent=2, default=str))
 
     dedupe_grid_lines(CSX)

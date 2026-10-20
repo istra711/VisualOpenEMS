@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.csxcad_builder.quantize import f32 as _f32
+from app.csxcad_builder.quantize import inflate_sheet_box, zero_extent_axes
 
 
 @dataclass
@@ -132,6 +133,7 @@ def build_mesh_and_validate(
 
     mat_by_name = {m.name: m for m in project.materials}
     props: dict = {}
+    sheet_boxes: list = []  # (box, axes) widened after the mesh is built
     for mat in project.materials:
         if mat.kind == "pec":
             props[mat.name] = CSX.AddMetal(mat.name)
@@ -175,11 +177,18 @@ def build_mesh_and_validate(
         pri = int(pr.get("priority", 10))
         prop = _prop_for(mat)
         if kind == "box":
-            prop.AddBox(
-                start=[_f32(x) for x in pr["start"]],
-                stop=[_f32(x) for x in pr["stop"]],
-                priority=pri,
-            )
+            _start = [_f32(x) for x in pr["start"]]
+            _stop = [_f32(x) for x in pr["stop"]]
+            _box = prop.AddBox(start=_start, stop=_stop, priority=pri)
+            _md = mat_by_name.get(mat)
+            if _md is not None:
+                _sheet = _md.kind in ("pec", "conducting_sheet")
+            else:  # unnamed metal fallback, see _prop_for()
+                _sheet = mat in ("copper", "pec") or "copper" in mat
+            if _sheet:
+                _axes = zero_extent_axes(_start, _stop)
+                if _axes:  # widened after meshing, see inflate_sheet_box()
+                    sheet_boxes.append((_box, _axes))
             if pr.get("edges2grid"):
                 try:
                     FDTD.AddEdges2Grid(
@@ -299,6 +308,10 @@ def build_mesh_and_validate(
                 primitives_mesh_setup=primitives_mesh_setup,
                 ports=project.ports,
             )
+        # Zero-thickness PEC sheets only get their 1 nm thickness once the grid
+        # exists — the mesher must see the authored geometry.
+        for _box, _axes in sheet_boxes:
+            inflate_sheet_box(_box, _axes)
     else:
         # Scene only: no easyMesh — set the grid to the domain box corners so the
         # viewer shows geometry + domain (+ NF2FF) and the editor can add lines.
