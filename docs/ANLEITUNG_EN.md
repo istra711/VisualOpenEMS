@@ -91,7 +91,11 @@ again with a **right-click** on the empty area below the tree or via `View` →
 
 The **log panel** (below the tabs, toggled with **Ctrl+L**) has two
 tabs: **Log** (openEMS/app log) and **Mesh Report** (the mesh-check report,
-single source after a build).
+single source after a build). **Right-click anywhere in the log area** (text,
+tab bar, button row, line counter or the divider above it) for the log options:
+show/hide the Log and the Project / Geometry panel, pick a log tab, auto-scroll,
+Save log…, Pop out log…. In the text, Copy / Select All are above them. The same
+menu sits on the status bar at the bottom edge.
 
 **Settings…** (once):
 

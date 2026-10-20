@@ -130,6 +130,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Open nf2ff.json…" → "Open…". Also: the Field Viewer slice spinbox spans
   ±1 km instead of ±1e9 mm (a wider range only widened the box).
 
+- **Right-click in the log area** (`app/ui/main_window.py`): the log-area menu
+  (show/hide the log panel, log tabs, auto-scroll, Save/Pop out log) was only on
+  the thin status bar below — a ~25 px strip, partly covered by the progress
+  bars, so it was easy to miss. It now opens anywhere in the log: panel
+  background, tab bar, the Clear/Pop-out/Save/Auto-scroll buttons, the line
+  counter and the divider between the tabs and the log. In the log text the
+  standard **Copy / Select All** entries are kept above the options. The menu
+  also gained a checkable **Show Project / Geometry panel** entry next to
+  "Show log panel" (Ctrl+B), and the status-bar tooltip mentions both panels.
+  Tests: `tests/run_log_smoke.py` (menu entries incl. Copy, both panel toggles
+  really hide/show).
+
 - **Field Viewer: Auto / Log scale / Rescale corrupted each other**
   (`app/ui/vtk_viewer.py`, `app/ui/number_field.py`): the colour limits were a
   `QDoubleSpinBox` with 6 decimals, so field magnitudes like `1.26e-9` were

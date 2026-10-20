@@ -67,9 +67,27 @@ def main() -> int:
     menu = win._build_status_menu()
     labels = [a.text() for a in menu.actions() if not a.isSeparator()]
     assert "Show log panel" in labels, labels
+    assert "Show Project / Geometry panel" in labels, labels
     assert "Log" in labels and "Mesh Report" in labels, labels
     assert "Auto-scroll" in labels, labels
     assert "Pop out log…" in labels, labels
+    # the same options are reachable from the log text (plus Copy/Select All)
+    text_menu = win._log_view_menu(win.log_view)
+    text_labels = [a.text() for a in text_menu.actions() if not a.isSeparator()]
+    assert any("Copy" in t for t in text_labels), text_labels
+    assert "Show Project / Geometry panel" in text_labels, text_labels
+    assert "Show log panel" in text_labels, text_labels
+    # ... and the panel toggle entries really toggle
+    proj = next(a for a in text_menu.actions() if a.text() == "Show Project / Geometry panel")
+    proj.setChecked(False)
+    assert win.project_panel.isHidden(), "Project / Geometry panel not hidden from the log menu"
+    proj.setChecked(True)
+    assert not win.project_panel.isHidden()
+    log_act = next(a for a in text_menu.actions() if a.text() == "Show log panel")
+    log_act.setChecked(False)
+    assert win.log_panel.isHidden()
+    log_act.setChecked(True)
+    assert not win.log_panel.isHidden()
     win._set_log_panel_visible(False)
     assert not win.btn_log_toggle.isChecked()
     assert win.log_panel.isHidden(), "log panel must be hidden"
