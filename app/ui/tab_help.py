@@ -27,8 +27,10 @@ TAB_ORDER = [
 TAB_HELP: dict[str, str] = {
     "Geometry": """GEOMETRY — project tree, primitives, imported CAD
 
-Left panel (always visible)
+Left panel (can be hidden)
   • Project / Geometry list — primitives, materials, ports, dumps, assignments.
+  • Right-click on empty space below the tree: **Hide Project / Geometry panel**
+    (also View → Project / Geometry Panel, Ctrl+B — that shows it again too).
   • Add Box / Cylinder / Sphere / Polygon Primitive — openEMS primitives in
     mm (project units). Polygon/sphere need the cartesian coordinate system.
   • Add Assignment — bind FreeCAD mesh names to materials / boundary roles.

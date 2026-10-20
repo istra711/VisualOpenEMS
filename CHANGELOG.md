@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hide the left "Project / Geometry" pane** (`app/ui/main_window.py`):
+  right-click anywhere in the pane — the empty area below the tree, the tree
+  background or its title — and pick *Hide Project / Geometry panel* (the
+  tree's item menu offers it at the bottom too, after Edit/Duplicate/Remove).
+  `View` → **Project / Geometry Panel** (**Ctrl+B**) shows/hides it as well and
+  is the way back once it is hidden; the state is remembered
+  (`app/settings.py`: `project_panel_visible`) and the splitter width is
+  restored on show. Tests: `tests/menu_smoke.py` (`test_project_panel_toggle`,
+  Ctrl+B shortcut, context-menu entry); docs: `ANLEITUNG_DE/EN.md`,
+  `tab_help` (Geometry topic).
+
 - **Selectable FDTD excitation waveform** (`app/simulation/excitation.py`,
   `app/models/project.py`, `app/simulation/script_gen.py`,
   `app/ui/{main_window,mesh_params,sim_params,tab_help}.py`): the Mesh tab

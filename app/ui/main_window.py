@@ -198,6 +198,7 @@ class MainWindow(QMainWindow):
             data = bytes(self.saveGeometry())
             self.settings.window_geometry = base64.b64encode(data).decode("ascii")
             self.settings.log_panel_visible = self.btn_log_toggle.isChecked()
+            self.settings.project_panel_visible = self.btn_project_toggle.isChecked()
             self.settings.save()
         except Exception as e:  # noqa: BLE001
             print("save geometry failed:", e)
@@ -246,6 +247,13 @@ class MainWindow(QMainWindow):
         self.btn_log_toggle = QPushButton("Log")
         self.btn_log_toggle.setCheckable(True)
         self.btn_log_toggle.setChecked(bool(getattr(self.settings, "log_panel_visible", True)))
+        # checkable state target for View → "Project / Geometry Panel" (the pane
+        # itself has no button; show/hide also works from its right-click menu)
+        self.btn_project_toggle = QPushButton("Project")
+        self.btn_project_toggle.setCheckable(True)
+        self.btn_project_toggle.setChecked(
+            bool(getattr(self.settings, "project_panel_visible", True))
+        )
         self.btn_help = QPushButton("Help")
         self.btn_help.setToolTip("Open help for the currently selected tab")
         self.btn_exit = QPushButton("Exit")
@@ -267,6 +275,7 @@ class MainWindow(QMainWindow):
             self.btn_antenna,
             self.btn_antenna_popout,
             self.btn_log_toggle,
+            self.btn_project_toggle,
             self.btn_help,
             self.btn_exit,
         ]
@@ -274,25 +283,34 @@ class MainWindow(QMainWindow):
             b.hide()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter = splitter  # holds [Project/Geometry pane, tabs]
         root.addWidget(splitter, 1)
 
         # Left: project tree + geometry
         left = QWidget()
+        self.project_panel = left
+        self._project_panel_sizes: list[int] | None = None
         lv = QVBoxLayout(left)
-        lv.addWidget(QLabel("Project / Geometry"))
+        self.lbl_project_panel = QLabel("Project / Geometry")
+        lv.addWidget(self.lbl_project_panel)
         self.tree = QListWidget()
         # No buttons below the tree any more: everything is reachable via the
         # Geometry menu (Add/Edit/Duplicate/Delete/NF2FF) or right-click.
         self.tree.setToolTip(
             "Project structure.\n"
             "Double-click to edit · right-click for Edit/Duplicate/Remove · Delete key removes the selection.\n"
-            "Geom entries are imported CAD — edit geometry in FreeCAD."
+            "Geom entries are imported CAD — edit geometry in FreeCAD.\n"
+            "Right-click on empty space: hide this panel (View → Project / Geometry Panel, Ctrl+B)."
         )
         lv.addWidget(self.tree)
         self.tree.itemDoubleClicked.connect(self._on_tree_double_clicked)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree.keyPressEvent = self._tree_key_press  # type: ignore[method-assign]
+        # right-click on the panel background / its title, too
+        for w in (left, self.lbl_project_panel):
+            w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            w.customContextMenuRequested.connect(self._show_project_panel_context_menu)
         splitter.addWidget(left)
 
         # Right tabs
@@ -660,12 +678,17 @@ class MainWindow(QMainWindow):
         )
         # Larger default window so the mesh viewer is usable
         self.resize(1440, 900)
+        # left pane state from the last session (View → Project / Geometry Panel)
+        self._apply_project_panel_visibility(
+            bool(getattr(self.settings, "project_panel_visible", True))
+        )
 
         self.btn_log_clear.clicked.connect(self._clear_logs)
         self.btn_log_save.clicked.connect(self._save_log)
         self.btn_log_pop.clicked.connect(self._pop_out_log)
         self.btn_log_autoscroll.toggled.connect(self._toggle_autoscroll)
         self.btn_log_toggle.toggled.connect(self._toggle_log_panel)
+        self.btn_project_toggle.toggled.connect(self._toggle_project_panel)
         self._log_autoscroll = True
         self._script_dialog: object | None = None  # ScriptEditorDialog (modeless)
 
@@ -930,6 +953,14 @@ class MainWindow(QMainWindow):
             self.menu_view_actions[title] = action
         vmenu.addSeparator()
         add_action(vmenu, "Log Panel", btn=self.btn_log_toggle, shortcut="Ctrl+L")
+        add_action(
+            vmenu,
+            "Project / Geometry Panel",
+            btn=self.btn_project_toggle,
+            shortcut="Ctrl+B",
+            tip="Show/hide the left Project / Geometry pane "
+            "(also on its right-click menu)",
+        )
         vmenu.addSeparator()
         vmenu.addMenu(self.vtk_viewer.build_axes_menu(vmenu))
         vmenu.aboutToShow.connect(self._sync_view_menu)
@@ -1353,6 +1384,59 @@ class MainWindow(QMainWindow):
     def _toggle_autoscroll(self, checked: bool) -> None:
         self._log_autoscroll = checked
         self.btn_log_autoscroll.setText("Auto-scroll: ON" if checked else "Auto-scroll: OFF")
+
+    # ----- Project / Geometry pane (left) ---------------------------------
+    def _toggle_project_panel(self, checked: bool) -> None:
+        self._apply_project_panel_visibility(checked)
+        self.settings.project_panel_visible = bool(checked)
+        try:
+            self.settings.save()
+        except Exception as e:  # noqa: BLE001
+            print("save project_panel_visible failed:", e)
+        self.status.showMessage(
+            "Project / Geometry panel shown"
+            if checked
+            else "Project / Geometry panel hidden (View → Project / Geometry Panel, Ctrl+B)"
+        )
+
+    def _apply_project_panel_visibility(self, visible: bool) -> None:
+        if not hasattr(self, "project_panel") or not hasattr(self, "main_splitter"):
+            return
+        if visible:
+            self.project_panel.show()
+            sizes = self._project_panel_sizes or [280, 700]
+            if len(sizes) >= 2:
+                self.main_splitter.setSizes(sizes)
+        else:
+            sizes = self.main_splitter.sizes()
+            if sizes and len(sizes) >= 2 and any(s > 0 for s in sizes):
+                self._project_panel_sizes = list(sizes)
+            self.project_panel.hide()
+
+    def _set_project_panel_visible(self, visible: bool) -> None:
+        """Show/hide the pane (keeps the View menu action and the state in sync)."""
+        visible = bool(visible)
+        if self.btn_project_toggle.isChecked() != visible:
+            self.btn_project_toggle.setChecked(visible)  # triggers the toggle
+        else:
+            self._toggle_project_panel(visible)
+
+    def _add_project_panel_actions(self, menu: QMenu) -> None:
+        """Right-click entries of the Project / Geometry pane."""
+        act_hide = menu.addAction("Hide Project / Geometry panel")
+        act_hide.triggered.connect(lambda _checked=False: self._set_project_panel_visible(False))
+        menu.addSeparator()
+        head = menu.addAction("Show again: View → Project / Geometry Panel  (Ctrl+B)")
+        head.setEnabled(False)
+
+    def _build_project_panel_menu(self) -> QMenu:
+        menu = QMenu(self)
+        self._add_project_panel_actions(menu)
+        return menu
+
+    def _show_project_panel_context_menu(self, _pos=None) -> None:
+        """Right-click on the Project / Geometry pane → panel options."""
+        self._build_project_panel_menu().exec(QCursor.pos())
 
     # ----- bottom-edge (status bar) log-area menu -------------------------
     def _build_status_menu(self) -> QMenu:
@@ -3748,6 +3832,8 @@ class MainWindow(QMainWindow):
 
         item = self.tree.itemAt(pos)
         if item is None:
+            # empty space below the tree: panel options (hide the pane)
+            self._build_project_panel_menu().exec(self.tree.viewport().mapToGlobal(pos))
             return
         kind_raw = item.data(Qt.UserRole)
         idx_raw = item.data(Qt.UserRole + 1)
@@ -3761,6 +3847,8 @@ class MainWindow(QMainWindow):
         act_dup.setEnabled(kind in DUP_TREE_KINDS)
         act_del = menu.addAction("Remove")
         act_del.setEnabled(kind in {"geom", "prim", "assign", "mat", "port", "dump", "nf2ff"})
+        menu.addSeparator()
+        self._add_project_panel_actions(menu)
         chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
         if chosen is act_edit:
             self._edit_tree_entry(kind, idx)

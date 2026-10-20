@@ -83,8 +83,13 @@ python app\main.py
 `Project` (Presets), `Geometry` (Box/Cylinder/Port/Dump, Ports / Dumps… = **Strg+Umschalt+D**, Edit/Duplicate/Delete Selected = **Strg+D**/**Entf**, Fit NF2FF — das Gleiche per Rechtsklick auf einen Tree-Eintrag),
 `Mesh` (`Build CSX + Mesh + Validate` = **Strg+M**), `Simulation` (`Run Simulation` = **Ctrl+R**, Script,
 S-Params Viewer, Antenna Pattern Viewer / Pop-out Antenna Graph),
-`View` (Tabs, Log Panel = **Ctrl+L**), `Tools` (Settings…),
+`View` (Tabs, Log Panel = **Ctrl+L**, Project / Geometry Panel = **Ctrl+B**),
+`Tools` (Settings…),
 `Help` (Help = **F1**, ANLEITUNG, README, About).
+
+Das **Projekt-/Geometrie-Panel** links (Tree) lässt sich per **Rechtsklick** auf
+die leere Fläche darunter oder über `View` → **Project / Geometry Panel**
+(**Ctrl+B**) aus- und wieder einblenden (Zustand wird gespeichert).
 
 Das **Log-Panel** (unterhalb der Tabs, ein-/ausblendbar mit **Ctrl+L**) hat zwei
 Tabs: **Log** (openEMS-/App-Log) und **Mesh Report** (der Mesh-Check-Report,
