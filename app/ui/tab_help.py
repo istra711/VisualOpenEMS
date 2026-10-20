@@ -112,10 +112,28 @@ Port mode (right-click → "Port mode (click in a slice to place)")
     coordinates — no snapping to mesh lines or geometry edges. The two in-plane
     coordinates come from the click, the third one from the current slice plane
     (the plane slider itself still snaps to mesh lines).
+  • **The box is derived from the metal surfaces around the click.** The port
+    runs into the screen (along the slice normal) and its length is found
+    automatically: from the **bottom face of the clicked metal** to the **top
+    face of the next metal surface below** it (a metal that is not below is
+    looked for above — its bottom face is used then). So a click on a
+    microstrip line gives exactly the substrate height down to the ground plane.
+    Without a second metal at that spot the click is used for Start and Stop
+    (give the port a length by hand).
+  • Right-click → **"Port type"** decides what the click places:
+    - **Lumped** (default): the line described above (Start/Stop on the two
+      metal faces, Direction = the slice normal);
+    - **MSL, width along X/Y/Z**: the same box, but as wide as the **clicked
+      metal** along the chosen in-plane axis and one mesh cell long along the
+      other in-plane axis (the line/propagation axis). Propagation and
+      excitation direction are prefilled for the generator, and picking an MSL
+      entry also turns port mode on.
+    The in-plane axes in the menu follow the slice you are in (XY → X/Y,
+    XZ → X/Z, YZ → Y/Z).
   • A red dot with its (x, y) coordinates marks the spot, then the Port dialog
-    opens with the clicked coordinate in BOTH Start and Stop (drawing units) —
-    edit the ends (and name/type/resistance/direction) to define the actual
-    port; the red dot stays visible while the dialog is open.
+    opens with the computed box prefilled (drawing units) — edit anything
+    (name/type/resistance/direction/ends) before OK; the red dot stays visible
+    while the dialog is open.
   • On OK the port is added to the project (it appears in the component tree and
     in the Ports / Dumps window) and is drawn in the slices immediately. Start
     and Stop must differ (a zero-length port cannot be excited — the dialog

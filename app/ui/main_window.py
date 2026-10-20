@@ -470,6 +470,7 @@ class MainWindow(QMainWindow):
         self.mesh_viewer.rebuild_requested.connect(self._on_rebuild_scratch)
         self.mesh_viewer.port_place_requested.connect(self._on_mesh_port_place)
         self.mesh_viewer.port_mode_changed.connect(self._on_mesh_port_mode_changed)
+        self.mesh_viewer.port_type_changed.connect(self._on_mesh_port_type_changed)
         viewer_layout.addWidget(self.mesh_viewer)
         self.mesh_viewer_tab_index = tabs.addTab(viewer_tab, "Mesh Viewer")
 
@@ -3454,11 +3455,25 @@ class MainWindow(QMainWindow):
         else:
             self._log("Port mode OFF")
 
-    def _on_mesh_port_place(self, x: float, y: float, z: float) -> None:
+    def _on_mesh_port_type_changed(self, kind: str, orientation: str) -> None:
+        """Port type / MSL orientation chosen in the Mesh Viewer's menu."""
+        if str(kind) == "msl":
+            self._log(
+                f"Port type: MSL — width follows the clicked metal along "
+                f"{str(orientation or '?').upper()}; the line runs along the other "
+                "in-plane axis"
+            )
+        else:
+            self._log("Port type: Lumped (line from the clicked metal to the next)")
+
+    def _on_mesh_port_place(self, request) -> None:
         """A click in the Mesh Viewer's port mode: configure a port there.
 
-        The clicked point (drawing units, unsnapped) prefills BOTH Start and Stop;
-        the dialog is modal, then the port is appended and the scene refreshed.
+        ``request`` comes from the viewer and already holds the computed box: the
+        port runs along the slice normal from the bottom face of the clicked metal
+        to the top face of the next metal surface (MSL: as wide as the clicked
+        metal, one mesh cell along the line). The dialog opens prefilled and the
+        port is appended on OK.
         """
         viewer = self.mesh_viewer
         if self._polar_ports_blocked():  # lumped ports need a cartesian mesh
@@ -3468,22 +3483,38 @@ class MainWindow(QMainWindow):
         from app.models.project import PortDef as _PD
         from app.ui.geometry_editors import PortDialog
 
+        req = dict(request or {})
+        start = [float(v) for v in (req.get("start") or [0.0, 0.0, 0.0])]
+        stop = [float(v) for v in (req.get("stop") or start)]
+        kind = str(req.get("type") or "lumped")
         pd = self.settings.port_defaults()
-        center = [float(x), float(y), float(z)]
         seed = _PD(
             name=f"in{len(self.project.ports) + 1}",
-            type=pd.get("type", "lumped"),  # type: ignore[arg-type]
-            start=list(center),
-            stop=list(center),
+            type=kind if kind in ("lumped", "msl") else "lumped",  # type: ignore[arg-type]
+            start=list(start),
+            stop=list(stop),
             resistance=float(pd.get("resistance", 50.0)),
             excite_port=bool(pd.get("excite_port", True)),
             mesh_dirs=str(pd.get("mesh_dirs") or "xyz"),
-            direction=str(pd.get("direction") or "z"),
+            direction=str(req.get("direction") or pd.get("direction") or "z"),
+            prop_direction=str(req.get("prop_direction") or ""),
+            exc_direction=str(req.get("exc_direction") or ""),
         )
+        where_extra = ""
+        if req.get("metal") or req.get("partner"):
+            side = "below" if req.get("side") == "below" else "above"
+            where_extra = (
+                f" [{req.get('metal') or '?'} → {req.get('partner') or '?'} ({side})]"
+            )
+        if kind == "msl":
+            where_extra += f" width along {str(req.get('width_axis') or '?').upper()}"
         self._log(
-            "Placed port candidate at "
-            f"x={center[0]:.4g}, y={center[1]:.4g}, z={center[2]:.4g}"
+            f"Placed {kind.upper()} port candidate at "
+            f"x={start[0]:.4g}, y={start[1]:.4g}, z={start[2]:.4g}"
+            f"{where_extra}"
         )
+        if req.get("warning"):
+            self._log(f"  {req['warning']}")
         dlg = PortDialog(self, port=seed, coord_system=self.project.mesh.coord_system)
         try:
             while dlg.exec():
