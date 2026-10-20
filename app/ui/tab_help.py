@@ -92,9 +92,25 @@ Mesh editor (right-hand panel) — manual mesh lines
     "Remove selected" (drop a '+', or delete an auto line) /
     "Restore selected" (undo a removal). Select several with Shift (range) or
     Ctrl (toggle); Del / Backspace removes the selection.
-  • Right-click in the plot area opens a menu: toggle the Mesh editor, delete
-    the selected line(s), pop the viewer out (like the Antenna / S-Params
-    viewers), reset the view.
+  • Right-click in the plot area opens a menu: toggle the Mesh editor, toggle
+    "Port mode", delete the selected line(s), pop the viewer out (like the
+    Antenna / S-Params viewers), reset the view.
+
+Port mode (right-click → "Port mode (click in a slice to place)")
+  • Click ANYWHERE in an XY/XZ/YZ slice to place a port at exactly those
+    coordinates — no snapping to mesh lines or geometry edges. The two in-plane
+    coordinates come from the click, the third one from the current slice plane
+    (the plane slider itself still snaps to mesh lines).
+  • A red dot with its (x, y) coordinates marks the spot, then the Port dialog
+    opens with the clicked coordinate in BOTH Start and Stop (drawing units) —
+    edit the ends (and name/type/resistance/direction) to define the actual
+    port; the red dot stays visible while the dialog is open.
+  • On OK the port is added to the project (it appears in the component tree and
+    in the Ports / Dumps window) and is drawn in the slices immediately. Start
+    and Stop must differ (a zero-length port cannot be excited — the dialog
+    re-opens with a warning).
+  • Turn port mode off in the same right-click menu (or via the log hint); the
+    normal line-editing click behaviour returns.
   • Edits are applied to the CURRENT mesh immediately (the grid is re-derived
     from the last auto mesh + your overrides — no easyMesh re-run, the view is
     not reset), and stored in the project, so they survive everything.
