@@ -5,6 +5,7 @@ import os
 import sys
 import traceback
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -138,12 +139,20 @@ def main() -> int:
         # --- plane slider calibration (regression: init 0..100 vs handler
         # scale 0..1000, 'XY slice' label vs 'XY' key mismatch, and view
         # switches must recalibrate the range) ---
-        from app.ui.mesh_viewer import _AXIS, _SLICE_AXES
+        from app.ui.mesh_viewer import (
+            SLIDER_BASE_STEP,
+            SLIDER_RANGE,
+            _AXIS,
+            _SLICE_AXES,
+        )
 
-        assert (viewer.slider.minimum(), viewer.slider.maximum()) == (0, 1000), (
+        assert (viewer.slider.minimum(), viewer.slider.maximum()) == (0, SLIDER_RANGE), (
             viewer.slider.minimum(),
             viewer.slider.maximum(),
         )
+        # 2x the old travel; Ctrl gives SLIDER_BASE_STEP-times finer steps
+        assert SLIDER_RANGE // SLIDER_BASE_STEP == 2000, SLIDER_RANGE
+        assert viewer.slider.minimumWidth() >= 300, viewer.slider.minimumWidth()
         assert viewer.slider.isEnabled(), "slider must enable after set_csx (slice view)"
         assert viewer.spn_plane.isEnabled(), "plane spinbox must enable with the slider"
         viewer.cmb_view.setCurrentText("XY slice")
@@ -157,7 +166,7 @@ def main() -> int:
         assert abs(viewer.spn_plane.value()) < 1e-9, (
             f"plane must be 0 mm after meshing: {viewer.spn_plane.value()}"
         )
-        viewer.slider.setValue(1000)  # full drag must reach the domain end
+        viewer.slider.setValue(SLIDER_RANGE)  # full drag must reach the domain end
         # (slider values snap to mesh lines; spn_plane stores 4 decimals)
         want_hi = viewer._nearest_mesh_line(n0, hi0)
         assert abs(viewer.spn_plane.value() - want_hi) < 1e-3, (
@@ -170,6 +179,16 @@ def main() -> int:
             viewer.spn_plane.value(),
             want_lo,
         )
+        # base resolution: positions quantise to every SLIDER_BASE_STEP-th step
+        viewer.slider.setValue(12345)
+        assert viewer.slider.value() == 12340, viewer.slider.value()
+        # ... and Ctrl (faked) keeps the raw 1-step = 10x finer position
+        with patch.object(
+            MeshGeometryViewer, "_slider_fine", staticmethod(lambda: True)
+        ):
+            viewer.slider.setValue(12345)
+        assert viewer.slider.value() == 12345, viewer.slider.value()
+        assert viewer._slider_step() == SLIDER_BASE_STEP, "no Ctrl -> base step"
         # switching the slice axis must recalibrate the plane spinbox range
         viewer.cmb_view.setCurrentText("XZ slice")  # normal y
         n1 = _SLICE_AXES["XZ"][2]

@@ -59,6 +59,11 @@ from app.meshing.preview import (
 
 # Axis index helpers
 _AXIS = {"x": 0, "y": 1, "z": 2}
+#: Plane slider travel (internal steps): base resolution = /SLIDER_BASE_STEP
+#: (= 2000 steps, twice the old 0..1000) and Ctrl gives the full 0..20000
+#: (10x finer than the base resolution).
+SLIDER_RANGE = 20000
+SLIDER_BASE_STEP = 10
 # For a 2D slice: which two axes are in-plane, which is the slice normal
 _SLICE_AXES = {
     "XY": ("x", "y", "z"),
@@ -248,13 +253,16 @@ class MeshGeometryViewer(QWidget):
         self.spn_plane.setSuffix(" mm")
         self.spn_plane.setValue(0.0)
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        # handlers map 0..1000 onto the domain (see _on_slider /
-        # _update_plane_range) — keep the same scale at creation and start at
-        # the left end (0)
-        self.slider.setRange(0, 1000)
+        # handlers map the 0..SLIDER_RANGE axis onto the domain (see _on_slider /
+        # _update_plane_range): 2000 steps by default (2x the old 0..1000) and
+        # 10x finer while Ctrl is held.
+        self.slider.setRange(0, SLIDER_RANGE)
         self.slider.setValue(0)
+        self.slider.setMinimumWidth(320)  # ~2x the old default travel
         self.slider.setToolTip(
             "Slice plane along the view normal — snaps to the nearest mesh line.\n"
+            f"Resolution: {SLIDER_RANGE // SLIDER_BASE_STEP} steps;\n"
+            "hold Ctrl while dragging for 10x finer steps.\n"
             "Enabled once a mesh is built (Build Mesh)."
         )
         self.chk_mesh = QCheckBox("Show mesh grid")
@@ -1122,8 +1130,31 @@ class MeshGeometryViewer(QWidget):
     def _on_mesh_style_changed(self, _value: int = 0) -> None:
         self._redraw()
 
+    @staticmethod
+    def _slider_fine() -> bool:
+        """Ctrl held -> finest slider resolution (10x the base resolution)."""
+        try:
+            from PySide6.QtWidgets import QApplication
+
+            mods = QApplication.keyboardModifiers()
+            return bool(mods & Qt.KeyboardModifier.ControlModifier)
+        except Exception:  # noqa: BLE001 — headless / no app: use the base step
+            return False
+
+    def _slider_step(self) -> int:
+        """Internal steps per slider position (10 by default, 1 with Ctrl)."""
+        return 1 if self._slider_fine() else SLIDER_BASE_STEP
+
+    def _set_slider_from_frac(self, frac: float) -> None:
+        """Move the plane slider to ``frac`` (0..1 of the domain), no signals."""
+        step = self._slider_step()
+        pos = int(round(np.clip(frac, 0.0, 1.0) * SLIDER_RANGE / step)) * step
+        self.slider.blockSignals(True)
+        self.slider.setValue(int(np.clip(pos, 0, SLIDER_RANGE)))
+        self.slider.blockSignals(False)
+
     def _on_plane_changed(self, value: float) -> None:
-        # keep slider roughly in sync (0..1000 maps to the domain range)
+        # keep the slider in sync (0..SLIDER_RANGE maps to the domain range)
         key = _slice_key(self.cmb_view.currentText())
         if key is None:
             return
@@ -1132,10 +1163,7 @@ class MeshGeometryViewer(QWidget):
         if area is not None:
             lo, hi = area[0][_AXIS[normal]], area[1][_AXIS[normal]]
             if hi > lo:
-                frac = (value - lo) / (hi - lo)
-                self.slider.blockSignals(True)
-                self.slider.setValue(int(np.clip(frac * 1000, 0, 1000)))
-                self.slider.blockSignals(False)
+                self._set_slider_from_frac((value - lo) / (hi - lo))
         self._redraw()
 
     def _on_slider(self, pos: int) -> None:
@@ -1146,8 +1174,16 @@ class MeshGeometryViewer(QWidget):
         area = self._grid_area()
         if area is None:
             return
+        # Base resolution: quantise to every SLIDER_BASE_STEP-th position (Ctrl
+        # gives the raw 1-step resolution -> 10x finer).
+        step = self._slider_step()
+        if step > 1 and pos % step:
+            pos = int(round(pos / step)) * step
+            self.slider.blockSignals(True)
+            self.slider.setValue(int(np.clip(pos, 0, SLIDER_RANGE)))
+            self.slider.blockSignals(False)
         lo, hi = float(area[0][_AXIS[normal]]), float(area[1][_AXIS[normal]])
-        value = lo + (hi - lo) * (pos / 1000.0)
+        value = lo + (hi - lo) * (pos / SLIDER_RANGE)
         # Snap onto the nearest mesh line so the section visibly jumps.
         value = self._nearest_mesh_line(normal, value)
         self.spn_plane.blockSignals(True)
@@ -1254,15 +1290,15 @@ class MeshGeometryViewer(QWidget):
         # Map the slider onto the real domain so the plane actually lands on
         # mesh lines instead of the fixed 0..100 range.
         self.slider.blockSignals(True)
-        self.slider.setRange(0, 1000)
+        self.slider.setRange(0, SLIDER_RANGE)
         if reset:
             # a freshly built / loaded mesh starts on the model origin
             # (clamped by the spinbox range when 0 lies outside the domain)
             self.spn_plane.setValue(0.0)
         self.spn_plane.setValue(self.spn_plane.value())
-        frac = (self.spn_plane.value() - lo) / (hi - lo) if hi > lo else 0.0
-        self.slider.setValue(int(np.clip(frac * 1000, 0, 1000)))
         self.slider.blockSignals(False)
+        frac = (self.spn_plane.value() - lo) / (hi - lo) if hi > lo else 0.0
+        self._set_slider_from_frac(frac)
 
     def _nearest_mesh_line(self, normal: str, value: float) -> float:
         """Snap the plane value to the closest mesh line on the slice normal."""

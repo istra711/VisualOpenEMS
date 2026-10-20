@@ -73,7 +73,10 @@ Navigation
   • Double-click — reset / home view.
   • Toolbar — matplotlib pan/zoom/home/save.
   • Pop-out — open the viewer in a large separate window (1200×800).
-  • Slice slider — move the cutting plane (snaps to the nearest mesh line on the slice axis).
+  • Slice slider — move the cutting plane (snaps to the nearest mesh line on
+    the slice axis). 2000 steps across the domain; hold **Ctrl** while dragging
+    for 10× finer steps (20000) — handy to hit a single mesh line in a fine grid.
+    The plane spinbox next to it is free (no snapping) and always exact.
 
 Mesh editor (right-hand panel) — manual mesh lines
   • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line.
