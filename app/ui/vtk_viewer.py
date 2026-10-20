@@ -292,9 +292,19 @@ class VtkFieldViewer(QWidget):
         self.btn_export = QPushButton("Export project dumps → VTK")
         self.btn_export.setToolTip(
             "Convert every field dump (simulation/*.h5) of the current project to\n"
-            "VTK in <project>/vtk (incl. one file per time step) and load the first."
+            "VTK in <project>/vtk and load the first one.\n\n"
+            "Only changed dumps are rewritten (outputs newer than the dump are\n"
+            "reused); a progress dialog shows the work and can cancel it."
         )
         self.btn_export.clicked.connect(self.export_and_load)
+        self.chk_per_step = QCheckBox("per-step")
+        self.chk_per_step.setChecked(True)
+        self.chk_per_step.setToolTip(
+            "Also write one .vtr per stored time/frequency step (needed for the\n"
+            "time slider and the video export).\n"
+            "A time-domain dump can have hundreds of steps — untick for a quick\n"
+            "static view (much faster, far less disk space)."
+        )
         self.cmb_rep = QComboBox()
         self.cmb_rep.addItems(["Surface", "Wireframe", "Slice", "Iso-surface"])
         self.cmb_rep.setCurrentText("Surface")  # ParaView-like default
@@ -319,8 +329,8 @@ class VtkFieldViewer(QWidget):
         self.btn_popout = QPushButton("Pop out")
         self.btn_popout.setToolTip("Show the 3D view in a separate window (click again to dock).")
         self.btn_popout.clicked.connect(self.popout)
-        for w in (self.btn_open, self.btn_export, QLabel("Representation"), self.cmb_rep,
-                  QLabel("Array"), self.cmb_array, self.chk_outline):
+        for w in (self.btn_open, self.btn_export, self.chk_per_step, QLabel("Representation"),
+                  self.cmb_rep, QLabel("Array"), self.cmb_array, self.chk_outline):
             bar.addWidget(w)
         bar.addStretch(1)
         bar.addWidget(self.btn_video)
@@ -803,6 +813,7 @@ class VtkFieldViewer(QWidget):
         for setter in (
             lambda: self.cmb_rep.setCurrentText(other.cmb_rep.currentText()),
             lambda: self.chk_outline.setChecked(other.chk_outline.isChecked()),
+            lambda: self.chk_per_step.setChecked(other.chk_per_step.isChecked()),
             lambda: self.cmb_slice_axis.setCurrentText(other.cmb_slice_axis.currentText()),
             lambda: self.slider_slice.setValue(other.slider_slice.value()),
             lambda: self.spn_slice.setValue(other.spn_slice.value()),
@@ -843,6 +854,8 @@ class VtkFieldViewer(QWidget):
             self.load(path)
 
     def export_and_load(self) -> None:
+        if not self.btn_export.isEnabled():  # an export is already running
+            return
         if self.work_dir is None:
             QMessageBox.information(self, "VTK", "No work directory set.")
             return
@@ -852,8 +865,46 @@ class VtkFieldViewer(QWidget):
                 self, "VTK", f"No simulation folder found:\n{sim}\n\nRun a simulation first."
             )
             return
-        written = export_dumps_to_vtk(sim, per_step=True)
+
+        per_step = self.chk_per_step.isChecked()
+        progress = QProgressDialog("Converting field dumps to VTK…", "Cancel", 0, 100, self)
+        progress.setWindowTitle("Generate VTK")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+
+        def _on_progress(done: int, total: int, text: str) -> None:
+            if total > 0:
+                progress.setMaximum(total)
+            progress.setValue(done)
+            progress.setLabelText(text)
+            # keeps the window repainting / the Cancel button clickable
+            QApplication.processEvents()
+
+        self.btn_export.setEnabled(False)
+        cancelled = False
+        try:
+            written = export_dumps_to_vtk(
+                sim,
+                per_step=per_step,
+                progress=_on_progress,
+                should_stop=progress.wasCanceled,
+            )
+            cancelled = progress.wasCanceled()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "VTK", f"VTK export failed:\n{e}")
+            return
+        finally:
+            progress.close()
+            self.btn_export.setEnabled(True)
+
+        if cancelled:
+            print(f"VTK: export cancelled — {len(written)} file(s) written")
         if not written:
+            if cancelled:
+                return
             QMessageBox.information(
                 self,
                 "VTK",

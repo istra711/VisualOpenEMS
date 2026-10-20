@@ -218,3 +218,109 @@ def test_field_unit_from_dump_name(name, unit):
     from app.postproc.vtk_export import field_unit
 
     assert field_unit(name) == unit
+
+
+def _make_td_dump(path, steps, nx=5, ny=4, nz=3):
+    """TD dump with ``steps`` time samples named like openEMS (00000000, …)."""
+    import h5py
+
+    with h5py.File(path, "w") as f:
+        m = f.create_group("Mesh")
+        m.create_dataset("x", data=np.linspace(0.0, 10.0, nx))
+        m.create_dataset("y", data=np.linspace(0.0, 6.0, ny))
+        m.create_dataset("z", data=np.linspace(0.0, 3.0, nz))
+        tdg = f.create_group("FieldData").create_group("TD")
+        for i in range(steps):
+            ds = tdg.create_dataset(
+                f"{i * 62:08d}", data=np.full((3, nx, ny, nz), i + 1, dtype="float32")
+            )
+            ds.attrs["time"] = np.array([1e-11 * i], dtype="float32")
+
+
+def test_count_dump_steps(tmp_path):
+    from app.postproc.vtk_export import count_dump_steps
+
+    p = tmp_path / "Et-H.h5"
+    _make_td_dump(p, 3)
+    assert count_dump_steps(p) == 3
+    assert count_dump_steps(tmp_path / "missing.h5") == 0
+
+
+def test_export_reports_progress_and_finishes(tmp_path):
+    sim = tmp_path / "simulation"
+    sim.mkdir()
+    _make_td_dump(sim / "Et-H.h5", 3)
+    calls: list[tuple[int, int, str]] = []
+
+    out = export_dumps_to_vtk(
+        sim, per_step=True, progress=lambda d, t, text: calls.append((d, t, text))
+    )
+
+    assert len(out) == 4  # 1 static grid + 3 steps
+    assert calls, "progress must be reported"
+    assert calls[-1][0] == calls[-1][1] == 4  # done reaches the announced total
+    assert all(t == 4 for _d, t, _text in calls)
+
+
+def test_export_is_incremental(tmp_path):
+    sim = tmp_path / "simulation"
+    sim.mkdir()
+    _make_td_dump(sim / "Et-H.h5", 2)
+    first = export_dumps_to_vtk(sim, per_step=True)
+    mtimes = {p: p.stat().st_mtime_ns for p in first}
+    assert len(first) == 3
+
+    calls: list[str] = []
+    second = export_dumps_to_vtk(
+        sim, per_step=True, progress=lambda _d, _t, text: calls.append(text)
+    )
+
+    assert sorted(p.name for p in second) == sorted(p.name for p in first)
+    assert all(p.stat().st_mtime_ns == mtimes[p] for p in first)  # nothing rewritten
+    assert all("up to date" in text for text in calls)
+
+
+def test_series_export_removes_stale_steps(tmp_path):
+    import json
+    import os
+
+    sim = tmp_path / "simulation"
+    sim.mkdir()
+    h5 = sim / "Et-H.h5"
+    _make_td_dump(h5, 3)
+    export_dumps_to_vtk(sim, per_step=True)
+    vtk_dir = tmp_path / "vtk"
+    assert (vtk_dir / "Et-H_0002.vtr").exists()
+
+    # re-run with fewer stored steps -> the old tail must not linger in the slider
+    _make_td_dump(h5, 2)
+    future = h5.stat().st_mtime + 5.0
+    os.utime(h5, (future, future))
+    export_dumps_to_vtk(sim, per_step=True)
+
+    assert not (vtk_dir / "Et-H_0002.vtr").exists()
+    data = json.loads((vtk_dir / "Et-H.series.json").read_text(encoding="utf-8"))
+    assert data["files"] == ["Et-H_0000.vtr", "Et-H_0001.vtr"]
+
+
+def test_series_cancel_leaves_no_trusted_sidecar(tmp_path):
+    sim = tmp_path / "simulation"
+    sim.mkdir()
+    h5 = sim / "Et-H.h5"
+    _make_td_dump(h5, 3)
+    vtk_dir = tmp_path / "vtk"
+
+    checks = {"n": 0}
+
+    def stop() -> bool:
+        checks["n"] += 1
+        return checks["n"] > 1  # one step written, then cancel
+
+    paths, labels = dump_series_to_vtr(h5, vtk_dir, should_stop=stop)
+    assert len(paths) == 1 and labels == ["t0"]
+    assert not (vtk_dir / "Et-H.series.json").exists()
+
+    # a later full run regenerates the complete series (no half-trusted state)
+    paths, labels = dump_series_to_vtr(h5, vtk_dir)
+    assert labels == ["t0", "t62", "t124"]
+    assert (vtk_dir / "Et-H.series.json").exists()

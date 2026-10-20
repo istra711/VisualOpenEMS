@@ -61,6 +61,19 @@ def main() -> int:
     assert v._renderer is None
     print("  viewer loaded grid:", v._grid.GetNumberOfPoints(), "points")
 
+    # --- "Export project dumps → VTK" button: progress dialog + per-step option ---
+    from unittest.mock import patch
+
+    assert v.chk_per_step.isChecked(), "per-step export must default to on"
+    with patch("app.ui.vtk_viewer.QMessageBox.warning"):
+        v.export_and_load()
+    assert v._grid is not None, "export did not load a grid"
+    vtk_dir = td / "vtk"
+    assert (vtk_dir / "Et-E.vtr").exists(), "static grid missing"
+    assert (vtk_dir / "Et-E.series.json").exists(), "per-step series missing"
+    assert not v._series, "single-step dump must not show a time slider"
+    print("  export project dumps (per-step) OK")
+
     # --- physical unit of the dump (openEMS stores raw SI values) ---
     from app.postproc.vtk_export import field_unit
 
