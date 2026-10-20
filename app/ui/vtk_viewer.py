@@ -415,7 +415,10 @@ class VtkFieldViewer(QWidget):
             "slider and cuts exactly at the typed position."
         )
         row2.addWidget(self.cmb_slice_axis)
-        row2.addWidget(self.slider_slice, 1)
+        # stretch 3:1 -> the iso-level slider gets a quarter of the free space,
+        # i.e. half of what it had with an even 1:1 split (it does not need the
+        # travel; the slice position does)
+        row2.addWidget(self.slider_slice, 3)
         row2.addWidget(self.spn_slice)
         row2.addWidget(QLabel("Iso-level"))
         self.slider = QSlider(Qt.Orientation.Horizontal)

@@ -128,7 +128,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Representation" → "Show", "Auto (data range)" → "Auto",
   "Rescale to data range" → "Rescale", "Open Touchstone / JSON…" → "Open…",
   "Open nf2ff.json…" → "Open…". Also: the Field Viewer slice spinbox spans
-  ±1 km instead of ±1e9 mm (a wider range only widened the box).
+  ±1 km instead of ±1e9 mm (a wider range only widened the box), and the
+  iso-level slider no longer stretches over the whole row — it now shares the
+  row 3:1 with the slice slider, i.e. half of its earlier length.
 
 - **Right-click in the log area** (`app/ui/main_window.py`): the log-area menu
   (show/hide the log panel, log tabs, auto-scroll, Save/Pop out log) was only on
