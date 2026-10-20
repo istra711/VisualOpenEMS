@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Open a project from the command line** (`app/main.py`): a plain file
+  argument (``python main.py work/My_Project.json`` — also with the EXE, e.g.
+  *Open with*) is opened right after the window shows; non-file arguments and
+  Qt options are ignored so the GUI always starts. Test:
+  `tests/test_main_cli.py`.
+
 - **Mesh Viewer: "Port mode" — place a port by clicking in a slice**
   (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`, `app/ui/tab_help.py`): the
   plot-area right-click menu gained a checkable **Port mode (click in a slice to

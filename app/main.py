@@ -14,6 +14,25 @@ if _EASY.is_dir() and str(_EASY) not in sys.path:
     sys.path.insert(0, str(_EASY))
 
 
+def project_arg(argv: list[str] | None = None) -> Path | None:
+    """Project file passed on the command line (``python main.py <project.json>``).
+
+    Qt strips its own options from ``sys.argv``, so only a plain positional
+    argument is looked at; the first existing file wins and anything else (e.g.
+    a typo in the path) is ignored so the GUI still starts normally.
+    """
+    for raw in (sys.argv[1:] if argv is None else argv):
+        if str(raw).startswith("-"):
+            continue
+        try:
+            candidate = Path(raw)
+        except (TypeError, ValueError):
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def main() -> int:
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
@@ -31,6 +50,10 @@ def main() -> int:
     settings = AppSettings.load()
     win = MainWindow(settings)
     win.show()
+    # optional: "python main.py <project.json>" (or the EXE with a project file)
+    start = project_arg()
+    if start is not None:
+        win._open_project_path(start)
     return app.exec()
 
 
