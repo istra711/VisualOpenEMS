@@ -85,13 +85,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ctrl is read from the slider's mouse events (event filter) with
   `QApplication.keyboardModifiers()` as fallback.
 - **Mesh Viewer: readouts + tooltips for both sliders**
-  (`app/ui/mesh_viewer.py`): a live label next to the plane slider shows the
-  axis and value ("z = 12.345 mm", "· fine" while Ctrl is held); a label next
-  to the grid slider shows its strength ("35%", "(grid off)" while hidden).
+  (`app/ui/mesh_viewer.py`): a live hint next to the plane slider shows the
+  Ctrl mode ("· fine" while Ctrl is held) — the position itself is only in the
+  spinbox, no duplicate "z = 12.345 mm" label; a label next to the grid slider
+  shows its strength ("35%", "(grid off)" while hidden).
   Both sliders and labels have explicit tooltips (plane: snapping / Ctrl mode /
   needs a built mesh; grid: opacity + line width, only while "Show mesh grid").
   Smoke: `tests/mesh_viewer_smoke.py` (range, quantisation to every 10th step,
   Ctrl keeps the 1-step position AND skips snapping, label texts/tooltips).
+- **Field Viewer: duplicate slice-position label removed**
+  (`app/ui/vtk_viewer.py`): the label next to the slice spinbox repeated the
+  value the spinbox already shows (`z = 1.650 mm`); the spinbox is now the only
+  readout (the axis combo already shows X/Y/Z and is kept in sync by the
+  slider).
 
 ### Fixed
 

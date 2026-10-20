@@ -76,9 +76,9 @@ Navigation
   • Slice slider — move the cutting plane (normally snaps to the nearest mesh
     line on the slice axis). 2000 steps across the domain; hold **Ctrl** while
     dragging for 10× finer steps (20000) **and free positioning** (no snapping)
-    — so you can put the plane between mesh lines. The readout next to it shows
-    the current value ("z = 12.345 mm", plus "· fine" while Ctrl is held); the
-    plane spinbox is free (no snapping) and always exact.
+    — so you can put the plane between mesh lines. The spinbox next to it shows
+    the position in mm (always exact, no snapping); the hint "· fine" appears
+    while Ctrl is held.
   • Grid slider — strength of the mesh grid lines (opacity + line width) in the
     slice; the % next to it is the current strength. Only active while
     "Show mesh grid" is ticked.
@@ -572,12 +572,11 @@ Buttons / controls
   • "Representation": Surface (default, like ParaView), Wireframe, Slice (a
     cutting plane, axis + position — good for 3D boxes) or Iso-surface
     (a contour of the selected array; Iso-level slider).
-  • Slice position: the slider moves the cutting plane, the label next to it
-    shows the exact position as number + unit ("z = 12.345 mm") and the box
-    next to it takes a **direct numeric position** (mm, Enter applies). A typed
-    value cuts exactly there (the slider only gets nudged along and the value
-    is clamped to the data extent). Note: the 3D axes are in metres
-    (1 mm = 0.001 m) — the slice controls use mm.
+  • Slice position: the slider moves the cutting plane; the spinbox next to it
+    shows the exact position in mm and takes a **direct numeric position**
+    (mm, Enter applies). A typed value cuts exactly there (the slider only gets
+    nudged along and the value is clamped to the data extent). Note: the 3D axes
+    are in metres (1 mm = 0.001 m) — the slice controls use mm.
   • "Colour": Auto (data range) / manual min-max + Log scale (log colour
     mapping, like ParaView's "Use log scale") + "Rescale to data range".
   • "Time" slider + "Play": step through / animate a per-step series. Next to

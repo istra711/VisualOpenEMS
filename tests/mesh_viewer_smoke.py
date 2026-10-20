@@ -197,8 +197,9 @@ def main() -> int:
             want_free,
         )
         assert "fine" in viewer.lbl_plane.text(), viewer.lbl_plane.text()
-        # slider / grid readouts must be populated (info next to the sliders)
-        assert "mm" in viewer.lbl_plane.text(), viewer.lbl_plane.text()
+        # the value itself is NOT repeated: it lives in the spinbox (mm suffix)
+        assert "mm" not in viewer.lbl_plane.text(), viewer.lbl_plane.text()
+        assert viewer.spn_plane.suffix().strip() == "mm", viewer.spn_plane.suffix()
         assert viewer.lbl_mesh.text().endswith("%"), viewer.lbl_mesh.text()
         assert viewer.slider.toolTip() and viewer.slider_mesh.toolTip()
         assert viewer.lbl_mesh.toolTip(), "grid readout needs its own tooltip"
