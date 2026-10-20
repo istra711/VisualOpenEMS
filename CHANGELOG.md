@@ -113,22 +113,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the limits use a new scientific field (`app/ui/number_field.py`,
     `SciSpinBox`; text helpers in `app/numfmt.py`): shows `%.6g`
     (`0.095199`, `1.264e-09`) and accepts `1.5e-9` as well as `1,5e-9`;
-  - **Auto**: the fields show the range actually used (series range, and in log
-    mode the positive minimum) and are read-only; "Rescale to data range" is
-    disabled while Auto is on (that is exactly what Auto does);
+  - **Auto follows the current frame** (like ParaView's "Rescale to Data
+    Range"): every frame uses the full colour table, so changes over time stay
+    visible. A range over the whole series is wrong for openEMS data — the
+    excitation pulse (frames ~15–22, max 34.7) is 100× larger than the rest
+    (median frame max 0.28), so all later slices landed in the bottom 1 % of
+    the table and looked uniformly blue;
+  - in log mode **Auto starts at the 1 % percentile of the positive values of
+    the frame** (at least `1e-7 × maximum`, because real dumps contain
+    denormal magnitudes such as 5e-35 next to 35). The plain minimum — a single
+    near-zero cell — stretched the table over up to 30 decades and was the
+    second reason for the one-colour look. Values below the floor are drawn in
+    the lowest colour; the floor is shown in the field;
   - **manual**: the values are the user's range and are no longer overwritten
-    by a frame change; in log mode a minimum of 0 is replaced by the smallest
-    usable positive value (and shown), so the numbers match the colour bar;
-  - **Auto + Log** uses ONE positive floor for the whole series (cached in
-    `_series_pos_cache`), so the mapping no longer shifts from frame to frame;
-    the floor is at least `1e-7 × maximum` — real dumps contain denormal
-    magnitudes (5e-35 next to 35) that previously stretched the log table over
-    30 decades and painted the whole map in one colour;
-  - **"Rescale to data range"** spans all time steps of a loaded series.
-  Smoke: `tests/vtk_viewer_smoke.py` (scientific input incl. comma/invalid
-  text, limits survive frame changes, series-wide log floor, rescale over all
-  steps, button gating) + `tests/test_number_field.py` (format/parse round
-  trip).
+    by a frame change; untick Auto to freeze the range that was last shown, so
+    one scale stays for all frames. In log mode a minimum of 0 is replaced by
+    the percentile floor (and shown), so the numbers match the colour bar;
+  - **"Rescale to data range"** uses the current frame and is disabled while
+    Auto is on (that is exactly what Auto does);
+  - the series-wide range scan (`_series_range_for`) is gone — loading a series
+    no longer reads every frame up front (that froze the GUI for ~23 s on a
+    236-frame series).
+  Smoke: `tests/vtk_viewer_smoke.py` (per-frame Auto range, percentile log
+  floor + noise guard, freezing on Auto-off, limits survive frame changes,
+  scientific input incl. comma/invalid text, rescale to the current frame,
+  button gating) + `tests/test_number_field.py` (format/parse round trip).
 
 - **Field Viewer: "Export project dumps → VTK" froze the GUI on large dumps**
   (`app/postproc/vtk_export.py`, `app/ui/vtk_viewer.py`): the export ran

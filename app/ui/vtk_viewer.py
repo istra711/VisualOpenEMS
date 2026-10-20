@@ -51,14 +51,19 @@ from app.ui.number_field import SciSpinBox
 _AXIS_NORMAL = {"X": (1, 0, 0), "Y": (0, 1, 0), "Z": (0, 0, 1)}
 
 
-def _min_positive_of(arr) -> float | None:
-    """Smallest value > 0 in a VTK array (None if there is none)."""
+def _positive_percentile(arr, percentile: float = 1.0) -> float | None:
+    """``percentile`` of the values > 0 in a VTK array (None if there are none).
+
+    Used as the lower end of the log colour table: the plain minimum is a single
+    near-zero cell in practice (or a float32 denormal) and would stretch the
+    table over dozens of decades — that is what made slices look one-coloured.
+    """
     import numpy as np
     from vtk.util import numpy_support as ns
 
     values = np.asarray(ns.vtk_to_numpy(arr), dtype=float).ravel()
     values = values[np.isfinite(values) & (values > 0)]
-    return float(values.min()) if values.size else None
+    return float(np.percentile(values, percentile)) if values.size else None
 
 
 #: X red / Y green / Z blue — used by the triad, its labels and the ruler.
@@ -278,8 +283,9 @@ class VtkFieldViewer(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(250)
         self._timer.timeout.connect(self._on_play_tick)
-        self._series_range = None  # global (lo, hi) so the movie does not flicker
-        self._series_range_cache: dict = {}
+        #: lower end of the log colour table (1 % percentile of the current
+        #: frame, see ``_positive_percentile``)
+        self._robust_min: float | None = None
         self._popout_win: FieldViewerWindow | None = None
         # axes display options (menu + persisted settings)
         self._axes = dict(DEFAULT_AXES)
@@ -411,9 +417,10 @@ class VtkFieldViewer(QWidget):
         self.chk_auto = QCheckBox("Auto (data range)")
         self.chk_auto.setChecked(True)
         self.chk_auto.setToolTip(
-            "Colour limits follow the data: the whole series if one is loaded\n"
-            "(so the colours do not flicker while playing), otherwise the\n"
-            "current frame. Untick to set min/max by hand."
+            "Colour limits follow the current frame, so every frame uses the\n"
+            "full colour table and changes over time stay visible.\n"
+            "Untick to stop following: the limits keep their current values\n"
+            "and can be typed in - handy to compare frames with one scale."
         )
         self.chk_auto.toggled.connect(self._on_auto_toggled)
         # scientific fields: QDoubleSpinBox rounds to its decimals, which made
@@ -426,15 +433,17 @@ class VtkFieldViewer(QWidget):
         self.chk_log = QCheckBox("Log scale")
         self.chk_log.setToolTip(
             "Log10 colour mapping (like ParaView's 'Use log scale').\n"
-            "The lowest limit must be > 0: a min of 0 is replaced by the\n"
-            "smallest usable positive value (>= 1e-7 of the maximum), so the\n"
-            "bar starts at real data instead of spanning 30 decades of noise."
+            "In log mode Auto starts at the 1 % percentile of the positive\n"
+            "values (at least 1e-7 of the maximum): a single near-zero cell\n"
+            "would otherwise stretch the table over decades and squeeze\n"
+            "everything into one colour. A manual minimum of 0 is replaced\n"
+            "by that value; values below it are drawn in the lowest colour."
         )
         self.chk_log.toggled.connect(self._on_log_toggled)
         self.btn_rescale = QPushButton("Rescale to data range")
         self.btn_rescale.setToolTip(
-            "Set min/max to the data range (over all time steps when a series\n"
-            "is loaded). Not needed while Auto is on - it does exactly that."
+            "Set min/max to the range of the current frame.\n"
+            "Not needed while Auto is on - it does exactly that."
         )
         self.btn_rescale.clicked.connect(self._rescale_to_data)
         row3.addWidget(QLabel("Colour"))
@@ -764,8 +773,7 @@ class VtkFieldViewer(QWidget):
         self._scalar_name = None
         self._data_range = (0.0, 1.0)
         self._scalar_range = (0.0, 1.0)
-        self._series_range = None
-        self._series_range_cache = {}
+        self._robust_min = None
         self.lbl_level.setText("")
         self.lbl_time_info.setText("")
         self.lbl_sim_time.setText("")
@@ -1044,7 +1052,6 @@ class VtkFieldViewer(QWidget):
         # have no times/frequencies)
         self._series_times = (times + [None] * n)[:n]
         self._series_freqs = (freqs + [None] * n)[:n]
-        self._series_range = None  # computed lazily for the chosen array
 
     def _populate_arrays(self) -> None:
         self.cmb_array.blockSignals(True)
@@ -1076,18 +1083,21 @@ class VtkFieldViewer(QWidget):
         self._scalar_name = name
         if self._grid is None or not name:
             self._data_range = (0.0, 1.0)
+            self._robust_min = None
         else:
             data = self._grid.GetPointData() if loc == "point" else self._grid.GetCellData()
             arr = data.GetArray(name)
             rng = arr.GetRange() if arr else (0.0, 1.0)
             self._data_range = (float(rng[0]), float(rng[1]))
-        if self._series and name and self.chk_auto.isChecked():
-            rng = self._series_range_for(name)
-            if rng is not None:
-                self._data_range = rng  # fixed range -> no flicker while playing
+            # floor for the log mapping: 1 % of the positive values. A single
+            # near-zero cell (or a float32 denormal) must not stretch the table
+            # over decades - that is what made every slice look one-coloured.
+            self._robust_min = _positive_percentile(arr, 1.0) if arr else None
         self._scalar_range = self._data_range  # compatibility alias
         if self.chk_auto.isChecked():
-            # Auto follows the data (series range) -> sync the fields + refresh
+            # Auto follows the CURRENT frame: full colour use in every frame and
+            # a visible change over time (a range over the whole series is
+            # dominated by the excitation pulse and flattens everything else)
             self._rescale_to_data()
         else:
             # a manual range belongs to the user: a frame change must not
@@ -1095,60 +1105,13 @@ class VtkFieldViewer(QWidget):
             self._update_color_widgets()
             self._refresh_display()
 
-    def _series_range_for(self, name: str):
-        cache = getattr(self, "_series_range_cache", None)
-        if cache is None:
-            cache = self._series_range_cache = {}
-        if name in cache:
-            return cache[name]
-        vtk = _vtk()
-        lo, hi = float("inf"), float("-inf")
-        smallest = float("inf")  # min positive -> floor of the log colour range
-        for p in self._series:
-            try:
-                r = _make_reader(vtk, p)
-                r.SetFileName(str(p))
-                r.Update()
-                g = r.GetOutput()
-            except Exception:  # noqa: BLE001
-                continue
-            if g is None:
-                continue
-            arr = g.GetPointData().GetArray(name) or g.GetCellData().GetArray(name)
-            if arr is not None:
-                a, b = arr.GetRange()
-                lo, hi = min(lo, a), max(hi, b)
-                pos = _min_positive_of(arr)
-                if pos is not None:
-                    smallest = min(smallest, pos)
-        res = None if lo == float("inf") or hi <= lo else (lo, hi)
-        cache[name] = res
-        pos_cache = getattr(self, "_series_pos_cache", None)
-        if pos_cache is None:
-            pos_cache = self._series_pos_cache = {}
-        pos_cache[name] = None if smallest == float("inf") else smallest
-        return res
-
     def _rescale_to_data(self, *_a) -> None:
-        lo, hi = self._rescale_target()
+        lo, hi = self._data_range
         if hi <= lo:
             hi = lo * 10.0 if lo > 0 else 1.0
         self._set_color_spins(lo, hi)
         self._update_color_widgets()  # Auto/Log may replace a non-positive min
         self._refresh_display()
-
-    def _rescale_target(self) -> tuple[float, float]:
-        """Range for "Rescale to data range": the whole series when there is one.
-
-        (ParaView rescales over all time steps as well.) Using only the current
-        frame made the colours jump from frame to frame.
-        """
-        _loc, name = self._array()
-        if self._series and name:
-            rng = self._series_range_for(name)
-            if rng is not None:
-                return rng
-        return self._data_range
 
     def _set_color_spins(self, lo: float, hi: float) -> None:
         """Write min/max without re-triggering the display (signals blocked)."""
@@ -1176,11 +1139,12 @@ class VtkFieldViewer(QWidget):
     def _update_color_widgets(self) -> None:
         """Keep the min/max fields in step with Auto and Log scale.
 
-        * Auto: the fields show the range that is really used (series/data
-          range and, in log mode, the positive minimum) and are read-only.
+        * Auto: the fields show the range that is really used for the current
+          frame (data range and, in log mode, the 1 % percentile floor) and are
+          read-only.
         * Manual: the fields ARE the range - only a log minimum <= 0 is
-          replaced by the smallest positive value, so the numbers match the
-          colour bar instead of claiming 0.
+          replaced by the percentile floor, so the numbers match the colour
+          bar instead of claiming 0.
         """
         auto = self.chk_auto.isChecked()
         log = self.chk_log.isChecked()
@@ -1193,8 +1157,8 @@ class VtkFieldViewer(QWidget):
             else "Enter applies. Scientific notation: 1.5e-9 or 1,5e-9."
         )
         log_hint = (
-            "\nLog scale needs a minimum > 0: 0 is shown as the smallest "
-            "usable positive value."
+            "\nIn log mode Auto starts at the 1 % percentile of the positive "
+            "values; a manual minimum of 0 is replaced by it."
             if log
             else ""
         )
@@ -1217,50 +1181,32 @@ class VtkFieldViewer(QWidget):
         """Colour range actually used by the LUT / mapper.
 
         log10 is undefined at 0, but field magnitudes normally reach exactly 0
-        somewhere — the old ``lo > 0`` test silently fell back to linear, so the
-        "Log scale" box did nothing. Substitute the smallest positive value
-        (over the whole series when one is loaded, so the mapping stays stable
-        while playing).
+        somewhere. In log mode the lower limit is therefore raised to the 1 %
+        percentile of the positive values of the frame (the plain minimum is one
+        near-zero cell and would squeeze the visible range into a few colours);
+        values below it are drawn in the lowest colour. A manual limit is kept —
+        only a minimum of 0 is substituted.
         """
         lo, hi = self._color_range()
         if hi <= lo:
             hi = lo * 10.0 if lo > 0 else 1.0
         if self.chk_log.isChecked() and hi > 0:
-            if lo <= 0:
-                lo = self._log_floor(hi)
+            if lo <= 0 or self.chk_auto.isChecked():
+                lo = max(lo, self._log_floor(hi))
             if lo >= hi:
                 lo = hi * 1e-6
         return lo, hi
 
-    def _min_positive(self) -> float | None:
-        """Smallest positive value of the displayed array (None if none).
-
-        With a series loaded the cached series-wide minimum is used when Auto
-        scanned the series, so the log mapping does not shift per frame.
-        """
-        loc, name = self._array()
-        if not name:
-            return None
-        pos_cache = getattr(self, "_series_pos_cache", None) or {}
-        if self._series and name in pos_cache:
-            return pos_cache[name]
-        if self._grid is None:
-            return None
-        data = self._grid.GetPointData() if loc == "point" else self._grid.GetCellData()
-        arr = data.GetArray(name)
-        if arr is None:
-            return None
-        return _min_positive_of(arr)
-
     def _log_floor(self, hi: float) -> float:
-        """Usable lower limit for the log mapping when the minimum is 0.
+        """Lower limit for the log mapping (Auto and a manual minimum of 0).
 
-        The smallest positive value alone is a bad floor: float32 magnitudes
-        reach denormals (a real dump had 5e-35 next to a maximum of 35), and a
-        30-decade table paints the whole map in one colour. Values below
-        ``1e-7 * maximum`` are float32 rounding noise, so that is the floor.
+        The smallest positive value alone is a bad floor: real dumps contain
+        near-zero cells and float32 denormals (5e-35 next to 35), which turn the
+        table into 30 decades of noise and paint the whole slice one colour.
+        ``_robust_min`` (1 % percentile of the positive values of this frame) is
+        used instead, never below ``1e-7 * maximum`` (float32 resolution).
         """
-        pos = self._min_positive()
+        pos = self._robust_min
         return max(pos, hi * 1e-7) if pos else hi * 1e-6
 
     def _lookup_table(self):
@@ -1643,10 +1589,9 @@ class VtkFieldViewer(QWidget):
         arr = data.GetArray(name)
         rng = arr.GetRange() if arr else (0.0, 1.0)
         self._data_range = (float(rng[0]), float(rng[1]))
-        if auto and self._series:
-            rng = self._series_range_for(name)
-            if rng is not None:
-                self._data_range = rng  # one fixed range for the whole video
+        if auto:
+            # same mapping as during playback: Auto follows the current frame
+            self._robust_min = _positive_percentile(arr, 1.0) if arr else None
         self._scalar_range = self._data_range
         self._scalar_name = name
 

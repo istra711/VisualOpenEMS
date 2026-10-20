@@ -44,14 +44,15 @@ def _scale_vtr(path: Path, factor: float) -> None:
     reader.Update()
     grid = reader.GetOutput()
     pd = grid.GetPointData()
-    for i in range(pd.GetNumberOfArrays()):
-        arr = pd.GetArray(i)
+    # iterate over a snapshot: RemoveArray() shifts the indices of the rest
+    for name in [pd.GetArrayName(i) for i in range(pd.GetNumberOfArrays())]:
+        arr = pd.GetArray(name)
         if arr is None:
             continue
         vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float) * factor
         new = ns.numpy_to_vtk(np.ascontiguousarray(vals), deep=True)
-        new.SetName(arr.GetName())
-        pd.RemoveArray(arr.GetName())
+        new.SetName(name)
+        pd.RemoveArray(name)
         pd.AddArray(new)
     writer = vtk.vtkXMLRectilinearGridWriter()
     writer.SetFileName(str(path))
@@ -278,7 +279,10 @@ def main() -> int:
     assert v.slider_time.maximum() == 2
     assert v.chk_autoplay.isChecked() and v.btn_play.isChecked(), "auto-play did not start"
     assert v._timer.isActive()
-    assert v._series_range_for("magnitude") is not None, "no fixed colour range"
+    # Auto uses the CURRENT frame, not a range over the whole series (the huge
+    # excitation pulse would dominate that and paint every slice one colour)
+    mag = v._grid.GetPointData().GetArray("magnitude").GetRange()
+    assert v._effective_range() == (mag[0], mag[1]), v._effective_range()
     print("  series loaded:", len(v._series), "steps, auto-playing")
 
     # physical simulation time of the frame (auto ps/ns unit)
@@ -318,45 +322,78 @@ def main() -> int:
     print("  compact colour bar OK")
 
     # --- Auto / Log scale / Rescale interplay -------------------------------
+    # Auto follows the CURRENT frame: the three frames hold 1x / 0.5x / 4x
+    # data, so a per-frame range must change with the time slider.
     v.chk_auto.setChecked(True)
+    v.chk_log.setChecked(False)
+    v.slider_time.setValue(0)
+    lo0, hi0 = v._effective_range()
+    v.slider_time.setValue(1)
+    _lo1, hi1 = v._effective_range()
+    v.slider_time.setValue(2)
+    _lo2, hi2 = v._effective_range()
+    assert hi0 > 0.0, (lo0, hi0)
+    assert abs(hi1 - 0.5 * hi0) < 1e-9 * hi0, (hi0, hi1)
+    assert abs(hi2 - 4.0 * hi0) < 1e-9 * hi0, (hi0, hi2)
+    print("  auto follows the frame: max", hi0, hi1, hi2)
+
+    # log floor = 1 % percentile of the positive values of the frame, never
+    # below 1e-7 * maximum (float32 noise floor). The plain minimum would be a
+    # single near-zero cell and stretch the table over dozens of decades.
+    from app.ui.vtk_viewer import _positive_percentile
+
     v.chk_log.setChecked(True)
+    v.slider_time.setValue(0)
     lut_log = v._lookup_table()
     assert lut_log.GetScale() == 1, lut_log.GetScale()  # 1 = log10
     lo_l, hi_l = v._effective_range()
     assert 0.0 < lo_l < hi_l, (lo_l, hi_l)
     # the fields show the range that is really used (no "0.000000" lie)
-    assert abs(v.spn_min.value() - lo_l) < 1e-30, (v.spn_min.value(), lo_l)
+    assert v.spn_min.value() == lo_l, (v.spn_min.value(), lo_l)
     assert v.spn_max.value() == hi_l, (v.spn_max.value(), hi_l)
-    # ... and the log floor is the SERIES minimum positive value, bounded below
-    # by the float32 noise level (1e-7 of the maximum), so a denormal value
-    # cannot stretch the table over 30 decades (and paint everything one colour)
-    series_pos = v._series_pos_cache["magnitude"]
-    assert series_pos is not None
-    assert lo_l >= hi_l * 1e-7, (lo_l, hi_l)
-    assert lo_l == max(series_pos, hi_l * 1e-7), (lo_l, series_pos, hi_l)
-    # a real dump has 5e-35 next to 35 -> the noise floor must win
-    _orig_min_pos = v._min_positive
-    v._min_positive = lambda: 5.2e-35
+    p1 = _positive_percentile(v._grid.GetPointData().GetArray("magnitude"), 1.0)
+    assert p1 is not None and 0.0 < p1 < hi_l, (p1, hi_l)
+    assert abs(lo_l - max(p1, hi_l * 1e-7)) < 1e-9 * lo_l, (lo_l, p1, hi_l)
+    # a real dump has 5e-35 next to 35 -> the noise floor must win over it
+    saved_robust = v._robust_min
+    v._robust_min = 5.2e-35
     assert v._log_floor(35.0) == 35.0 * 1e-7, v._log_floor(35.0)
-    v._min_positive = _orig_min_pos
-    floor_auto = lo_l
+    v._robust_min = saved_robust
+    # ... and it follows the frame (half the data -> half the floor)
     v.slider_time.setValue(1)
-    assert v._effective_range()[0] == floor_auto, "log floor drifted per frame"
-    v.slider_time.setValue(2)
-    assert v._effective_range()[0] == floor_auto, "log floor drifted per frame"
+    lo_l1, hi_l1 = v._effective_range()
+    assert abs(lo_l1 - max(p1 * 0.5, hi_l1 * 1e-7)) < 1e-9 * lo_l1, (
+        lo_l1,
+        p1,
+        hi_l1,
+    )
     # Auto already rescales - the button is off (it would be a no-op)
     assert not v.btn_rescale.isEnabled(), "Rescale must be off while Auto is on"
-    print("  auto + log: positive series-wide floor, no drift OK")
+    print("  auto + log: per-frame percentile floor OK")
+
+    # untick Auto: the limits keep the values they had, so one scale stays for
+    # all frames (the way to compare frames or to render a video)
+    v.slider_time.setValue(2)
+    v.chk_auto.setChecked(True)
+    v.chk_log.setChecked(True)
+    auto_lo, auto_hi = v._effective_range()
+    v.chk_auto.setChecked(False)
+    frozen = (v.spn_min.value(), v.spn_max.value())
+    assert frozen == (auto_lo, auto_hi), (frozen, auto_lo, auto_hi)
+    assert v.btn_rescale.isEnabled()
+    v.slider_time.setValue(0)
+    assert (v.spn_min.value(), v.spn_max.value()) == frozen, (
+        "a frame change overwrote the manual colour limits"
+    )
+    assert v._effective_range() == frozen, v._effective_range()
 
     # manual limits: scientific fields keep 1e-7 (a QDoubleSpinBox with 6
     # decimals silently rounded it to 0) and a frame change must not reset them
-    v.chk_auto.setChecked(False)
     v.spn_min.setValue(1e-7)
     v.spn_max.setValue(1e-4)
     assert v.spn_min.value() == 1e-7, v.spn_min.value()
     assert v.spn_max.value() == 1e-4, v.spn_max.value()
     assert v._effective_range() == (1e-7, 1e-4), v._effective_range()
-    assert v.btn_rescale.isEnabled()
     v.slider_time.setValue(1)
     assert (v.spn_min.value(), v.spn_max.value()) == (1e-7, 1e-4), (
         "a frame change overwrote the manual colour limits"
@@ -372,26 +409,25 @@ def main() -> int:
     v.spn_min.setText("garbage")  # invalid -> keep the last good value
     v.spn_min.editingFinished.emit()
     assert abs(v.spn_min.value() - 2.5e-8) < 1e-20, v.spn_min.value()
-    # log needs min > 0: typing 0 is replaced by the smallest positive value
+    # log needs min > 0: typing 0 is replaced by the percentile floor
     v.spn_min.setValue(0.0)
     assert v.spn_min.value() > 0, "log minimum stayed at 0"
     assert 0.0 < v._effective_range()[0] < v._effective_range()[1]
-    # Rescale uses the WHOLE series (not just the current frame)
-    v.btn_rescale.click()
-    s_lo, s_hi = v._series_range_for("magnitude")
-    assert v.spn_max.value() == s_hi, (v.spn_max.value(), s_hi)
-    assert abs(v.spn_min.value() - max(series_pos, s_hi * 1e-7)) < 1e-30, (
-        v.spn_min.value(),
-        series_pos,
-        s_hi,
-    )
-    # back to linear: the log substitution stays a real, positive minimum
+    # "Rescale to data range" uses the CURRENT frame (what you see), not the
+    # whole series - otherwise the excitation pulse wins again
     v.chk_log.setChecked(False)
-    assert v._lookup_table().GetScale() == 0
-    assert v.spn_min.value() > 0, v.spn_min.value()
+    v.slider_time.setValue(2)
+    v.btn_rescale.click()
+    rng = v._grid.GetPointData().GetArray("magnitude").GetRange()
+    assert (v.spn_min.value(), v.spn_max.value()) == (rng[0], rng[1]), (
+        v.spn_min.value(),
+        v.spn_max.value(),
+        rng,
+    )
+    # back to auto for the rest of the checks
     v.chk_auto.setChecked(True)
     v.slider_time.setValue(0)
-    print("  manual limits survive frames + rescale over all steps OK")
+    print("  manual limits survive frames + rescale to the current frame OK")
 
     # pop-out gets its OWN viewer (no GL widget reparenting, so no stale copy)
     before = v._root_layout.count()
