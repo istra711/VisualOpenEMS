@@ -281,6 +281,12 @@ Fields
   • Frequency unit — display only (Hz/kHz/MHz/GHz); values stored in Hz.
   • Center f0 / Corner fc — Gauss excitation; editing f0/fc sets
     start/stop = f0 ± fc.
+  • Excitation — FDTD waveform: Gauss (f0/fc), Sinus (f0, narrowband: S-params
+    only meaningful near f0), Step or Dirac impulse (both normalised to the
+    band's highest frequency), Custom waveform (CSV, time in seconds). fc is
+    disabled for non-Gauss kinds; Start/Stop still define the mesh and the
+    S-param band. Custom CSV is offered only when the installed openEMS has
+    SetCustomExcite (0.0.36 does not).
   • Start / Stop — simulation band for mesh λ and S-params (independent
     overrides; editing these clamps f0 into the band and sets fc).
   • Drawing unit — project length unit for new primitives (default mm).

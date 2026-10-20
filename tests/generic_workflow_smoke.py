@@ -84,6 +84,20 @@ def main() -> int:
     n = win.project.nf2ff
     assert n.stop[0] > n.start[0] and n.stop[1] > n.start[1]
 
+    # Excitation waveform combo (Mesh tab) drives project.mesh.excitation
+    assert win.cmb_excite.currentData() == "gauss", "default excitation must be Gauss"
+    assert win.spn_fc.isEnabled(), "fc applies to Gauss"
+    assert not win.wdg_excite_file.isEnabled(), "CSV row is Gauss-inactive"
+    idx = win.cmb_excite.findData("sinus")
+    assert idx >= 0, "Sinus excitation missing"
+    win.cmb_excite.setCurrentIndex(idx)
+    app.processEvents()
+    assert win.project.mesh.excitation == "sinus"
+    assert not win.spn_fc.isEnabled(), "fc must be disabled for non-Gauss kinds"
+    win.cmb_excite.setCurrentIndex(win.cmb_excite.findData("step"))
+    app.processEvents()
+    assert win.project.mesh.excitation == "step"
+
     # Save/load project keeps generic primitives
     win._sync_project_from_form()
     win.project.primitives = list(win.primitives)
@@ -96,6 +110,13 @@ def main() -> int:
     assert loaded.primitives and loaded.primitives[0]["name"] == "trace"
     assert loaded.ports and loaded.ports[0].name == "feed"
     assert loaded.patch_params is None
+    assert loaded.mesh.excitation == "step", "excitation must survive save/load"
+    # mirror back into the form (Gauss again: fc enabled)
+    win.project = loaded
+    win._sync_form_from_project()
+    app.processEvents()
+    assert win.cmb_excite.currentData() == "step"
+    assert not win.spn_fc.isEnabled()
 
     # Patch preset still available and shows its group
     win._on_load_patch()

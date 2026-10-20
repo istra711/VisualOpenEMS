@@ -20,10 +20,12 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -34,6 +36,13 @@ from PySide6.QtWidgets import (
 
 from app.meshing.rules import air_margin_units, compute_targets
 from app.models.project import Project
+from app.simulation.excitation import (
+    available_kinds,
+    describe_excitation,
+    kind_label,
+    normalize_kind,
+    read_custom_waveform,
+)
 from app.ui.freq_units import (
     FREQ_UNITS,
     configure_freq_spin,
@@ -92,10 +101,41 @@ class MeshParamsPanel(QWidget):
         self.cmb_unit = QComboBox()
         self.cmb_unit.addItems(DRAWING_UNITS)
 
+        # excitation waveform (same choice as the Mesh tab)
+        self.cmb_excite = QComboBox()
+        for _kind in available_kinds():
+            self.cmb_excite.addItem(kind_label(_kind), _kind)
+        self.cmb_excite.setToolTip(
+            "FDTD excitation waveform:\n"
+            "Gauss — broadband pulse defined by f0/fc (default, best for S-params).\n"
+            "Sinus — single frequency f0; S-params are only meaningful near f0.\n"
+            "Step — broadband step, normalised to the band's highest frequency.\n"
+            "Dirac — broadband impulse.\n"
+            "Custom — two-column CSV (time in seconds, amplitude)."
+        )
+        self.edt_excite_file = QLineEdit()
+        self.edt_excite_file.setReadOnly(True)
+        self.edt_excite_file.setPlaceholderText("no file selected")
+        self.edt_excite_file.setToolTip(
+            "Custom excitation waveform: two columns (time [s], amplitude).\n"
+            "Comma/semicolon/tab/space separated, optional header, # comments."
+        )
+        self.btn_excite_file = QPushButton("…")
+        self.btn_excite_file.setToolTip("Choose the custom excitation CSV file")
+        self.btn_excite_file.clicked.connect(self._on_pick_excitation_file)
+        exc_file_row = QWidget()
+        exc_file_layout = QHBoxLayout(exc_file_row)
+        exc_file_layout.setContentsMargins(0, 0, 0, 0)
+        exc_file_layout.addWidget(self.edt_excite_file, 1)
+        exc_file_layout.addWidget(self.btn_excite_file)
+        self.wdg_excite_file = exc_file_row
+
         form.addRow("Mesh preset", self.cmb_preset)
         form.addRow("Frequency unit", self.cmb_freq_unit)
         form.addRow("Center frequency f0", self.spn_f0)
         form.addRow("Corner frequency fc", self.spn_fc)
+        form.addRow("Excitation", self.cmb_excite)
+        form.addRow("Custom waveform", exc_file_row)
         form.addRow("Start frequency", self.spn_start_f)
         form.addRow("Stop frequency", self.spn_stop_f)
         form.addRow("Drawing unit", self.cmb_unit)
@@ -201,6 +241,7 @@ class MeshParamsPanel(QWidget):
         self.cmb_smooth.currentTextChanged.connect(self._on_changed)
         self.cmb_dirs.currentTextChanged.connect(self._on_changed)
         self.cmb_coords.currentTextChanged.connect(self._on_changed)
+        self.cmb_excite.currentIndexChanged.connect(self._on_excitation_changed)
         self.chk_circle.toggled.connect(self._on_changed)
         self.chk_arc.toggled.connect(self._on_changed)
         self.chk_edges.toggled.connect(self._on_changed)
@@ -210,6 +251,7 @@ class MeshParamsPanel(QWidget):
         # only place the project is written (on Apply). The readout is served
         # from a buffer built from the form itself.
         self._draft = Project.new_default("draft")
+        self._update_excitation_state()
 
     # --- frequency helpers (always Hz in the project) -------------------
     def _unit(self) -> str:
@@ -253,6 +295,43 @@ class MeshParamsPanel(QWidget):
             "stop": self.spn_stop_f,
         }
 
+    # --- excitation waveform --------------------------------------------
+    def _on_excitation_changed(self, *_a: object) -> None:
+        self._update_excitation_state()
+        self._refresh_readout_from_draft()
+
+    def _on_pick_excitation_file(self) -> None:
+        start = self.edt_excite_file.text().strip() or ""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Custom excitation waveform",
+            start,
+            "Waveform (*.csv *.txt *.dat);;All (*.*)",
+        )
+        if not path:
+            return
+        try:
+            times, _values = read_custom_waveform(path)
+        except ValueError as e:
+            from PySide6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(self, "Invalid waveform", str(e))
+            return
+        self.edt_excite_file.setText(path)
+        idx = self.cmb_excite.findData("custom")
+        if idx >= 0:
+            self.cmb_excite.setCurrentIndex(idx)
+        self._update_excitation_state()
+        self._refresh_readout_from_draft()
+        print(f"Custom excitation: {path} ({len(times)} samples)")
+
+    def _update_excitation_state(self) -> None:
+        kind = self.cmb_excite.currentData() or "gauss"
+        self.spn_fc.setEnabled(kind == "gauss")
+        custom = kind == "custom"
+        self.wdg_excite_file.setEnabled(custom)
+        self.btn_excite_file.setEnabled(custom)
+
     # --- data flow -------------------------------------------------------
     def project(self) -> Project | None:
         """Project supplied by MainWindow via sync_from_project, else None."""
@@ -269,6 +348,8 @@ class MeshParamsPanel(QWidget):
             m = project.mesh
             m.preset = self.cmb_preset.currentText()
             m.drawing_unit = self.cmb_unit.currentText()
+            m.excitation = str(self.cmb_excite.currentData() or "gauss")
+            m.excitation_file = self.edt_excite_file.text().strip()
             f0 = self._hz(self.spn_f0)
             fc = self._hz(self.spn_fc)
             start = self._hz(self.spn_start_f)
@@ -323,8 +404,12 @@ class MeshParamsPanel(QWidget):
             self._set_hz(self.spn_stop_f, float(m.stop_frequency))
             self._set_hz(self.spn_f0, f0)
             self._set_hz(self.spn_fc, fc)
+            idx = self.cmb_excite.findData(normalize_kind(getattr(m, "excitation", "gauss")))
+            self.cmb_excite.setCurrentIndex(idx if idx >= 0 else 0)
+            self.edt_excite_file.setText(str(getattr(m, "excitation_file", "") or ""))
         finally:
             self._freq_guard = False
+        self._update_excitation_state()
         # mesh overrides
         self.spn_refined.setValue(float(m.refined_cellsize or 0.0))
         self.spn_min_cell.setValue(float(m.min_cellsize or 0.0))
@@ -409,6 +494,11 @@ class MeshParamsPanel(QWidget):
         info.append(
             f"preset={m.preset}, drawing_unit={m.drawing_unit}, "
             f"f0={f0:.6g} Hz"
+        )
+        info.append(
+            describe_excitation(
+                m, f0, max(1e5, 0.5 * abs(m.stop_frequency - m.start_frequency))
+            )
         )
         info.append(
             f"coord_system={getattr(m, 'coord_system', 'cartesian')}"

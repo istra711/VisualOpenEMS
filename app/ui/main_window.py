@@ -352,7 +352,8 @@ class MainWindow(QMainWindow):
         configure_freq_spin(self.spn_f0, self._freq_unit_name)
         self.spn_f0.setValue(2.45)  # GHz display default
         self.spn_f0.setToolTip(
-            "Gauss excitation center (SetGaussExcite f0) and mesh target frequency.\n"
+            "Center/design frequency f0: mesh target frequency and the centre of the\n"
+            "Gauss (and Sinus) excitation.\n"
             "Editing f0/fc updates Start/Stop as f0±fc."
         )
         self.spn_fc = QDoubleSpinBox()
@@ -360,9 +361,40 @@ class MainWindow(QMainWindow):
         configure_freq_spin(self.spn_fc, self._freq_unit_name)
         self.spn_fc.setValue(0.5)
         self.spn_fc.setToolTip(
-            "Gauss corner frequency (bandwidth/2).\n"
+            "Gauss corner frequency (bandwidth/2) — used by the Gauss excitation only.\n"
             "Editing f0/fc updates Start/Stop as f0±fc."
         )
+        from app.simulation.excitation import available_kinds, kind_label
+
+        self.cmb_excite = QComboBox()
+        for _kind in available_kinds():
+            self.cmb_excite.addItem(kind_label(_kind), _kind)
+        self.cmb_excite.setToolTip(
+            "FDTD excitation waveform (Run / generated project_run.py):\n"
+            "Gauss — broadband pulse defined by f0/fc (default, best for S-params).\n"
+            "Sinus — single frequency f0; S-params are only meaningful near f0.\n"
+            "Step — broadband step, normalised to the band's highest frequency.\n"
+            "Dirac — broadband impulse.\n"
+            "Custom — two-column CSV (time in seconds, amplitude); needs an\n"
+            "openEMS build with SetCustomExcite."
+        )
+        self.edt_excite_file = QLineEdit()
+        self.edt_excite_file.setReadOnly(True)
+        self.edt_excite_file.setPlaceholderText("no file selected")
+        self.edt_excite_file.setToolTip(
+            "Custom excitation waveform: two columns (time [s], amplitude).\n"
+            "Comma/semicolon/tab/space separated, optional header, # comments."
+        )
+        self.btn_excite_file = QPushButton("…")
+        self.btn_excite_file.setToolTip("Choose the custom excitation CSV file")
+        exc_file_row = QWidget()
+        exc_file_layout = QHBoxLayout(exc_file_row)
+        exc_file_layout.setContentsMargins(0, 0, 0, 0)
+        exc_file_layout.addWidget(self.edt_excite_file, 1)
+        exc_file_layout.addWidget(self.btn_excite_file)
+        self.wdg_excite_file = exc_file_row
+        self._excite_guard = False
+        self._update_excitation_state()
         self.spn_start_f = QDoubleSpinBox()
         self.spn_start_f.setKeyboardTracking(False)
         configure_freq_spin(self.spn_start_f, self._freq_unit_name)
@@ -390,6 +422,8 @@ class MainWindow(QMainWindow):
         form.addRow("Frequency unit", self.cmb_freq_unit)
         form.addRow("Center frequency f0", self.spn_f0)
         form.addRow("Corner frequency fc", self.spn_fc)
+        form.addRow("Excitation", self.cmb_excite)
+        form.addRow("Custom waveform", exc_file_row)
         form.addRow("Start frequency", self.spn_start_f)
         form.addRow("Stop frequency", self.spn_stop_f)
         form.addRow("Drawing unit", self.cmb_unit)
@@ -640,6 +674,8 @@ class MainWindow(QMainWindow):
             w.valueChanged.connect(self._on_mesh_form_changed)
         for w in (self.spn_start_f, self.spn_stop_f):
             w.valueChanged.connect(self._on_freq_range_changed)
+        self.cmb_excite.currentIndexChanged.connect(self._on_excitation_changed)
+        self.btn_excite_file.clicked.connect(self._on_pick_excitation_file)
         self.cmb_freq_unit.currentTextChanged.connect(self._on_freq_unit_changed)
         self.cmb_preset.currentTextChanged.connect(self._on_mesh_form_changed)
         self.cmb_unit.currentTextChanged.connect(self._on_mesh_form_changed)
@@ -1696,6 +1732,11 @@ class MainWindow(QMainWindow):
         self._set_spin_hz(self.spn_stop_f, float(m.stop_frequency))
         self._set_spin_hz(self.spn_f0, f0)
         self._set_spin_hz(self.spn_fc, fc)
+        from app.simulation.excitation import normalize_kind
+
+        self._sync_excite_combo(normalize_kind(getattr(m, "excitation", "gauss")))
+        self.edt_excite_file.setText(str(getattr(m, "excitation_file", "") or ""))
+        self._update_excitation_state()
         self.cmb_preset.setCurrentText(m.preset)
         self.cmb_unit.setCurrentText(m.drawing_unit)
         if hasattr(self, "cmb_coords"):
@@ -1726,6 +1767,77 @@ class MainWindow(QMainWindow):
     def _on_mesh_form_changed(self, *_args: object) -> None:
         self._sync_mesh_freqs_from_widgets("f0fc")
         self.sim_params.refresh_computed(self.project)
+
+    # --- excitation waveform (Mesh tab) --------------------------------
+    def _on_excitation_changed(self, *_args: object) -> None:
+        if getattr(self, "_excite_guard", False):
+            return
+        kind = self.cmb_excite.currentData() or "gauss"
+        self.project.mesh.excitation = str(kind)
+        self.project.mesh.excitation_file = self.edt_excite_file.text().strip()
+        self._update_excitation_state()
+        self.sim_params.refresh_computed(self.project)
+
+    def _on_pick_excitation_file(self) -> None:
+        from app.simulation.excitation import read_custom_waveform
+
+        start = self.edt_excite_file.text().strip() or str(self._project_work_dir())
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Custom excitation waveform",
+            start,
+            "Waveform (*.csv *.txt *.dat);;All (*.*)",
+        )
+        if not path:
+            return
+        try:
+            times, values = read_custom_waveform(path)
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid waveform", str(e))
+            return
+        self.edt_excite_file.setText(path)
+        self.project.mesh.excitation_file = path
+        self.project.mesh.excitation = "custom"
+        self._sync_excite_combo("custom")
+        self._update_excitation_state()
+        self._log(
+            f"Custom excitation: {Path(path).name} "
+            f"({len(times)} samples, {times[-1] * 1e9:.3g} ns)"
+        )
+        self.sim_params.refresh_computed(self.project)
+
+    def _sync_excite_combo(self, kind: str) -> None:
+        """Select ``kind`` in the combo without firing the change handler."""
+        idx = self.cmb_excite.findData(str(kind or "gauss"))
+        if idx < 0:
+            idx = 0
+        self._excite_guard = True
+        try:
+            self.cmb_excite.setCurrentIndex(idx)
+        finally:
+            self._excite_guard = False
+
+    def _update_excitation_state(self) -> None:
+        kind = self.cmb_excite.currentData() or "gauss"
+        gauss = kind == "gauss"
+        self.spn_fc.setEnabled(gauss)
+        if gauss:
+            self.spn_fc.setToolTip(
+                "Gauss corner frequency (bandwidth/2) — used by the Gauss excitation only.\n"
+                "Editing f0/fc updates Start/Stop as f0±fc."
+            )
+        else:
+            self.spn_fc.setToolTip(
+                f"Not used by the '{self.cmb_excite.currentText()}' excitation.\n"
+                "Start/Stop still define the mesh and the S-param band."
+            )
+        custom = kind == "custom"
+        self.wdg_excite_file.setEnabled(custom)
+        self.btn_excite_file.setEnabled(custom)
+        self.btn_excite_file.setToolTip(
+            "Choose the custom excitation CSV file" if custom else
+            "Only used by the 'Custom waveform' excitation"
+        )
 
     def _on_freq_range_changed(self, *_args: object) -> None:
         self._sync_mesh_freqs_from_widgets("range")
@@ -1847,8 +1959,13 @@ class MainWindow(QMainWindow):
             self._set_spin_hz(self.spn_f0, float(m.target_frequency))
             fc = max(1e5, 0.5 * abs(m.stop_frequency - m.start_frequency))
             self._set_spin_hz(self.spn_fc, fc)
+            from app.simulation.excitation import normalize_kind
+
+            self._sync_excite_combo(normalize_kind(getattr(m, "excitation", "gauss")))
+            self.edt_excite_file.setText(str(getattr(m, "excitation_file", "") or ""))
         finally:
             self._freq_guard = False
+        self._update_excitation_state()
         # re-sync the hidden panel too: antenna mode mirrors the mesh preset
         self.sim_params.sync_from_project(self.project)
         self._log(
