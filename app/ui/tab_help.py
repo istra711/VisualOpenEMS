@@ -81,7 +81,8 @@ Navigation
     while Ctrl is held.
   • Grid slider — strength of the mesh grid lines (opacity + line width) in the
     slice; the % next to it is the current strength. Only active while
-    "Show mesh grid" is ticked.
+    "Mesh grid" is ticked (next to Geometry / Ports / NF2FF, which show or hide
+    those overlays in the slice plots).
 
 Mesh editor (right-hand panel) — manual mesh lines
   • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line.
@@ -569,21 +570,21 @@ Buttons / controls
     the unit ("magnitude [V/m]"), taken from the dump name: E → V/m, H → A/m,
     D → As/m², J → A/m² (names without a field letter stay unit-less). The
     status line next to the sliders repeats range + unit.
-  • "Representation": Surface (default, like ParaView), Wireframe, Slice (a
-    cutting plane, axis + position — good for 3D boxes) or Iso-surface
+  • "Show" (representation): Surface (default, like ParaView), Wireframe, Slice
+    (a cutting plane, axis + position — good for 3D boxes) or Iso-surface
     (a contour of the selected array; Iso-level slider).
   • Slice position: the slider moves the cutting plane; the spinbox next to it
     shows the exact position in mm and takes a **direct numeric position**
     (mm, Enter applies). A typed value cuts exactly there (the slider only gets
     nudged along and the value is clamped to the data extent). Note: the 3D axes
     are in metres (1 mm = 0.001 m) — the slice controls use mm.
-  • "Colour": Auto (data range) / manual min-max + Log scale (log colour
-    mapping, like ParaView's "Use log scale") + "Rescale to data range".
+  • "Colour": Auto / manual min-max + Log scale (log colour
+    mapping, like ParaView's "Use log scale") + "Rescale".
     Auto follows the CURRENT frame, so every frame uses the full colour table and
     changes over time stay visible (a single range over the whole series would be
     dominated by the excitation pulse at the start and paint all later slices one
-    colour). Auto shows the range that is used in read-only fields; "Rescale to
-    data range" is off while Auto is on, because that is what Auto already does.
+    colour). Auto shows the range that is used in read-only fields; "Rescale" is
+    off while Auto is on, because that is what Auto already does.
     Untick Auto to freeze the range: the fields keep the values they had, so one
     scale stays for all frames (min/max can be typed, they then stay put when you
     move the Time slider or play). The fields take scientific notation
@@ -592,8 +593,8 @@ Buttons / controls
     1e-7 of the maximum, because float32 field values below that are noise) and
     shown in the field; values below it are drawn in the lowest colour. Using the
     plain minimum instead would stretch the table over dozens of decades — a
-    single near-zero cell would paint the whole slice one colour. "Rescale to
-    data range" uses the current frame.
+    single near-zero cell would paint the whole slice one colour. "Rescale" uses
+    the current frame.
   • "Time" slider + "Play": step through / animate a per-step series. Next to
     the step counter the frame's physical simulation time is shown in ps or ns
     (auto unit), taken from the openEMS HDF5 "time" attribute and written into

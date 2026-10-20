@@ -245,7 +245,6 @@ class MeshGeometryViewer(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
 
-        bar = QHBoxLayout()
         self.cmb_view = QComboBox()
         self.cmb_view.addItems(["XY slice", "XZ slice", "YZ slice", "Cell sizes", "Overview"])
         self.cmb_view.setCurrentIndex(0)
@@ -276,8 +275,12 @@ class MeshGeometryViewer(QWidget):
             "The plane position itself is in the spinbox next to this hint."
         )
         self.slider.installEventFilter(self)
-        self.chk_mesh = QCheckBox("Show mesh grid")
+        self.chk_mesh = QCheckBox("Mesh grid")
         self.chk_mesh.setChecked(True)
+        self.chk_mesh.setToolTip(
+            "Draw the mesh grid in the slice plots.\n"
+            "Opacity / line width: the slider next to this box."
+        )
         self.slider_mesh = QSlider(Qt.Orientation.Horizontal)
         # opacity + line width of the mesh grid lines in the slice plot
         self.slider_mesh.setRange(0, 100)
@@ -287,18 +290,21 @@ class MeshGeometryViewer(QWidget):
             "Mesh grid lines in the slice plot — opacity and line width.\n"
             "Left = faint and thin (less clutter next to geometry/ports),\n"
             "right = opaque and thick (easier to read the cells).\n"
-            "Only drawn while 'Show mesh grid' is ticked."
+            "Only drawn while 'Mesh grid' is ticked."
         )
         # live readout next to the grid slider (value in %)
         self.lbl_mesh = QLabel("")
         self.lbl_mesh.setMinimumWidth(40)
         self.lbl_mesh.setToolTip(self.slider_mesh.toolTip())
-        self.chk_geom = QCheckBox("Show geometry")
+        self.chk_geom = QCheckBox("Geometry")
         self.chk_geom.setChecked(True)
-        self.chk_ports = QCheckBox("Show ports")
+        self.chk_geom.setToolTip("Draw the geometry (primitives, imported CAD) in the slice plots.")
+        self.chk_ports = QCheckBox("Ports")
         self.chk_ports.setChecked(True)
-        self.chk_nf2ff = QCheckBox("Show NF2FF")
+        self.chk_ports.setToolTip("Draw the ports in the slice plots.")
+        self.chk_nf2ff = QCheckBox("NF2FF")
         self.chk_nf2ff.setChecked(True)
+        self.chk_nf2ff.setToolTip("Draw the NF2FF box in the slice plots.")
         self.chk_editor = QCheckBox("Mesh editor")
         self.chk_editor.setToolTip(
             "Show the manual mesh-line editor panel (add / edit / delete grid\n"
@@ -306,14 +312,26 @@ class MeshGeometryViewer(QWidget):
         )
         self.btn_appcsxcad = QPushButton("Open in AppCSXCAD (3D)…")
         self.btn_export_xml = QPushButton("Export CSX XML…")
-        self.btn_popout = QPushButton("Pop-out viewer…")
+        self.btn_popout = QPushButton("Pop-out…")
+        self.btn_popout.setToolTip("Show the mesh viewer in a separate window.")
 
+        # Two rows: as one line this bar was ~2040 px wide and thereby set the
+        # minimum width of the whole main window - the Project/Geometry splitter
+        # could not be dragged any more.
+        bar = QHBoxLayout()
         for w in (
             self.cmb_view,
             QLabel("Plane"),
             self.spn_plane,
             self.slider,
             self.lbl_plane,
+        ):
+            bar.addWidget(w)
+        bar.addStretch(1)
+        root.addLayout(bar)
+
+        bar2 = QHBoxLayout()
+        for w in (
             self.chk_mesh,
             QLabel("Grid"),
             self.slider_mesh,
@@ -323,10 +341,10 @@ class MeshGeometryViewer(QWidget):
             self.chk_nf2ff,
             self.chk_editor,
         ):
-            bar.addWidget(w)
-        bar.addStretch(1)
-        bar.addWidget(self.btn_popout)
-        root.addLayout(bar)
+            bar2.addWidget(w)
+        bar2.addStretch(1)
+        bar2.addWidget(self.btn_popout)
+        root.addLayout(bar2)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         self._split = split
