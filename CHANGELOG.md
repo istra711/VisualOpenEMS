@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mesh Viewer: "Port mode" builds the port from the metal surfaces**
+  (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`, `app/ui/tab_help.py`):
+  a click in a slice now creates a **lumped** or an **MSL** port whose box is
+  derived from the geometry instead of a zero-length point:
+  - the port runs into the screen (along the slice normal) and its **length is
+    found automatically**: from the **bottom face of the clicked metal** to the
+    **top face of the next metal surface below** it — for a microstrip line that
+    is exactly the substrate height down to the ground plane. Is there no metal
+    below, the next one above is used (its bottom face); the log names both
+    metals. No second metal at the click → the old behaviour (click = Start =
+    Stop) plus a hint.
+  - the right-click menu gained **"Port type"**: *Lumped* (default) or
+    *MSL, width along X/Y/Z* — the entries follow the in-plane axes of the slice
+    you are in (XY → X/Y, XZ → X/Z, YZ → Y/Z). An MSL port is as wide as the
+    **clicked metal** along the chosen axis and one mesh cell long along the
+    other in-plane axis (the line), so propagation/excitation direction are
+    prefilled for `AddMSLPort`; picking an MSL entry also arms port mode.
+  - the Port dialog opens with the computed box (Start/Stop/Direction/prop/exc
+    for MSL) and stays editable; the clicked coordinates stay unsnapped.
+  Tests: `tests/mesh_port_place_smoke.py` (strip-over-ground scene: lumped span,
+  MSL width + one cell, menu entries per slice, fallback, log hints);
+  pure-logic helper `_is_metal()`.
+
 - **Field Viewer: field info + selectable standard view**
   (`app/ui/vtk_viewer.py`, `app/settings.py`, `app/ui/main_window.py`):
   - the top row now shows **which field is on screen** — the loaded file name

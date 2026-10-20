@@ -59,6 +59,22 @@ from app.meshing.preview import (
 
 # Axis index helpers
 _AXIS = {"x": 0, "y": 1, "z": 2}
+#: What a click in "Port mode" places: lumped or MSL (see the right-click menu).
+PORT_KINDS: tuple[tuple[str, str], ...] = (("lumped", "Lumped"), ("msl", "MSL"))
+#: CSX property kinds that act as the port's electrodes (PEC / conducting sheet)
+_METAL_KINDS = ("metal", "conducting")
+
+
+def _is_metal(info) -> bool:
+    """True for a PEC / conducting-sheet primitive (a port electrode)."""
+    kind = str(getattr(info, "kind", "") or "").lower()
+    return any(tok in kind for tok in _METAL_KINDS)
+
+
+def _axis_letter(index: int) -> str:
+    return ("x", "y", "z")[int(index)] if 0 <= int(index) < 3 else ""
+
+
 #: Plane slider travel (internal steps): base resolution = /SLIDER_BASE_STEP
 #: (= 2000 steps, twice the old 0..1000) and Ctrl gives the full 0..20000
 #: (10x finer than the base resolution).
@@ -207,12 +223,16 @@ class MeshGeometryViewer(QWidget):
     #: emitted by "Rebuild from scratch" — the caller clears the overrides and
     #: runs a full (easyMesh) build, discarding the manual lines.
     rebuild_requested = Signal()
-    #: Port mode: a left click in a slice placed a port there (x, y, z in the
-    #: project's drawing units, NOT snapped to the grid). The caller opens the
-    #: port dialog and then calls :meth:`clear_port_marker`.
-    port_place_requested = Signal(float, float, float)
+    #: Port mode: a left click in a slice placed a port there. The payload is a
+    #: dict with the computed box (``start``/``stop``/``type``/``direction``,
+    #: ``prop_direction``/``exc_direction`` for MSL, ``metal``/``partner`` and an
+    #: optional ``warning``). The caller opens the port dialog and then calls
+    #: :meth:`clear_port_marker`.
+    port_place_requested = Signal(object)
     #: Port mode was switched on/off (right-click menu) — for a log hint.
     port_mode_changed = Signal(bool)
+    #: Port type (lumped / MSL) + MSL width axis chosen in the right-click menu.
+    port_type_changed = Signal(str, str)
 
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -235,6 +255,9 @@ class MeshGeometryViewer(QWidget):
         self._split = None
         # port mode (right-click menu): click in a slice -> red dot + dialog
         self._port_mode = False
+        #: what a click places: "lumped" or "msl" (+ the MSL width axis letter)
+        self._port_type = "lumped"
+        self._msl_orientation = ""
         #: modifier state at the last slider mouse event (Ctrl = fine/free)
         self._slider_mods = Qt.KeyboardModifier.NoModifier
         #: (slice key "XY"/"XZ"/"YZ", x, y) of the unconfirmed placement
@@ -813,9 +836,14 @@ class MeshGeometryViewer(QWidget):
         act_port.setToolTip(
             "Left-click anywhere in a slice view (XY/XZ/YZ) to place a port at\n"
             "exactly those coordinates (no snapping): a red dot marks the spot\n"
-            "and the port dialog opens with the coordinates prefilled.\n"
-            "The third coordinate is the current slice plane."
+            "and the port dialog opens with the computed box prefilled.\n"
+            "The port runs into the screen (slice normal) from the bottom face of\n"
+            "the clicked metal to the top face of the next metal surface — that\n"
+            "length is found automatically."
         )
+        # What the click places. MSL needs the width direction, so it is part of
+        # the entry ("width along X/Y/Z" = the in-plane axis the port is wide in).
+        self._add_port_type_menu(menu)
         act_pop = menu.addAction("Pop-out viewer…")
         menu.addSeparator()
         n_sel = len(getattr(self, "_selected_lines", []) or [])
@@ -1079,12 +1107,239 @@ class MeshGeometryViewer(QWidget):
         except Exception as e:  # noqa: BLE001
             print(f"mesh viewer port marker redraw error: {e}")
 
+    # --------------------------------------------------- port type (lumped/MSL)
+    def set_port_type(self, kind: str, orientation: str = "") -> None:
+        """What a click places: ``"lumped"`` or ``"msl"`` (with the width axis).
+
+        For MSL ``orientation`` is the in-plane axis the port is as wide as the
+        metal in; the line then runs along the other in-plane axis.
+        """
+        self._port_type = "msl" if str(kind or "").lower() == "msl" else "lumped"
+        if orientation:
+            self._msl_orientation = str(orientation).lower()
+        self.port_type_changed.emit(self._port_type, self._msl_orientation)
+
+    def port_type(self) -> tuple[str, str]:
+        """``(kind, msl_orientation)`` as chosen in the right-click menu."""
+        return self._port_type, self._msl_orientation
+
+    def _add_port_type_menu(self, menu) -> None:
+        """Add the "Port type" submenu: Lumped / MSL with the width axis."""
+        sub = menu.addMenu("Port type")
+        sub.setToolTip(
+            "Lumped: a line from the clicked metal to the next metal surface.\n"
+            "MSL: the same box, but as wide as the clicked metal along the chosen\n"
+            "in-plane axis (the line then runs along the other in-plane axis)."
+        )
+        ax_a, ax_b, _normal = self._in_plane_axes()
+        act = sub.addAction("Lumped")
+        act.setCheckable(True)
+        act.setChecked(self._port_type != "msl")
+        act.triggered.connect(lambda _checked=False: self._on_port_type_action("lumped", ""))
+        for axis in (ax_a, ax_b):
+            other = ax_b if axis == ax_a else ax_a
+            act = sub.addAction(f"MSL, width along {axis.upper()}")
+            act.setCheckable(True)
+            act.setChecked(
+                self._port_type == "msl"
+                and str(self._msl_orientation or "").lower() == axis
+            )
+            act.setToolTip(
+                f"Microstrip port: as wide as the clicked metal along {axis.upper()},\n"
+                f"propagating along the other in-plane axis ({other.upper()})."
+            )
+            act.triggered.connect(
+                lambda _checked=False, a=axis: self._on_port_type_action("msl", a)
+            )
+
+    def _on_port_type_action(self, kind: str, axis: str) -> None:
+        """Menu slot: switch the port type (MSL also arms port mode)."""
+        self.set_port_type(kind, axis)
+        if kind == "msl" and not self._port_mode:
+            self.set_port_mode(True)  # MSL only makes sense with port mode
+
+    def _in_plane_axes(self) -> tuple[str, str, str]:
+        """(axis_a, axis_b, normal) of the shown slice (XY as fallback)."""
+        key = _slice_key(self.cmb_view.currentText())
+        return _SLICE_AXES[key] if key else _SLICE_AXES["XY"]
+
+    def _metal_layers(self, key: str, a: float, b: float) -> list:
+        """Metal layers covering the clicked in-plane point, bottom first.
+
+        Each entry is ``(lo, hi, info)``: the layer's extent along the slice
+        normal plus its :class:`~app.meshing.preview.PrimitiveInfo`.
+        """
+        ax_a, ax_b, normal = _SLICE_AXES[key]
+        ia, ib, inorm = _AXIS[ax_a], _AXIS[ax_b], _AXIS[normal]
+        eps = 1e-9
+        layers: list = []
+        for info in self._grid_infos():
+            if not _is_metal(info):
+                continue
+            try:
+                st = [float(v) for v in info.start]
+                sp = [float(v) for v in info.stop]
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not (min(st[ia], sp[ia]) - eps <= a <= max(st[ia], sp[ia]) + eps):
+                continue
+            if not (min(st[ib], sp[ib]) - eps <= b <= max(st[ib], sp[ib]) + eps):
+                continue
+            lo, hi = sorted((st[inorm], sp[inorm]))
+            layers.append((lo, hi, info))
+        layers.sort(key=lambda t: t[0])
+        return layers
+
+    def _primitive_name(self, info) -> str:
+        """Project primitive name for a CSX primitive (else its CSX name).
+
+        The CSX properties are named after the material ("copper#1"), so the
+        project primitive with the same box is looked up for a readable log.
+        """
+        fallback = str(getattr(info, "name", "") or "")
+        try:
+            st = [float(v) for v in info.start]
+            sp = [float(v) for v in info.stop]
+        except (TypeError, ValueError, IndexError):
+            return fallback
+        for pr in self._primitives:
+            pst, psp = pr.get("start"), pr.get("stop")
+            if not pst or not psp:
+                continue
+            try:
+                if all(
+                    abs(float(pst[k]) - st[k]) < 1e-5
+                    and abs(float(psp[k]) - sp[k]) < 1e-5
+                    for k in range(3)
+                ):
+                    return str(pr.get("name") or fallback)
+            except (TypeError, ValueError, IndexError):
+                continue
+        return fallback
+
+    @staticmethod
+    def _layer_at(layers: list, plane: float):
+        """The layer containing ``plane``, else the nearest one (None if empty)."""
+        if not layers:
+            return None
+        eps = 1e-9
+        for lo, hi, info in layers:
+            if lo - eps <= plane <= hi + eps:
+                return (lo, hi, info)
+
+        def _dist(layer) -> float:
+            lo, hi, _info = layer
+            return 0.0 if lo <= plane <= hi else min(abs(plane - lo), abs(plane - hi))
+
+        return min(layers, key=_dist)
+
+    def _cell_around(self, axis: str, value: float) -> tuple[float, float]:
+        """Mesh cell around ``value`` (a thin band when the mesh is unknown)."""
+        arr = np.asarray(self._grid_mesh().get(axis, []), dtype=float)
+        if arr.size >= 2:
+            j = int(np.searchsorted(arr, float(value)))
+            j = min(max(j, 1), int(arr.size) - 1)
+            return float(arr[j - 1]), float(arr[j])
+        span = abs(float(self._axis_span(axis) or 0.0))
+        half = max(1e-9, span * 5e-4)
+        return float(value) - half, float(value) + half
+
+    def port_box_at(
+        self,
+        key: str,
+        a: float,
+        b: float,
+        plane: float,
+        kind: str = "",
+        orientation: str = "",
+    ) -> dict | None:
+        """Compute the port box for a click at ``(a, b)`` in the slice ``key``.
+
+        The port runs along the slice normal (into the screen): from the bottom
+        face of the clicked metal down to the top face of the next metal surface
+        (if there is none below, the next one above is used instead — its bottom
+        face). ``kind``/``orientation`` default to the menu selection; MSL ports
+        additionally span the clicked metal's width along the chosen in-plane
+        axis and one mesh cell along the other in-plane axis (the line).
+
+        Returns a dict with ``start``/``stop`` (drawing units), ``type``,
+        ``direction``, ``prop_direction``/``exc_direction``, ``metal``,
+        ``partner`` and ``side`` — or ``None`` when no second metal is found.
+        """
+        ax_a, ax_b, normal = _SLICE_AXES[key]
+        ia, ib, inorm = _AXIS[ax_a], _AXIS[ax_b], _AXIS[normal]
+        layers = self._metal_layers(key, a, b)
+        cur = self._layer_at(layers, plane)
+        if cur is None:
+            return None
+        cur_lo, cur_hi, cur_info = cur
+        eps = 1e-9
+        below = [t for t in layers if t is not cur and t[1] <= cur_lo + eps]
+        above = [t for t in layers if t is not cur and t[0] >= cur_hi - eps]
+        side = ""
+        partner = None
+        if below:  # next metal surface below: bottom of the click -> its top
+            partner = max(below, key=lambda t: t[1])
+            start_n, stop_n, side = cur_lo, partner[1], "below"
+        elif above:  # nothing below -> top of the click -> bottom of the next
+            partner = min(above, key=lambda t: t[0])
+            start_n, stop_n, side = cur_hi, partner[0], "above"
+        if partner is None or abs(stop_n - start_n) <= eps:
+            return None
+
+        start = [0.0, 0.0, 0.0]
+        stop = [0.0, 0.0, 0.0]
+        start[ia], start[ib] = float(a), float(b)
+        stop[ia], stop[ib] = float(a), float(b)
+        start[inorm], stop[inorm] = float(start_n), float(stop_n)
+        port_kind, msl_axis = self._port_type, self._msl_orientation
+        if kind:
+            port_kind = "msl" if str(kind).lower() == "msl" else "lumped"
+        if orientation:
+            msl_axis = str(orientation).lower()
+        box = {
+            "type": port_kind,
+            "start": start,
+            "stop": stop,
+            "direction": normal,
+            "prop_direction": "",
+            "exc_direction": "",
+            "metal": self._primitive_name(cur_info),
+            "partner": self._primitive_name(partner[2]),
+            "side": side,
+            "warning": "",
+        }
+        if port_kind != "msl":
+            return box
+        # MSL: as wide as the clicked metal, one mesh cell along the line
+        iw = _AXIS.get(str(msl_axis).lower())
+        if iw is None or iw == inorm:
+            iw = ia  # no/!in-plane orientation -> first in-plane axis
+        ip = ib if iw == ia else ia
+        w_lo, w_hi = sorted((float(cur_info.start[iw]), float(cur_info.stop[iw])))
+        if w_hi - w_lo <= eps:  # degenerate metal -> use the click
+            w_lo = w_hi = float(a) if iw == ia else float(b)
+        p_lo, p_hi = self._cell_around(_axis_letter(ip), float(a) if ip == ia else float(b))
+        vals = {ia: [float(a), float(a)], ib: [float(b), float(b)]}
+        vals[iw] = [w_lo, w_hi]
+        vals[ip] = [p_lo, p_hi]
+        for k in (ia, ib):
+            start[k], stop[k] = vals[k][0], vals[k][1]
+        box.update(
+            prop_direction=_axis_letter(ip),
+            exc_direction=normal,
+            width_axis=_axis_letter(iw),
+            width=w_hi - w_lo,
+        )
+        return box
+
     def _place_port_at(self, event) -> None:
-        """Port mode: report the clicked point (NO snapping) and mark it red.
+        """Port mode: compute the port box at the clicked point and mark it red.
 
         The two in-plane coordinates come straight from the click, the third one
         from the current slice plane (the plane slider snaps to mesh lines, the
-        click itself does not).
+        click itself does not). The box (and, for MSL, the width) is derived from
+        the metal surfaces around the click — see :meth:`port_box_at`.
         """
         key = _slice_key(self.cmb_view.currentText())
         if key is None:
@@ -1093,16 +1348,35 @@ class MeshGeometryViewer(QWidget):
         ia, ib, inorm = _AXIS[ax_a], _AXIS[ax_b], _AXIS[normal]
         if event.xdata is None or event.ydata is None:
             return
-        pt = [0.0, 0.0, 0.0]
-        pt[ia] = float(event.xdata)
-        pt[ib] = float(event.ydata)
-        pt[inorm] = float(self.spn_plane.value())
-        self._port_marker = (key, pt[ia], pt[ib])
+        a, b = float(event.xdata), float(event.ydata)
+        plane = float(self.spn_plane.value())
+        self._port_marker = (key, a, b)
         try:
             self._redraw()
         except Exception as e:  # noqa: BLE001
             print(f"mesh viewer port marker redraw error: {e}")
-        self.port_place_requested.emit(pt[0], pt[1], pt[2])
+        box = self.port_box_at(key, a, b, plane)
+        if box is None:
+            # no second metal surface: keep the old behaviour (click = both ends)
+            pt = [0.0, 0.0, 0.0]
+            pt[ia], pt[ib], pt[inorm] = a, b, plane
+            prop = ib if self._msl_orientation == ax_a else ia
+            box = {
+                "type": self._port_type,
+                "start": list(pt),
+                "stop": list(pt),
+                "direction": normal,
+                "prop_direction": _axis_letter(prop) if self._port_type == "msl" else "",
+                "exc_direction": normal if self._port_type == "msl" else "",
+                "metal": "",
+                "partner": "",
+                "side": "",
+                "warning": (
+                    "no second metal surface found at the click — start/stop are "
+                    "the clicked point; give the port a length by hand"
+                ),
+            }
+        self.port_place_requested.emit(box)
 
     def clear(self) -> None:
         """Drop scene data only — do NOT touch matplotlib figures here.
