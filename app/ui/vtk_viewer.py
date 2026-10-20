@@ -46,8 +46,20 @@ from app.postproc.vtk_export import (  # noqa: F401
     export_dumps_to_vtk,
     field_unit,
 )
+from app.ui.number_field import SciSpinBox
 
 _AXIS_NORMAL = {"X": (1, 0, 0), "Y": (0, 1, 0), "Z": (0, 0, 1)}
+
+
+def _min_positive_of(arr) -> float | None:
+    """Smallest value > 0 in a VTK array (None if there is none)."""
+    import numpy as np
+    from vtk.util import numpy_support as ns
+
+    values = np.asarray(ns.vtk_to_numpy(arr), dtype=float).ravel()
+    values = values[np.isfinite(values) & (values > 0)]
+    return float(values.min()) if values.size else None
+
 
 #: X red / Y green / Z blue — used by the triad, its labels and the ruler.
 AXIS_COLORS = ((0.95, 0.25, 0.25), (0.30, 0.85, 0.35), (0.35, 0.55, 1.0))
@@ -398,17 +410,32 @@ class VtkFieldViewer(QWidget):
         row3 = QHBoxLayout()
         self.chk_auto = QCheckBox("Auto (data range)")
         self.chk_auto.setChecked(True)
+        self.chk_auto.setToolTip(
+            "Colour limits follow the data: the whole series if one is loaded\n"
+            "(so the colours do not flicker while playing), otherwise the\n"
+            "current frame. Untick to set min/max by hand."
+        )
         self.chk_auto.toggled.connect(self._on_auto_toggled)
-        self.spn_min = QDoubleSpinBox()
-        self.spn_max = QDoubleSpinBox()
+        # scientific fields: QDoubleSpinBox rounds to its decimals, which made
+        # field magnitudes (1e-9 ...) show up as 0.000000 and impossible to type
+        self.spn_min = SciSpinBox(0.0)
+        self.spn_max = SciSpinBox(1.0)
         for s in (self.spn_min, self.spn_max):
-            s.setDecimals(6)
-            s.setRange(-1e30, 1e30)
             s.setEnabled(False)
-            s.valueChanged.connect(self._refresh_display)
+            s.valueChanged.connect(self._on_color_spin_changed)
         self.chk_log = QCheckBox("Log scale")
-        self.chk_log.toggled.connect(self._refresh_display)
+        self.chk_log.setToolTip(
+            "Log10 colour mapping (like ParaView's 'Use log scale').\n"
+            "The lowest limit must be > 0: a min of 0 is replaced by the\n"
+            "smallest usable positive value (>= 1e-7 of the maximum), so the\n"
+            "bar starts at real data instead of spanning 30 decades of noise."
+        )
+        self.chk_log.toggled.connect(self._on_log_toggled)
         self.btn_rescale = QPushButton("Rescale to data range")
+        self.btn_rescale.setToolTip(
+            "Set min/max to the data range (over all time steps when a series\n"
+            "is loaded). Not needed while Auto is on - it does exactly that."
+        )
         self.btn_rescale.clicked.connect(self._rescale_to_data)
         row3.addWidget(QLabel("Colour"))
         row3.addWidget(self.chk_auto)
@@ -1059,8 +1086,14 @@ class VtkFieldViewer(QWidget):
             if rng is not None:
                 self._data_range = rng  # fixed range -> no flicker while playing
         self._scalar_range = self._data_range  # compatibility alias
-        self._rescale_to_data()
-        self._refresh_display()
+        if self.chk_auto.isChecked():
+            # Auto follows the data (series range) -> sync the fields + refresh
+            self._rescale_to_data()
+        else:
+            # a manual range belongs to the user: a frame change must not
+            # overwrite it (that used to reset the limits on every step)
+            self._update_color_widgets()
+            self._refresh_display()
 
     def _series_range_for(self, name: str):
         cache = getattr(self, "_series_range_cache", None)
@@ -1070,6 +1103,7 @@ class VtkFieldViewer(QWidget):
             return cache[name]
         vtk = _vtk()
         lo, hi = float("inf"), float("-inf")
+        smallest = float("inf")  # min positive -> floor of the log colour range
         for p in self._series:
             try:
                 r = _make_reader(vtk, p)
@@ -1084,31 +1118,91 @@ class VtkFieldViewer(QWidget):
             if arr is not None:
                 a, b = arr.GetRange()
                 lo, hi = min(lo, a), max(hi, b)
+                pos = _min_positive_of(arr)
+                if pos is not None:
+                    smallest = min(smallest, pos)
         res = None if lo == float("inf") or hi <= lo else (lo, hi)
         cache[name] = res
+        pos_cache = getattr(self, "_series_pos_cache", None)
+        if pos_cache is None:
+            pos_cache = self._series_pos_cache = {}
+        pos_cache[name] = None if smallest == float("inf") else smallest
         return res
 
     def _rescale_to_data(self, *_a) -> None:
-        lo, hi = self._data_range
+        lo, hi = self._rescale_target()
         if hi <= lo:
-            hi = lo + 1.0
-        self.spn_min.blockSignals(True)
-        self.spn_max.blockSignals(True)
-        self.spn_min.setValue(lo)
-        self.spn_max.setValue(hi)
-        self.spn_min.blockSignals(False)
-        self.spn_max.blockSignals(False)
-        self._update_color_widgets()
+            hi = lo * 10.0 if lo > 0 else 1.0
+        self._set_color_spins(lo, hi)
+        self._update_color_widgets()  # Auto/Log may replace a non-positive min
+        self._refresh_display()
+
+    def _rescale_target(self) -> tuple[float, float]:
+        """Range for "Rescale to data range": the whole series when there is one.
+
+        (ParaView rescales over all time steps as well.) Using only the current
+        frame made the colours jump from frame to frame.
+        """
+        _loc, name = self._array()
+        if self._series and name:
+            rng = self._series_range_for(name)
+            if rng is not None:
+                return rng
+        return self._data_range
+
+    def _set_color_spins(self, lo: float, hi: float) -> None:
+        """Write min/max without re-triggering the display (signals blocked)."""
+        for spin, value in ((self.spn_min, lo), (self.spn_max, hi)):
+            spin.blockSignals(True)
+            spin.setValue(float(value))
+            spin.blockSignals(False)
+
+    def _on_color_spin_changed(self, *_a) -> None:
+        """A typed limit: log needs min > 0, so show the value really used."""
+        if not self.chk_auto.isChecked():
+            lo, hi = float(self.spn_min.value()), float(self.spn_max.value())
+            if self.chk_log.isChecked() and hi > 0 and lo <= 0:
+                self._set_color_spins(self._log_floor(hi), hi)
         self._refresh_display()
 
     def _on_auto_toggled(self, *_a) -> None:
         self._update_color_widgets()
         self._refresh_display()
 
+    def _on_log_toggled(self, *_a) -> None:
+        self._update_color_widgets()  # log needs a positive minimum
+        self._refresh_display()
+
     def _update_color_widgets(self) -> None:
-        man = not self.chk_auto.isChecked()
-        self.spn_min.setEnabled(man)
-        self.spn_max.setEnabled(man)
+        """Keep the min/max fields in step with Auto and Log scale.
+
+        * Auto: the fields show the range that is really used (series/data
+          range and, in log mode, the positive minimum) and are read-only.
+        * Manual: the fields ARE the range - only a log minimum <= 0 is
+          replaced by the smallest positive value, so the numbers match the
+          colour bar instead of claiming 0.
+        """
+        auto = self.chk_auto.isChecked()
+        log = self.chk_log.isChecked()
+        self.spn_min.setEnabled(not auto)
+        self.spn_max.setEnabled(not auto)
+        self.btn_rescale.setEnabled(not auto)
+        hint = (
+            "Controlled by Auto - untick it to type a limit."
+            if auto
+            else "Enter applies. Scientific notation: 1.5e-9 or 1,5e-9."
+        )
+        log_hint = (
+            "\nLog scale needs a minimum > 0: 0 is shown as the smallest "
+            "usable positive value."
+            if log
+            else ""
+        )
+        self.spn_min.setToolTip("Lower colour limit." + log_hint + "\n" + hint)
+        self.spn_max.setToolTip("Upper colour limit.\n" + hint)
+        if auto or (log and self._color_range()[0] <= 0):
+            lo, hi = self._effective_range()
+            self._set_color_spins(lo, hi)
 
     def _color_range(self) -> tuple[float, float]:
         if self.chk_auto.isChecked():
@@ -1116,7 +1210,7 @@ class VtkFieldViewer(QWidget):
         else:
             lo, hi = float(self.spn_min.value()), float(self.spn_max.value())
         if hi <= lo:
-            hi = lo + 1.0
+            hi = lo * 10.0 if lo > 0 else 1.0
         return lo, hi
 
     def _effective_range(self) -> tuple[float, float]:
@@ -1124,33 +1218,50 @@ class VtkFieldViewer(QWidget):
 
         log10 is undefined at 0, but field magnitudes normally reach exactly 0
         somewhere — the old ``lo > 0`` test silently fell back to linear, so the
-        "Log scale" box did nothing. Substitute the smallest positive value.
+        "Log scale" box did nothing. Substitute the smallest positive value
+        (over the whole series when one is loaded, so the mapping stays stable
+        while playing).
         """
         lo, hi = self._color_range()
         if hi <= lo:
-            hi = lo + 1.0
+            hi = lo * 10.0 if lo > 0 else 1.0
         if self.chk_log.isChecked() and hi > 0:
             if lo <= 0:
-                lo = self._min_positive() or hi * 1e-9
+                lo = self._log_floor(hi)
             if lo >= hi:
                 lo = hi * 1e-6
         return lo, hi
 
     def _min_positive(self) -> float | None:
-        """Smallest positive value of the displayed array (None if none)."""
+        """Smallest positive value of the displayed array (None if none).
+
+        With a series loaded the cached series-wide minimum is used when Auto
+        scanned the series, so the log mapping does not shift per frame.
+        """
         loc, name = self._array()
-        if self._grid is None or not name:
+        if not name:
+            return None
+        pos_cache = getattr(self, "_series_pos_cache", None) or {}
+        if self._series and name in pos_cache:
+            return pos_cache[name]
+        if self._grid is None:
             return None
         data = self._grid.GetPointData() if loc == "point" else self._grid.GetCellData()
         arr = data.GetArray(name)
         if arr is None:
             return None
-        import numpy as np
-        from vtk.util import numpy_support as ns
+        return _min_positive_of(arr)
 
-        a = ns.vtk_to_numpy(arr).astype(float).ravel()
-        a = a[np.isfinite(a) & (a > 0)]
-        return float(a.min()) if a.size else None
+    def _log_floor(self, hi: float) -> float:
+        """Usable lower limit for the log mapping when the minimum is 0.
+
+        The smallest positive value alone is a bad floor: float32 magnitudes
+        reach denormals (a real dump had 5e-35 next to a maximum of 35), and a
+        30-decade table paints the whole map in one colour. Values below
+        ``1e-7 * maximum`` are float32 rounding noise, so that is the floor.
+        """
+        pos = self._min_positive()
+        return max(pos, hi * 1e-7) if pos else hi * 1e-6
 
     def _lookup_table(self):
         vtk = self._vtk

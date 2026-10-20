@@ -33,6 +33,32 @@ def _make_dump(path: Path, nx=6, ny=5, nz=4) -> None:
         fd.create_dataset("f0_imag", data=rng.standard_normal((3, nx, ny, nz)).astype("float32"))
 
 
+def _scale_vtr(path: Path, factor: float) -> None:
+    """Multiply every point array in a .vtr by ``factor`` (distinct frames)."""
+    import numpy as np
+    import vtk
+    from vtk.util import numpy_support as ns
+
+    reader = vtk.vtkXMLRectilinearGridReader()
+    reader.SetFileName(str(path))
+    reader.Update()
+    grid = reader.GetOutput()
+    pd = grid.GetPointData()
+    for i in range(pd.GetNumberOfArrays()):
+        arr = pd.GetArray(i)
+        if arr is None:
+            continue
+        vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float) * factor
+        new = ns.numpy_to_vtk(np.ascontiguousarray(vals), deep=True)
+        new.SetName(arr.GetName())
+        pd.RemoveArray(arr.GetName())
+        pd.AddArray(new)
+    writer = vtk.vtkXMLRectilinearGridWriter()
+    writer.SetFileName(str(path))
+    writer.SetInputData(grid)
+    writer.Write()
+
+
 def main() -> int:
     from PySide6.QtWidgets import QApplication
 
@@ -229,6 +255,10 @@ def main() -> int:
         p = series_dir / f"Et-E_{i:04d}.vtr"
         shutil.copy(written[0], p)
         steps.append(p)
+    # give the frames different magnitudes, so a per-frame colour range (the
+    # old behaviour) shows up as drifting limits / flickering colours
+    _scale_vtr(steps[1], 0.5)
+    _scale_vtr(steps[2], 4.0)
     import json
 
     (series_dir / "Et-E.series.json").write_text(
@@ -287,18 +317,81 @@ def main() -> int:
     assert bar_u.GetTitle() == "magnitude [V/m]", bar_u.GetTitle()
     print("  compact colour bar OK")
 
-    # log scale must actually engage even when the range starts at 0.0
+    # --- Auto / Log scale / Rescale interplay -------------------------------
+    v.chk_auto.setChecked(True)
     v.chk_log.setChecked(True)
-    v.chk_auto.setChecked(False)
-    v.spn_min.setValue(0.0)
-    v.spn_max.setValue(1e-12)
     lut_log = v._lookup_table()
     assert lut_log.GetScale() == 1, lut_log.GetScale()  # 1 = log10
-    lo_l, hi_l = lut_log.GetTableRange()
+    lo_l, hi_l = v._effective_range()
     assert 0.0 < lo_l < hi_l, (lo_l, hi_l)
+    # the fields show the range that is really used (no "0.000000" lie)
+    assert abs(v.spn_min.value() - lo_l) < 1e-30, (v.spn_min.value(), lo_l)
+    assert v.spn_max.value() == hi_l, (v.spn_max.value(), hi_l)
+    # ... and the log floor is the SERIES minimum positive value, bounded below
+    # by the float32 noise level (1e-7 of the maximum), so a denormal value
+    # cannot stretch the table over 30 decades (and paint everything one colour)
+    series_pos = v._series_pos_cache["magnitude"]
+    assert series_pos is not None
+    assert lo_l >= hi_l * 1e-7, (lo_l, hi_l)
+    assert lo_l == max(series_pos, hi_l * 1e-7), (lo_l, series_pos, hi_l)
+    # a real dump has 5e-35 next to 35 -> the noise floor must win
+    _orig_min_pos = v._min_positive
+    v._min_positive = lambda: 5.2e-35
+    assert v._log_floor(35.0) == 35.0 * 1e-7, v._log_floor(35.0)
+    v._min_positive = _orig_min_pos
+    floor_auto = lo_l
+    v.slider_time.setValue(1)
+    assert v._effective_range()[0] == floor_auto, "log floor drifted per frame"
+    v.slider_time.setValue(2)
+    assert v._effective_range()[0] == floor_auto, "log floor drifted per frame"
+    # Auto already rescales - the button is off (it would be a no-op)
+    assert not v.btn_rescale.isEnabled(), "Rescale must be off while Auto is on"
+    print("  auto + log: positive series-wide floor, no drift OK")
+
+    # manual limits: scientific fields keep 1e-7 (a QDoubleSpinBox with 6
+    # decimals silently rounded it to 0) and a frame change must not reset them
+    v.chk_auto.setChecked(False)
+    v.spn_min.setValue(1e-7)
+    v.spn_max.setValue(1e-4)
+    assert v.spn_min.value() == 1e-7, v.spn_min.value()
+    assert v.spn_max.value() == 1e-4, v.spn_max.value()
+    assert v._effective_range() == (1e-7, 1e-4), v._effective_range()
+    assert v.btn_rescale.isEnabled()
+    v.slider_time.setValue(1)
+    assert (v.spn_min.value(), v.spn_max.value()) == (1e-7, 1e-4), (
+        "a frame change overwrote the manual colour limits"
+    )
+    assert v._effective_range() == (1e-7, 1e-4), v._effective_range()
+    # typed text: comma or dot, exponent notation
+    v.spn_min.setText("1,5e-8")
+    v.spn_min.editingFinished.emit()
+    assert abs(v.spn_min.value() - 1.5e-8) < 1e-20, v.spn_min.value()
+    v.spn_min.setText("2.5e-8")
+    v.spn_min.editingFinished.emit()
+    assert abs(v.spn_min.value() - 2.5e-8) < 1e-20, v.spn_min.value()
+    v.spn_min.setText("garbage")  # invalid -> keep the last good value
+    v.spn_min.editingFinished.emit()
+    assert abs(v.spn_min.value() - 2.5e-8) < 1e-20, v.spn_min.value()
+    # log needs min > 0: typing 0 is replaced by the smallest positive value
+    v.spn_min.setValue(0.0)
+    assert v.spn_min.value() > 0, "log minimum stayed at 0"
+    assert 0.0 < v._effective_range()[0] < v._effective_range()[1]
+    # Rescale uses the WHOLE series (not just the current frame)
+    v.btn_rescale.click()
+    s_lo, s_hi = v._series_range_for("magnitude")
+    assert v.spn_max.value() == s_hi, (v.spn_max.value(), s_hi)
+    assert abs(v.spn_min.value() - max(series_pos, s_hi * 1e-7)) < 1e-30, (
+        v.spn_min.value(),
+        series_pos,
+        s_hi,
+    )
+    # back to linear: the log substitution stays a real, positive minimum
     v.chk_log.setChecked(False)
     assert v._lookup_table().GetScale() == 0
-    print("  log-scale range (0 -> min positive) OK")
+    assert v.spn_min.value() > 0, v.spn_min.value()
+    v.chk_auto.setChecked(True)
+    v.slider_time.setValue(0)
+    print("  manual limits survive frames + rescale over all steps OK")
 
     # pop-out gets its OWN viewer (no GL widget reparenting, so no stale copy)
     before = v._root_layout.count()

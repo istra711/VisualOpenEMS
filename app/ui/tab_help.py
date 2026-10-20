@@ -579,6 +579,16 @@ Buttons / controls
     are in metres (1 mm = 0.001 m) — the slice controls use mm.
   • "Colour": Auto (data range) / manual min-max + Log scale (log colour
     mapping, like ParaView's "Use log scale") + "Rescale to data range".
+    Auto shows the range that is used (one range for the whole series) in
+    read-only fields; "Rescale to data range" is off while Auto is on, because
+    that is what Auto already does. Untick Auto to type min/max by hand — the
+    values then stay put when you move the Time slider or play. The fields take
+    scientific notation ("1.5e-9" or "1,5e-9"). Log scale needs a minimum > 0:
+    a minimum of 0 is replaced by the smallest *usable* positive value (at least
+    1e-7 of the maximum, because float32 field values below that are noise) and
+    shown in the field; for a series one positive floor is used for all frames,
+    so the colours do not drift while playing. "Rescale to data range" uses all
+    time steps of a loaded series.
   • "Time" slider + "Play": step through / animate a per-step series. Next to
     the step counter the frame's physical simulation time is shown in ps or ns
     (auto unit), taken from the openEMS HDF5 "time" attribute and written into
