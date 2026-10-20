@@ -95,6 +95,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Field Viewer: "Export project dumps → VTK" froze the GUI on large dumps**
+  (`app/postproc/vtk_export.py`, `app/ui/vtk_viewer.py`): the export ran
+  synchronously, wrote a per-step `.vtr` for **every** stored time step of
+  **every** dump and loaded the whole series into RAM first — a 282-step
+  dump meant ~4 GB of files and minutes of a window that looked hung (no
+  progress, no cancel, and killing it left a half-written series). Now:
+  - a modal **progress dialog** (file/step text, Cancel) keeps the window
+    repainting and stops cleanly between steps (`should_stop` in
+    `export_dumps_to_vtk` / `dump_series_to_vtr`); a cancelled series gets no
+    `.series.json`, so the next run rebuilds it instead of trusting the partial
+    one;
+  - the series is **streamed** from the HDF5 file one step at a time (no
+    gigabyte RAM spike) and the VTK arrays are written as **float32** (about
+    half the file size);
+  - **incremental**: outputs newer than their dump are reused, so a second
+    click is instant — only changed dumps are converted;
+  - leftover `<stem>_NNNN.vtr` steps of an earlier, longer run are removed after
+    a successful series export (no phantom frames in the time slider);
+  - new **"per-step" checkbox** next to the button (default on, keeps the time
+    slider / video export); untick it for a quick static conversion.
+  Tests: `tests/test_vtk_export.py` (progress/total, incremental, stale-step
+  cleanup, cancel) + export-button check in `tests/vtk_viewer_smoke.py`.
+
 - **S-Param Viewer: broken y-scale on traces that were never simulated**
   (`app/ui/sparam_viewer.py`): a single-excitation S-parameter file stores the
   other S-matrix cells as placeholders (NaN in `sparams.json`, 0 in Touchstone).

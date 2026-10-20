@@ -547,6 +547,11 @@ Buttons / controls
     simulation/ folder (*.h5, excluding nf2ff_*) into <project>/vtk/ and loads
     the first one. For time-domain dumps it also writes one file per step
     (<name>_0000.vtr …) plus <name>.series.json, so the steps can be animated.
+    The conversion runs with a progress dialog (Cancel stops between files) and
+    only rewrites outputs that are older than their dump — clicking it again is
+    instant. A long time series writes many files, so the "per-step" checkbox
+    next to the button can be unticked for a quick static conversion (then the
+    time slider/video export have nothing to play).
   • "Open…": open any VTK file — .vtr, .vti, .vtu, .vtp, .vts (XML) or a legacy
     .vtk (e.g. a ParaView example); the reader is picked by extension.
   • "Array": pick the field array to display (point or cell data), e.g.
