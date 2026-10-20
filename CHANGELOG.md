@@ -23,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     starts in that view; the pop-out mirrors the choice, and the camera maths
     lives in the testable `preset_camera()` helper (centre + axis direction +
     up vector, fitted by `ResetCamera()`). The Settings dialog's Field Viewer
-    group got the same combo as "Default view".
+    group got the same combo as "Default view". The new controls (View box, field
+    info) and the Video…/Pop out/Reset view buttons sit **left-aligned** with the
+    rest of their row — they used to be pushed to the right edge.
   Tests: `tests/vtk_viewer_smoke.py` (`_field_kind`, label text/tooltip, preset
   camera maths incl. empty scene, combo → callback), `tests/test_settings.py`
   (default "keep" + round-trip + old settings without the key).

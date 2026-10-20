@@ -449,9 +449,9 @@ class VtkFieldViewer(QWidget):
         for w in (self.btn_open, self.btn_export, self.chk_per_step, self.spin_stride,
                   self.chk_outline):
             bar.addWidget(w)
-        bar.addStretch(1)
         # standard view (applied now + used for every newly loaded field) and the
-        # info which field is on screen (file name without the frame number)
+        # info which field is on screen (file name without the frame number);
+        # left-aligned with the rest, the leftover width stays at the right end
         self.cmb_view_preset = QComboBox()
         for key, label in VIEW_PRESETS:
             self.cmb_view_preset.addItem(label, key)
@@ -476,6 +476,7 @@ class VtkFieldViewer(QWidget):
             "Hover for the file, the series length and the array."
         )
         bar.addWidget(self.lbl_field)
+        bar.addStretch(1)
         root.addLayout(bar)
 
         bar_view = QHBoxLayout()
@@ -486,9 +487,9 @@ class VtkFieldViewer(QWidget):
         )
         for w in (lbl_rep, self.cmb_rep, QLabel("Array"), self.cmb_array):
             bar_view.addWidget(w)
-        bar_view.addStretch(1)
         for w in (self.btn_video, self.btn_popout, self.btn_reset):
             bar_view.addWidget(w)
+        bar_view.addStretch(1)
         root.addLayout(bar_view)
 
         # slice + iso level
