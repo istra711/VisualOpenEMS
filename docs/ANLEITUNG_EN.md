@@ -168,6 +168,42 @@ Notes:
 - `Max. number of timesteps was reached` is expected here; the stopband is
   stable (0.019 dB change from 50 000 to 150 000 steps, `work\pcb_filter_conv`).
 
+#### PCB band-pass 5.6 GHz (five stubs, Teflon)
+
+**Preset: PCB Bandpass (5.6 GHz)…** loads a 5-pole Chebyshev band-pass
+(0.1 dB ripple) on **PTFE/Teflon** (0.254 mm, eps_r 2.1, tan_d 0.0002, 35 µm
+copper). Five **open lambda/2 stubs** hang off a 50 ohm line, separated by four
+**lambda/4 connecting lines** acting as impedance inverters — no vias, so the
+board stays single-sided planar.
+
+| Element | Z (ohm) | Width (mm) | Length (mm) |
+|---|---|---|---|
+| Stub 1 / 5 (outer) | 50.8 | 0.80 | 18.37 |
+| Stub 2 / 4 | 15.0 | 3.74 | 18.69 |
+| Stub 3 (centre) | 68.0 | 0.50 | 22.91 |
+| Line 1 / 4 | 43.9 | 1.01 | 11.78 |
+| Line 2 / 3 | 61.0 | 0.60 | 8.04 |
+
+```powershell
+c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe examples\run_pcb_bandpass_example.py
+```
+
+Result (`work\pcb_bandpass\sparams\`): **|S11| < -10 dB from 4.90 to 6.45 GHz**,
+passband **-0.1 … -0.3 dB**, rejection **-42 dB at 4.0 GHz** and **-38 dB at
+7.2 GHz** (two FDTD runs, one S-matrix column each, merged; ~80 s per port on
+8 cores).
+
+Notes:
+
+- The mesh uses `min_cellsize = 0.15 mm` (narrowest stub 0.50 mm) and
+  `min_cellsize_z = 0.085 mm` (three cells through the 0.254 mm substrate).
+- `smooth_metal_edge = False` and `handle_closely_placed_edges = False`:
+  otherwise easyMesh creates a 4 µm cell between the 0.41 mm and 0.50 mm wide
+  trace edges, shrinking the CFL time step by a factor of 8 (the simulation
+  never decays).
+- Stub band-passes are inherently wideband; the spurious pass-band near 2*f0 is
+  a property of the topology, not a meshing artefact.
+
 ---
 
 ## 5. Configure the project
@@ -372,7 +408,10 @@ warning) — the mesh viewer outlines such primitives in red and writes
   your version to `project_run_edited.py` and asks whether to regenerate or
   run it as-is.
 - **2-port example (filter):** `Preset: PCB Filter…` in the GUI or
-  `examples\run_pcb_filter_example.py` — both S-matrix columns, ready `sparams.s2p`.
+  `examples\run_pcb_filter_example.py` - both S-matrix columns, ready `sparams.s2p`.
+- **2-port example (5.6 GHz band-pass):** `Preset: PCB Bandpass (5.6 GHz)…` or
+  `examples\run_pcb_bandpass_example.py` - five open lambda/2 stubs on Teflon,
+  |S11| < -10 dB from 4.90-6.45 GHz, ready `sparams.s2p`.
 
 ---
 

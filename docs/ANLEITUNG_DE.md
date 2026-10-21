@@ -168,6 +168,42 @@ Hinweise:
 - `Max. number of timesteps was reached` ist hier erwartet; das Stopband ist stabil
   (0,019 dB Änderung von 50 000 auf 150 000 Schritte, `work\pcb_filter_conv`).
 
+#### PCB-Bandpass 5,6 GHz (fünf Stubs, Teflon)
+
+**Preset: PCB Bandpass (5.6 GHz)…** lädt einen 5-poligen Chebyshev-Bandpass
+(0,1 dB Welligkeit) auf **PTFE/Teflon** (0,254 mm, εr = 2,1, tanδ = 0,0002,
+35 µm Kupfer). Fünf **offene λ/2-Stubs** hängen an einer 50-Ω-Leitung, dazwischen
+liegen vier **λ/4-Verbindungsleitungen** als Impedanz-Inverter — ohne Vias, also
+einseitig planar.
+
+| Element | Z (Ω) | Breite (mm) | Länge (mm) |
+|---|---|---|---|
+| Stub 1 / 5 (außen) | 50,8 | 0,80 | 18,37 |
+| Stub 2 / 4 | 15,0 | 3,74 | 18,69 |
+| Stub 3 (Mitte) | 68,0 | 0,50 | 22,91 |
+| Linie 1 / 4 | 43,9 | 1,01 | 11,78 |
+| Linie 2 / 3 | 61,0 | 0,60 | 8,04 |
+
+```powershell
+c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe examples\run_pcb_bandpass_example.py
+```
+
+Ergebnis (`work\pcb_bandpass\sparams\`): **|S11| < −10 dB von 4,90 bis
+6,45 GHz**, Durchlass **−0,1 … −0,3 dB**, Sperrdämpfung **−42 dB bei 4,0 GHz**
+und **−38 dB bei 7,2 GHz** (2 FDTD-Läufe, je eine S-Matrix-Spalte, danach
+zusammengeführt; Laufzeit ≈ 80 s pro Port auf 8 Kernen).
+
+Hinweise:
+
+- Das Gitter nutzt `min_cellsize = 0,15 mm` (schmalster Stub 0,50 mm) und
+  `min_cellsize_z = 0,085 mm` (drei Zellen im 0,254-mm-Substrat).
+- `smooth_metal_edge = False` und `handle_closely_placed_edges = False`:
+  easyMesh erzeugte sonst zwischen 0,41 mm und 0,50 mm breiten Leiterkanten eine
+  4-µm-Zelle, die den CFL-Zeitschritt um Faktor 8 verkleinert (Simulation lief
+  nicht aus).
+- Die Sperrdämpfung ist bei Stub-Bandpässen prinzipbedingt nur im Bereich um f0
+  gut; bei 2·f0 entsteht ein weiterer Durchlass (Spurious-Passband).
+
 ---
 
 ## 5. Projekt konfigurieren
@@ -374,6 +410,9 @@ Warning) — der Mesh Viewer umrahmt solche Primitive rot und schreibt
   ausgeführt werden soll.
 - **2-Port-Beispiel (Filter):** `Preset: PCB Filter…` in der GUI oder
   `examples\run_pcb_filter_example.py` — beide S-Matrix-Spalten, fertiges `sparams.s2p`.
+- **2-Port-Beispiel (Bandpass 5,6 GHz):** `Preset: PCB Bandpass (5.6 GHz)…` oder
+  `examples\run_pcb_bandpass_example.py` — 5 offene λ/2-Stubs auf Teflon,
+  |S11| < −10 dB von 4,90–6,45 GHz, fertiges `sparams.s2p`.
 
 ---
 

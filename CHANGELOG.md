@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-22
+
 ### Added
 
+- **PCB band-pass example: 5.6 GHz, five open stubs, Teflon**
+  (`app/csxcad_builder/primitives.py`, `examples/run_pcb_bandpass_example.py`,
+  `app/ui/main_window.py`): new preset **Preset: PCB Bandpass (5.6 GHz)…**
+  (menu *Presets*) and a headless example. A 5-pole Chebyshev band-pass
+  (0.1 dB ripple) on PTFE (`eps_r` 2.1, `tan_d` 0.0002, 0.254 mm, 35 µm copper):
+  five **open lambda/2 shunt stubs** on a 50 ohm line, separated by four
+  **lambda/4 inverter lines** — no vias, single-sided planar. Line/stub widths
+  and lengths are synthesised with Hammerstad's microstrip formulas from
+  `PCB_BANDPASS_DESIGN` (impedances from a fit of the exact commensurate
+  network to the Chebyshev target). Two lumped 50 ohm edge ports; the example
+  runs both excitations and merges to `sparams.s2p`. Simulated (openEMS):
+  **|S11| < -10 dB from 4.90 to 6.45 GHz**, insertion loss -0.1 … -0.3 dB,
+  rejection -42 dB at 4.0 GHz. The preset mesh uses `min_cellsize_z`
+  (three cells through the 0.254 mm substrate) and turns off
+  `smooth_metal_edge` / `handle_closely_placed_edges` — easyMesh otherwise
+  produced a 4 µm Y cell that shrank the CFL step by 8x. Docs:
+  `docs/ANLEITUNG_DE.md` / `ANLEITUNG_EN.md` (new subsection with the design
+  table and the measured result).
 - **Ports: "Reverse" option** (`app/models/project.py`,
   `app/ui/geometry_editors.py`, `app/ui/main_window.py`,
   `app/ui/mesh_viewer.py`, `app/simulation/script_gen.py`): the Port dialog has
@@ -1498,4 +1518,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.1]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.1
 [0.5.2]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.2
 [0.5.3]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.3
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.3...HEAD
+[0.5.4]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.4
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.4...HEAD
