@@ -158,8 +158,8 @@ Port mode (right-click → "Port mode (click in a slice to place)")
     XZ → X/Z, YZ → Y/Z).
   • A red dot with its (x, y) coordinates marks the spot, then the Port dialog
     opens with the computed box prefilled (drawing units) — edit anything
-    (name/type/resistance/direction/ends) before OK; the red dot stays visible
-    while the dialog is open.
+    (name/type/resistance/direction/width/reverse/ends) before OK; the red dot
+    stays visible while the dialog is open.
   • On OK the port is added to the project (it appears in the component tree and
     in the Ports / Dumps window) and is drawn in the slices immediately. Start
     and Stop must differ (a zero-length port cannot be excited — the dialog
@@ -434,6 +434,16 @@ Ports
     (the remaining active ports are numbered 1, 2, 3 …), no S-parameter column,
     ignored by "Run All Ports" and by the mesh validators. Handy to keep spare
     ports around while simulating a subset.
+  • **Reverse** (checkbox in the dialog, list/tree show "[rev]"): flips the port
+    direction by swapping Start and Stop **when the run script is generated**.
+    openEMS takes the port polarity from sign(Stop − Start) — the lumped
+    excitation and current probe change sign, an MSL port gets the opposite
+    propagation sense — so the S-parameters of that port are referenced the
+    other way round. Its box does not move in the viewer and the project keeps
+    its original Start/Stop. Handy when a port ended up facing away (e.g. after
+    copying a layout or when comparing the S21 phase with another tool).
+    Not used for rect waveguide ports (their mode direction is the Direction
+    field); the generated script logs that.
   • The port's resistance is also the S11 reference (normalisation) impedance:
     a 73 Ω lumped port yields a 73 Ω-referenced S11 and the .s1p header records
     z0=73 (a 50 Ω port keeps the old 50 Ω result). Match it to the reference

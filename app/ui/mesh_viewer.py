@@ -2013,7 +2013,11 @@ class MeshGeometryViewer(QWidget):
                 st = getattr(p, "start", None) or p.get("start", [0, 0, 0])
                 sp = getattr(p, "stop", None) or p.get("stop", [0, 0, 0])
                 name = getattr(p, "name", None) or p.get("name", "port")
-                lines.append(f"  {name}: ({st[0]:.3g},{st[1]:.3g},{st[2]:.3g}) → ({sp[0]:.3g},{sp[1]:.3g},{sp[2]:.3g})")
+                rev = "  [rev]" if bool(getattr(p, "reverse", False)) else ""
+                lines.append(
+                    f"  {name}{rev}: ({st[0]:.3g},{st[1]:.3g},{st[2]:.3g}) → "
+                    f"({sp[0]:.3g},{sp[1]:.3g},{sp[2]:.3g})"
+                )
         if self._nf2ff is not None:
             lines.append("")
             lines.append("=== NF2FF ===")

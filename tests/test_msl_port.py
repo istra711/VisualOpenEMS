@@ -119,3 +119,46 @@ def test_generated_script_uses_metal_and_axes(tmp_path):
     # the strip metal (not the port resistance) is passed as metal_prop
     assert "AddMSLPort(\n            idx,\n            metal," in text
     assert "AddMSLPort(\n                idx,\n                port.resistance" not in text
+
+
+def test_port_reverse_swaps_start_and_stop():
+    """A reversed port is handed to openEMS with Start/Stop swapped."""
+    p = PortDef(name="p", type="lumped", start=[0.0, 0.0, 1.0], stop=[0.0, 0.0, 0.035])
+    assert p.oriented() == ([0.0, 0.0, 1.0], [0.0, 0.0, 0.035])
+    assert p.reverse is False  # default: not reversed
+    p.reverse = True
+    assert p.oriented() == ([0.0, 0.0, 0.035], [0.0, 0.0, 1.0])
+    # explicit values (the generator passes the quantised / extended box)
+    assert p.oriented([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]) == (
+        [4.0, 5.0, 6.0],
+        [1.0, 2.0, 3.0],
+    )
+    p.reverse = False
+    assert p.oriented([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]) == (
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0],
+    )
+    # the flag survives a project round-trip
+    p.reverse = True
+    proj = Project.new_default("rev")
+    proj.ports = [p]
+    restored = Project.from_dict(json.loads(json.dumps(proj.to_dict())))
+    assert restored.ports[0].reverse is True
+
+
+def test_generated_script_swaps_reversed_ports(tmp_path):
+    from app.simulation.script_gen import generate_run_script
+
+    proj = Project.new_default("rev_gen")
+    proj.ports = [
+        PortDef(name="in1", start=[0.0, 0.0, 1.0], stop=[0.0, 0.0, 0.0], direction="z", reverse=True),
+        _msl(start=[-10.0, -1.0, 1.6], stop=[0.0, 1.0, 0.0], reverse=True),
+    ]
+    script = generate_run_script(proj, tmp_path / "p.fcsim.json", tmp_path, primitives=[])
+    text = script.read_text(encoding="utf-8")
+    # lumped: the box is oriented before AddLumpedPort …
+    assert "b_start, b_stop = port.oriented(start, stop)" in text
+    # … MSL: after the zero-length extension (otherwise the cell would flip too)
+    assert text.index("start, stop, widened = extend_zero_propagation(") < text.index(
+        "start, stop = port.oriented(start, stop)"
+    )

@@ -98,7 +98,7 @@ class PortDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Port")
-        self.resize(380, 460)
+        self.resize(380, 500)
         self._coord_system = coord_system
         p = port or PortDef(name="in1")
         self.result_port: PortDef | None = None
@@ -146,6 +146,16 @@ class PortDialog(QDialog):
         )
         self.chk_excite = QCheckBox("Excite port")
         self.chk_excite.setChecked(bool(p.excite_port))
+        self.chk_reverse = QCheckBox("Reverse (swap Start/Stop)")
+        self.chk_reverse.setChecked(bool(getattr(p, "reverse", False)))
+        self.chk_reverse.setToolTip(
+            "Flip the port direction: Start and Stop are swapped when the run\n"
+            "script is generated. openEMS takes the port polarity from\n"
+            "sign(Stop - Start), so this inverts the excitation and current sign\n"
+            "of a lumped port and the propagation sense of an MSL port.\n"
+            "The box in the viewer does not change (no effect on rect waveguide\n"
+            "ports - their direction comes from the Direction field)."
+        )
         self.chk_active = QCheckBox("Active (use in the simulation)")
         self.chk_active.setChecked(bool(getattr(p, "active", True)))
         self.chk_active.setToolTip(
@@ -166,6 +176,7 @@ class PortDialog(QDialog):
         form.addRow("Excitation dir (MSL)", self.cmb_exc)
         form.addRow(self.chk_active)
         form.addRow(self.chk_excite)
+        form.addRow(self.chk_reverse)
         form.addRow("Mesh dirs", self.cmb_mesh)
         self.spn_start = _vec3_row(form, "Start", p.start, coord_system=coord_system)
         self.spn_stop = _vec3_row(form, "Stop", p.stop, coord_system=coord_system)
@@ -203,6 +214,7 @@ class PortDialog(QDialog):
             exc_direction=self.cmb_exc.currentData() or "",
             excite_port=self.chk_excite.isChecked(),
             active=self.chk_active.isChecked(),
+            reverse=self.chk_reverse.isChecked(),
             mesh_dirs=self.cmb_mesh.currentText(),
             lumped_width=(
                 (self.cmb_width.currentData() or "line")

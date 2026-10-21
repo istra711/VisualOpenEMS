@@ -87,6 +87,28 @@ class PortDef:
     #: mode) - used to re-derive the metal width and shown in the log. Empty
     #: for ports typed in by hand or imported from FreeCAD.
     metal: str = ""
+    #: Reverse the port: Start and Stop are swapped when the run script is
+    #: generated. openEMS derives the port polarity from the sign of
+    #: (stop - start) (`LumpedPort.direction` -> excitation and current probe,
+    #: `MSLPort.direction` -> propagation sense), so this flips the port
+    #: direction without moving its box. The geometry stays as drawn.
+    reverse: bool = False
+
+    def oriented(
+        self, start: list[float] | None = None, stop: list[float] | None = None
+    ) -> tuple[list[float], list[float]]:
+        """``(start, stop)`` as written to openEMS — swapped when ``reverse`` is set.
+
+        openEMS derives a port's polarity / propagation sense from the sign of
+        ``stop - start`` (``LumpedPort.direction`` drives the excitation and the
+        current probe, ``MSLPort.direction`` the propagation sense), so swapping
+        the two ends reverses the port without moving its box. ``start``/``stop``
+        may be passed explicitly (the generator hands in the quantised or
+        cell-extended box).
+        """
+        st = list(self.start if start is None else start)
+        sp = list(self.stop if stop is None else stop)
+        return (sp, st) if self.reverse else (st, sp)
 
 
 @dataclass

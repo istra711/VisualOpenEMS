@@ -251,6 +251,37 @@ def main() -> int:
     assert "excitation direction" in win.log_view.toPlainText()
     print("lumped width 'line' / 'area = metal width': OK")
 
+    # 9) "Reverse" option: dialog round-trip + list/tree marker
+    plain = _PD2(name="r0", start=[0, 0, 1.0], stop=[0, 0, 0.0], direction="z")
+    assert plain.reverse is False, "ports default to 'not reversed'"
+    dlg_rev = PortDialog(win, port=plain)
+    assert dlg_rev.chk_reverse.isChecked() is False
+    dlg_rev.chk_reverse.setChecked(True)
+    dlg_rev._accept()
+    assert dlg_rev.result_port.reverse is True, dlg_rev.result_port
+    # the box is NOT swapped in the project - only the generated script swaps it
+    assert dlg_rev.result_port.start == [0, 0, 1.0], dlg_rev.result_port.start
+    assert dlg_rev.result_port.stop == [0, 0, 0.0], dlg_rev.result_port.stop
+    assert dlg_rev.result_port.oriented() == ([0, 0, 0.0], [0, 0, 1.0])
+
+    win.project.ports = [dlg_rev.result_port]
+    win._refresh_ports()
+    win.port_list.setCurrentRow(0)
+    assert "[rev]" in win.port_list.item(0).text(), win.port_list.item(0).text()
+    _port_rows = [
+        win.tree.item(i).text()
+        for i in range(win.tree.count())
+        if win.tree.item(i).text().startswith("Port:")
+    ]
+    assert _port_rows and "[rev]" in _port_rows[0], _port_rows
+    # editing keeps the flag, unticking clears it again
+    again = PortDialog(win, port=dlg_rev.result_port)
+    assert again.chk_reverse.isChecked() is True, "dialog must show the flag"
+    again.chk_reverse.setChecked(False)
+    again._accept()
+    assert again.result_port.reverse is False
+    print("port 'Reverse' option (dialog/script/list/tree): OK")
+
     win.close()
     print("PORT DEFAULTS SMOKE OK")
     return 0
