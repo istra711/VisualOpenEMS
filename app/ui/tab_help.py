@@ -91,10 +91,11 @@ Mesh editor (right-hand panel) — manual mesh lines
   • In a slice: a single left-click in FREE space adds a line there (on the
     editor axis; if that axis is the slice normal, the first in-plane axis is
     used); a click ON a line (within a narrow band, ~0.6 % of the axis) selects
-    that line instead — highlighted orange. Shift+click always adds, so you can
-    place several lines in a row. The axis combo follows the click. A click near
-    a geometry edge (within ~1 % of the axis) snaps the NEW line exactly onto
-    that edge (primitive AABB faces + ports).
+    that line instead — highlighted orange; clicking the **same line again
+    deselects** it. Shift+click always adds, so you can place several lines in a
+    row. The axis combo follows the click. A click near a geometry edge (within
+    ~1 % of the axis) snaps the NEW line exactly onto that edge (primitive AABB
+    faces + ports).
   • Lines can only be placed INSIDE the FDTD domain: the coordinate spin is
     limited to the domain range and a click/value outside is clamped to the
     domain edge (an out-of-domain line is also ignored on build).
@@ -104,8 +105,10 @@ Mesh editor (right-hand panel) — manual mesh lines
     "Restore selected" (undo a removal). Select several with Shift (range) or
     Ctrl (toggle); Del / Backspace removes the selection.
   • Right-click in the plot area opens a menu: toggle the Mesh editor, toggle
-    "Port mode", delete the selected line(s), pop the viewer out (like the
-    Antenna / S-Params viewers), reset the view.
+    "Port mode", pick the port type, delete the selected line(s), pop the viewer
+    out (like the Antenna / S-Params viewers), **"Refresh view (keep zoom)"**
+    (redraws the current view from the current mesh — view, zoom and pan stay,
+    the line selection is dropped) and "Reset / Home view".
 
 Port mode (right-click → "Port mode (click in a slice to place)")
   • Click ANYWHERE in an XY/XZ/YZ slice to place a port at exactly those
