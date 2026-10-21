@@ -593,3 +593,298 @@ def pcb_filter_primitives(
     p.primitives = list(primitives)
     return p, primitives
 
+
+# --------------------------------------------------------------------------
+# Microstrip synthesis (Hammerstad) used by the band-pass preset
+# --------------------------------------------------------------------------
+def msl_width(z0: float, eps_r: float, h: float) -> float:
+    """Microstrip width (mm) for a characteristic impedance `z0` (ohm)."""
+    if z0 >= 44.0 - 2.0 * eps_r:  # narrow line (W/h <= 2)
+        a = z0 / 60.0 * math.sqrt((eps_r + 1.0) / 2.0) + (eps_r - 1.0) / (
+            eps_r + 1.0
+        ) * (0.23 + 0.11 / eps_r)
+        w_over_h = 8.0 * math.exp(a) / (math.exp(2.0 * a) - 2.0)
+    else:  # wide line (W/h > 2)
+        b = 377.0 * math.pi / (2.0 * z0 * math.sqrt(eps_r))
+        w_over_h = 2.0 / math.pi * (
+            b
+            - 1.0
+            - math.log(2.0 * b - 1.0)
+            + (eps_r - 1.0) / (2.0 * eps_r)
+            * (math.log(b - 1.0) + 0.39 - 0.61 / eps_r)
+        )
+    return w_over_h * h
+
+
+def msl_eps_eff(z0: float, eps_r: float, h: float) -> float:
+    """Effective permittivity of a microstrip line (Hammerstad, no thickness)."""
+    w_over_h = msl_width(z0, eps_r, h) / h
+    return (eps_r + 1.0) / 2.0 + (eps_r - 1.0) / 2.0 / math.sqrt(
+        1.0 + 12.0 / w_over_h
+    )
+
+
+def msl_open_end(z0: float, eps_r: float, h: float) -> float:
+    """Open-end fringing extension (mm) of a microstrip open stub."""
+    ee = msl_eps_eff(z0, eps_r, h)
+    w_over_h = msl_width(z0, eps_r, h) / h
+    return (
+        0.412
+        * h
+        * (ee + 0.3)
+        * (w_over_h + 0.264)
+        / ((ee - 0.258) * (w_over_h + 0.8))
+    )
+
+
+# 5-pole Chebyshev band-pass, 0.1 dB ripple, f0 = 5.6 GHz, FBW ~ 30 %.
+# Synthesised from the exact commensurate network (five open lambda/2 shunt
+# stubs + four lambda/4 inverter lines): |S11| <= -20 dB over 4.85-6.35 GHz.
+PCB_BANDPASS_DESIGN: dict[str, Any] = {
+    "stub_z": [50.83, 15.00, 68.03, 15.00, 50.83],
+    "stub_k": [0.927, 0.984, 1.140, 0.984, 0.927],  # x lambda_g/2
+    "line_z": [43.85, 61.01, 61.01, 43.85],
+    "line_k": [1.189, 0.800, 0.800, 1.189],  # x lambda_g/4
+}
+
+
+def pcb_bandpass_stub_primitives(
+    f0: float = 5.6e9,
+    substrate_eps: float = 2.1,
+    substrate_tand: float = 0.0002,
+    substrate_thickness: float = 0.254,
+    ground_thickness: float = 0.25,
+    feed_length: float = 7.0,
+    port_margin: float = 1.5,
+    design: dict[str, Any] | None = None,
+) -> tuple[Project, list[dict[str, Any]]]:
+    """Return (Project, primitives) for a PCB band-pass (stub filter).
+
+    Five **open-circuit lambda/2 shunt stubs** hang off a 50 ohm microstrip
+    line and are separated by lambda/4 connecting lines (impedance inverters).
+    That is a classic 5-pole Chebyshev band-pass: 0.1 dB ripple, f0 = 5.6 GHz,
+    about 30 % bandwidth (|S11| <= -20 dB from 4.85 to 6.35 GHz).  Open stubs
+    need no vias, so the board stays a single-layer planar circuit.
+
+    Substrate: PTFE ("Teflon") 0.254 mm, eps_r = 2.1, tan_d = 0.0002, 35 um
+    copper.  Line/stub widths and lengths are synthesised with Hammerstad's
+    microstrip formulas from the impedance table in `PCB_BANDPASS_DESIGN`
+    (fit of the exact commensurate network to the Chebyshev target).
+
+    Two lumped 50 ohm edge ports (in1/out1) terminate the feed lines.  One
+    FDTD run measures one S-matrix column; see
+    examples/run_pcb_bandpass_example.py for the two-run merge.
+    """
+    from openEMS.physical_constants import C0, EPS0
+
+    from app.models.project import (
+        BoundarySpec,
+        DumpDef,
+        MaterialDef,
+        MeshSpec,
+        NF2FFDef,
+        PortDef,
+        Project as Proj,
+        SimSpec,
+    )
+
+    d = design or PCB_BANDPASS_DESIGN
+    z_stub = list(d["stub_z"])
+    k_stub = list(d["stub_k"])
+    z_line = list(d["line_z"])
+    k_line = list(d["line_k"])
+    n_stub = len(z_stub)
+    if len(z_line) != n_stub - 1:
+        raise ValueError("band-pass design needs n-1 connecting lines")
+
+    def lam_g(z0: float) -> float:
+        return C0 / (f0 * math.sqrt(msl_eps_eff(z0, substrate_eps, substrate_thickness))) * 1e3
+
+    w_feed = msl_width(50.0, substrate_eps, substrate_thickness)
+    w_stub = [msl_width(z, substrate_eps, substrate_thickness) for z in z_stub]
+    w_line = [msl_width(z, substrate_eps, substrate_thickness) for z in z_line]
+    # lambda/2 open stubs: subtract the open-end fringing length
+    l_stub = [
+        k * lam_g(z) / 2.0 - msl_open_end(z, substrate_eps, substrate_thickness)
+        for z, k in zip(z_stub, k_stub)
+    ]
+    l_line = [k * lam_g(z) / 4.0 for z, k in zip(z_line, k_line)]
+
+    # stub centres along X (first stub at -span/2)
+    span = sum(l_line)
+    x_stub = [-span / 2.0]
+    for ln in l_line:
+        x_stub.append(x_stub[-1] + ln)
+    x_port = span / 2.0 + feed_length
+
+    board_x = x_port + port_margin
+    hw_feed = w_feed / 2.0
+    board_y0 = -(hw_feed + 6.0)
+    board_y1 = max(l_stub) + 5.0
+    z_top = substrate_thickness
+    kappa = substrate_tand * 2.0 * math.pi * f0 * EPS0 * substrate_eps
+
+    p = Proj(name="pcb_bandpass")
+    p.mesh = MeshSpec(
+        preset="high",
+        drawing_unit="mm",
+        start_frequency=4.0e9,
+        stop_frequency=7.2e9,
+        target_frequency=f0,
+        cells_per_wavelength=20.0,
+        max_grading_ratio=2.0,
+        # 0.5 mm narrowest stub -> at least 3 cells across
+        min_cellsize=0.15,
+        # three cells through the 0.254 mm substrate (E-field is mostly there)
+        min_cellsize_z=substrate_thickness / 3.0,
+        # easyMesh's edge smoothing/merging creates a ~4 um Y cell between the
+        # feed edge and the wider line edge (kills the CFL time step), so keep
+        # both off for this dense planar layout.
+        smooth_metal_edge="False",
+        handle_closely_placed_edges=False,
+    )
+    p.boundary = BoundarySpec(
+        xmin="MUR",
+        xmax="MUR",
+        ymin="MUR",
+        ymax="MUR",
+        zmin="PEC",
+        zmax="MUR",
+        pml_size=8,
+        air_margin=[10.0, 10.0, 10.0, 10.0, 0.0, 12.0],
+    )
+    p.materials = [
+        MaterialDef(name="copper", kind="pec"),
+        MaterialDef(
+            name="ptfe",
+            kind="dielectric",
+            epsilon=substrate_eps,
+            kappa=kappa,
+            tand=substrate_tand,
+        ),
+    ]
+    p.ports = [
+        PortDef(
+            name="in1",
+            type="lumped",
+            start=[-x_port, -hw_feed, 0.0],
+            stop=[-x_port, hw_feed, z_top],
+            resistance=50.0,
+            direction="z",
+            excite_port=True,
+            mesh_dirs="xy",
+            lumped_width="y",
+        ),
+        PortDef(
+            name="out1",
+            type="lumped",
+            start=[x_port, -hw_feed, 0.0],
+            stop=[x_port, hw_feed, z_top],
+            resistance=50.0,
+            direction="z",
+            excite_port=False,
+            mesh_dirs="xy",
+            lumped_width="y",
+        ),
+    ]
+    p.dumps = [
+        DumpDef(
+            name="E_substrate",
+            quantity="E",
+            start=[-board_x, board_y0, z_top / 2.0],
+            stop=[board_x, board_y1, z_top / 2.0],
+            frequency_domain=True,
+            frequency=f0,
+        )
+    ]
+    p.nf2ff = NF2FFDef(
+        enabled=False,
+        start=[-board_x - 10.0, board_y0 - 10.0, -1.0],
+        stop=[board_x + 10.0, board_y1 + 10.0, z_top + 10.0],
+        center=[0.0, 0.5 * (board_y0 + board_y1), z_top / 2.0],
+        radius=1.0,
+        frequencies=[f0],
+        theta_steps=91,
+        phi_steps=181,
+    )
+    p.sim = SimSpec(
+        end_criteria=1e-5,
+        max_timesteps=80_000,
+        nf2ff_enabled=False,
+        field_dumps_enabled=True,
+    )
+
+    primitives: list[dict[str, Any]] = [
+        {
+            "kind": "box",
+            "name": "ground",
+            "material": "copper",
+            "priority": 90,
+            "start": [-board_x, board_y0, -ground_thickness],
+            "stop": [board_x, board_y1, 0.0],
+            "edges2grid": "xy",
+        },
+        {
+            "kind": "box",
+            "name": "substrate",
+            "material": "ptfe",
+            "priority": 10,
+            "start": [-board_x, board_y0, 0.0],
+            "stop": [board_x, board_y1, z_top],
+        },
+        {
+            "kind": "box",
+            "name": "feed_in",
+            "material": "copper",
+            "priority": 100,
+            "start": [-x_port, -hw_feed, z_top],
+            "stop": [x_stub[0], hw_feed, z_top],
+            "edges2grid": "xy",
+        },
+        {
+            "kind": "box",
+            "name": "feed_out",
+            "material": "copper",
+            "priority": 100,
+            "start": [x_stub[-1], -hw_feed, z_top],
+            "stop": [x_port, hw_feed, z_top],
+            "edges2grid": "xy",
+        },
+    ]
+    for i, (x0, x1, w) in enumerate(zip(x_stub[:-1], x_stub[1:], w_line), start=1):
+        primitives.append(
+            {
+                "kind": "box",
+                "name": f"line_{i}{i + 1}",
+                "material": "copper",
+                "priority": 100,
+                # overlap both stub centres so the T-junctions are solid
+                "start": [x0, -w / 2.0, z_top],
+                "stop": [x1, w / 2.0, z_top],
+                "edges2grid": "xy",
+            }
+        )
+    for i, (x, w, ln) in enumerate(zip(x_stub, w_stub, l_stub), start=1):
+        primitives.append(
+            {
+                "kind": "box",
+                "name": f"stub_{i}",
+                "material": "copper",
+                "priority": 100,
+                "start": [x - w / 2.0, 0.0, z_top],
+                "stop": [x + w / 2.0, ln, z_top],
+                "edges2grid": "xy",
+            }
+        )
+
+    p.notes = (
+        "pcb_bandpass_stub_primitives — 5-pole Chebyshev band-pass made of five "
+        f"open lambda/2 stubs on PTFE {substrate_thickness * 1e3:.0f} um "
+        f"(eps_r {substrate_eps}), f0={f0 / 1e9:.2f} GHz, ~30 % bandwidth "
+        "(4.85-6.35 GHz), no vias. Stub widths: "
+        + ", ".join(f"{w:.2f}" for w in w_stub)
+        + " mm."
+    )
+    p.primitives = list(primitives)
+    return p, primitives
+

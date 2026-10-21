@@ -235,6 +235,11 @@ class MainWindow(QMainWindow):
         self.btn_pcb.setToolTip(
             "2.45 GHz microstrip notch filter on FR4 (2 ports) under work/pcb_filter"
         )
+        self.btn_pcb_bp = QPushButton("Preset: PCB Bandpass…")
+        self.btn_pcb_bp.setToolTip(
+            "5.6 GHz 5-pole Chebyshev band-pass, five open stubs on PTFE "
+            "(2 ports) under work/pcb_bandpass"
+        )
         self.btn_run = QPushButton("Run Simulation")
         self.btn_abort = QPushButton("Abort")
         self.btn_script = QPushButton("Script…")
@@ -270,6 +275,7 @@ class MainWindow(QMainWindow):
             self.btn_patch,
             self.btn_yagi,
             self.btn_pcb,
+            self.btn_pcb_bp,
             self.btn_run,
             self.btn_abort,
             self.btn_script,
@@ -778,6 +784,7 @@ class MainWindow(QMainWindow):
         self.btn_patch.clicked.connect(self._on_load_patch)
         self.btn_yagi.clicked.connect(self._on_load_yagi)
         self.btn_pcb.clicked.connect(self._on_load_pcb)
+        self.btn_pcb_bp.clicked.connect(self._on_load_pcb_bandpass)
         self.btn_build_mesh.clicked.connect(self._on_build_mesh)
         self.btn_run.clicked.connect(self._on_run)
         self.btn_abort.clicked.connect(self._on_abort)
@@ -869,6 +876,7 @@ class MainWindow(QMainWindow):
         add_action(pmenu, "Preset: Patch Antenna\u2026", btn=self.btn_patch)
         add_action(pmenu, "Preset: Yagi Antenna\u2026", btn=self.btn_yagi)
         add_action(pmenu, "Preset: PCB Filter\u2026", btn=self.btn_pcb)
+        add_action(pmenu, "Preset: PCB Bandpass (5.6 GHz)\u2026", btn=self.btn_pcb_bp)
 
         gmenu = bar.addMenu("&Geometry")
         add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
@@ -3513,6 +3521,52 @@ class MainWindow(QMainWindow):
         self.geom_info.setPlainText("\n".join(lines))
         self._update_window_title()
         self._log("PCB filter preset loaded")
+        for ln in lines:
+            self._log(ln)
+        self._log_computed_summary()
+
+    def _on_load_pcb_bandpass(self) -> None:
+        """Load the 5.6 GHz 5-pole stub band-pass preset (PTFE, no vias)."""
+        from app.csxcad_builder.primitives import pcb_bandpass_stub_primitives
+
+        self._current_file_path = None
+        work = self.settings.work_path() / "pcb_bandpass"
+        work.mkdir(parents=True, exist_ok=True)
+
+        project, prims = pcb_bandpass_stub_primitives()
+        project.ports[0].excite_port = True
+        project.ports[1].excite_port = False
+        self.project = project
+        self.primitives = prims
+        self.project.primitives = list(prims)
+        if hasattr(self.sim_params, "set_patch_group_visible"):
+            self.sim_params.set_patch_group_visible(False)
+        self._sync_form_from_project()
+        self._refresh_tree()
+        self._refresh_ports()
+        self._refresh_materials()
+
+        saved = project.save(work / "pcb_bandpass.fcsim.json")
+        stubs = [p for p in prims if str(p.get("name", "")).startswith("stub_")]
+        stub_txt = ", ".join(
+            f"{(s['stop'][0] - s['start'][0]):.2f}x{(s['stop'][1] - s['start'][1]):.1f} mm"
+            for s in stubs
+        )
+        lines = [
+            "PCB band-pass PRESET loaded: 5-pole Chebyshev, 0.1 dB ripple, "
+            "f0 = 5.6 GHz.",
+            "PTFE (Teflon) 0.254 mm, eps_r 2.1, tan_d 0.0002 — five open "
+            "lambda/2 stubs, no vias.",
+            f"Stubs (width x length): {stub_txt}",
+            "lambda/4 connecting lines act as impedance inverters; ~30 % "
+            "bandwidth, |S11| < -10 dB from 4.9 to 6.45 GHz.",
+            "Two lumped edge ports: one run measures one S-matrix column — "
+            "examples/run_pcb_bandpass_example.py runs both and merges to S2P.",
+            f"Project: {saved}",
+        ]
+        self.geom_info.setPlainText("\n".join(lines))
+        self._update_window_title()
+        self._log("PCB band-pass preset loaded")
         for ln in lines:
             self._log(ln)
         self._log_computed_summary()
