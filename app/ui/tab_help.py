@@ -135,13 +135,13 @@ Port mode (right-click → "Port mode (click in a slice to place)")
     - **Lumped** (default): the line described above (Start/Stop on the two
       metal faces, Direction = the slice normal);
     - **MSL, width along X/Y/Z**: the same box, but as wide as the **clicked
-      metal** along the chosen in-plane axis and **zero length along the line**
-      (the other in-plane axis is the propagation direction). openEMS gets the
-      propagation sense from that axis, so the generated run script widens the
-      box by **one grid cell** on its own (the project keeps the zero length;
-      the log says "zero length along x -> extended by one cell"). Propagation
-      and excitation direction are prefilled for the generator, and picking an
-      MSL entry also turns port mode on.
+      metal** along the chosen in-plane axis and **one mesh cell long** along the
+      other in-plane axis (the line/propagation axis — openEMS needs that cell
+      for its propagation sense and its strip). Propagation and excitation
+      direction are prefilled for the generator, and picking an MSL entry also
+      turns port mode on.
+    - A **lumped** port stays a line: no width at all (Start/Stop differ only
+      along the slice normal).
     The in-plane axes in the menu follow the slice you are in (XY → X/Y,
     XZ → X/Z, YZ → Y/Z).
   • A red dot with its (x, y) coordinates marks the spot, then the Port dialog

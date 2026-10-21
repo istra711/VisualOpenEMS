@@ -1522,9 +1522,9 @@ class MeshGeometryViewer(QWidget):
         }
         if port_kind != "msl":
             return box
-        # MSL: as wide as the clicked metal, zero length along the line (openEMS
-        # gets its propagation direction from the axis, the generator adds one
-        # grid cell for its current probes — see script_gen)
+        # MSL: as wide as the clicked metal and one mesh cell long along the line
+        # (openEMS needs that cell for its propagation sense + its strip). A
+        # lumped port stays a line: no in-plane extent at all.
         iw = _AXIS.get(str(msl_axis).lower())
         if iw is None or iw == inorm:
             iw = ia  # no/!in-plane orientation -> first in-plane axis
@@ -1532,8 +1532,10 @@ class MeshGeometryViewer(QWidget):
         w_lo, w_hi = sorted((float(cur_info.start[iw]), float(cur_info.stop[iw])))
         if w_hi - w_lo <= eps:  # degenerate metal -> use the click
             w_lo = w_hi = float(a) if iw == ia else float(b)
+        p_lo, p_hi = self._cell_around(_axis_letter(ip), float(a) if ip == ia else float(b))
         vals = {ia: [float(a), float(a)], ib: [float(b), float(b)]}
         vals[iw] = [w_lo, w_hi]
+        vals[ip] = [p_lo, p_hi]
         for k in (ia, ib):
             start[k], stop[k] = vals[k][0], vals[k][1]
         box.update(
