@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lumped ports: "Line" or "Area = metal width"** (`app/models/project.py`,
+  `app/ui/mesh_viewer.py`, `app/ui/main_window.py`,
+  `app/ui/geometry_editors.py`): a lumped port can be a 1-D line or an **area
+  (sheet) port** that is as wide as the metal it was placed on. The Mesh
+  Viewer's right-click menu → **Port type** now offers **Lumped (line)**,
+  **Lumped, width along X/Y** and **MSL, width along X/Y** (the in-plane axes
+  follow the slice); an area port spans the clicked metal along the chosen axis,
+  keeps the click as a zero-thickness sheet towards the other in-plane axis and
+  still runs from the clicked metal's face to the next metal's face. The Port
+  dialog has a **Width (lumped)** combo (Line / Area along x/y/z) that rebuilds
+  the box when the mode changes — line → collapse to the middle, area → widen to
+  the metal (the clicked primitive is stored as `PortDef.metal`) — while an
+  unchanged mode keeps hand-edited Start/Stop values. `PortDef` gained
+  `lumped_width` ("line" or an axis letter) and `metal` (old project files load
+  unchanged); the port list/tree mark area ports with "area along Y". openEMS
+  only sees the box, so the generated script is unchanged and the Resistance
+  stays the **total** box resistance (a 50 Ω wide port is still 50 Ω).
+  Tests: `tests/mesh_port_place_smoke.py` (5 menu entries, area box = metal
+  width along Y / click as a sheet along X / same substrate length, list
+  marker), `tests/port_defaults_smoke.py` (dialog round-trip for lumped/MSL,
+  line <-> area conversion, hand edits kept, width along the excitation
+  direction rejected).
 - **Selecting an object in the Geometry list shows it in the Mesh Viewer**
   (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`): a click on an entry in the
   left Project / Geometry list (or a material in the Geometry tab) not only

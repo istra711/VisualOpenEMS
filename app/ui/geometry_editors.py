@@ -98,7 +98,7 @@ class PortDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Port")
-        self.resize(380, 420)
+        self.resize(380, 460)
         self._coord_system = coord_system
         p = port or PortDef(name="in1")
         self.result_port: PortDef | None = None
@@ -115,6 +115,27 @@ class PortDialog(QDialog):
         self.cmb_dir = QComboBox()
         self.cmb_dir.addItems(["x", "y", "z"])
         self.cmb_dir.setCurrentText(p.direction or "z")
+        self.cmb_width = QComboBox()
+        for label, value in (
+            ("Line (no width)", "line"),
+            ("Area - as wide as the metal (x)", "x"),
+            ("Area - as wide as the metal (y)", "y"),
+            ("Area - as wide as the metal (z)", "z"),
+        ):
+            self.cmb_width.addItem(label, value)
+        _wmode = str(getattr(p, "lumped_width", "line") or "line").strip().lower()
+        _widx = self.cmb_width.findData(_wmode)
+        self.cmb_width.setCurrentIndex(_widx if _widx >= 0 else 0)
+        self.cmb_width.setToolTip(
+            "Lumped ports only:\n"
+            "  Line (no width) - a 1-D port (Start/Stop differ only along Direction)\n"
+            "  Area - as wide as the metal (axis) - an area/sheet port: the box is\n"
+            "  widened to the metal the port was placed on, the other transverse\n"
+            "  axis stays a zero-thickness sheet at the click.\n"
+            "Changing it rebuilds the box (a line collapses to its middle); an\n"
+            "unchanged mode leaves your Start/Stop edits alone."
+        )
+        self._seed_metal = str(getattr(p, "metal", "") or "")
         self.cmb_prop = _axis_combo(getattr(p, "prop_direction", ""))
         self.cmb_prop.setToolTip(
             "MSL only: propagation axis along the line\n(empty = longest port edge)"
@@ -140,6 +161,7 @@ class PortDialog(QDialog):
         form.addRow("Type", self.cmb_type)
         form.addRow("Resistance (Ω)", self.spn_r)
         form.addRow("Direction", self.cmb_dir)
+        form.addRow("Width (lumped)", self.cmb_width)
         form.addRow("Propagation dir (MSL)", self.cmb_prop)
         form.addRow("Excitation dir (MSL)", self.cmb_exc)
         form.addRow(self.chk_active)
@@ -153,6 +175,8 @@ class PortDialog(QDialog):
                 "uses x/y/z letters, also on a cylindrical mesh)."
             )
             self.cmb_mesh.setToolTip("Mesh axis letters: x=ρ, y=φ, z")
+        self.cmb_type.currentTextChanged.connect(self._on_type_changed)
+        self._on_type_changed(self.cmb_type.currentText())
 
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -161,11 +185,16 @@ class PortDialog(QDialog):
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
 
+    def _on_type_changed(self, kind: str) -> None:
+        """Only lumped ports have a (lumped) width - MSL uses its own axes."""
+        self.cmb_width.setEnabled(str(kind) == "lumped")
+
     def _accept(self) -> None:
         name = self.ed_name.text().strip() or "in1"
+        ptype = self.cmb_type.currentText()
         self.result_port = PortDef(
             name=name,
-            type=self.cmb_type.currentText(),  # type: ignore[arg-type]
+            type=ptype,  # type: ignore[arg-type]
             start=_vec3_read(self.spn_start, self._coord_system),
             stop=_vec3_read(self.spn_stop, self._coord_system),
             resistance=float(self.spn_r.value()),
@@ -175,6 +204,12 @@ class PortDialog(QDialog):
             excite_port=self.chk_excite.isChecked(),
             active=self.chk_active.isChecked(),
             mesh_dirs=self.cmb_mesh.currentText(),
+            lumped_width=(
+                (self.cmb_width.currentData() or "line")
+                if ptype == "lumped"
+                else "line"
+            ),
+            metal=self._seed_metal,
         )
         self.accept()
 

@@ -243,7 +243,7 @@ class MeshGeometryViewer(QWidget):
     port_place_requested = Signal(object)
     #: Port mode was switched on/off (right-click menu) — for a log hint.
     port_mode_changed = Signal(bool)
-    #: Port type (lumped / MSL) + MSL width axis chosen in the right-click menu.
+    #: Port type (lumped / MSL) + the in-plane width axis chosen in the menu.
     port_type_changed = Signal(str, str)
 
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
@@ -267,9 +267,11 @@ class MeshGeometryViewer(QWidget):
         self._split = None
         # port mode (right-click menu): click in a slice -> red dot + dialog
         self._port_mode = False
-        #: what a click places: "lumped" or "msl" (+ the MSL width axis letter)
+        #: what a click places: "lumped" or "msl"; ``_port_width_axis`` is the
+        #: in-plane axis the port is as wide as the clicked metal in ("" = a
+        #: line along the slice normal, i.e. lumped without width).
         self._port_type = "lumped"
-        self._msl_orientation = ""
+        self._port_width_axis = ""
         #: object selected in the Project / Geometry list (boxes + names)
         self._highlight: dict = {"boxes": [], "names": [], "label": ""}
         #: modifier state at the last slider mouse event (Ctrl = fine/free)
@@ -1342,38 +1344,66 @@ class MeshGeometryViewer(QWidget):
     def set_port_type(self, kind: str, orientation: str = "") -> None:
         """What a click places: ``"lumped"`` or ``"msl"`` (with the width axis).
 
-        For MSL ``orientation`` is the in-plane axis the port is as wide as the
-        metal in; the line then runs along the other in-plane axis.
+        ``orientation`` is the in-plane axis the port is as wide as the clicked
+        metal in (empty = no width). For MSL the line then runs along the other
+        in-plane axis (one mesh cell); for a lumped port the other in-plane axis
+        stays at the click (a zero-thickness sheet = "area" port). Without an
+        ``orientation`` a lumped port is a plain line; an MSL port keeps the
+        axis chosen before (a width is mandatory there).
         """
-        self._port_type = "msl" if str(kind or "").lower() == "msl" else "lumped"
-        if orientation:
-            self._msl_orientation = str(orientation).lower()
-        self.port_type_changed.emit(self._port_type, self._msl_orientation)
+        kind = "msl" if str(kind or "").lower() == "msl" else "lumped"
+        axis = str(orientation or "").strip().lower()
+        if kind == "msl" and not axis:
+            axis = self._port_width_axis
+        self._port_type = kind
+        self._port_width_axis = axis if axis in ("x", "y", "z") else ""
+        self.port_type_changed.emit(self._port_type, self._port_width_axis)
 
     def port_type(self) -> tuple[str, str]:
-        """``(kind, msl_orientation)`` as chosen in the right-click menu."""
-        return self._port_type, self._msl_orientation
+        """``(kind, width_axis)`` as chosen in the right-click menu."""
+        return self._port_type, self._port_width_axis
 
     def _add_port_type_menu(self, menu) -> None:
-        """Add the "Port type" submenu: Lumped / MSL with the width axis."""
+        """Add the "Port type" submenu: lumped line/area + MSL, with the axis."""
         sub = menu.addMenu("Port type")
         sub.setToolTip(
-            "Lumped: a line from the clicked metal to the next metal surface.\n"
-            "MSL: the same box, but as wide as the clicked metal along the chosen\n"
-            "in-plane axis (the line then runs along the other in-plane axis)."
+            "Lumped (line): a line from the clicked metal to the next metal\n"
+            "surface.\n"
+            "Lumped, width along X/Y: the same length, but as wide as the clicked\n"
+            "metal along the chosen in-plane axis (a zero-thickness sheet - the\n"
+            "classic area lumped port).\n"
+            "MSL: the same box, one mesh cell long along the other in-plane axis."
         )
         ax_a, ax_b, _normal = self._in_plane_axes()
-        act = sub.addAction("Lumped")
+        act = sub.addAction("Lumped (line)")
         act.setCheckable(True)
-        act.setChecked(self._port_type != "msl")
+        act.setChecked(self._port_type == "lumped" and not self._port_width_axis)
+        act.setToolTip(
+            "1-D lumped port: Start/Stop differ only along the slice normal."
+        )
         act.triggered.connect(lambda _checked=False: self._on_port_type_action("lumped", ""))
+        for axis in (ax_a, ax_b):
+            other = ax_b if axis == ax_a else ax_a
+            act = sub.addAction(f"Lumped, width along {axis.upper()}")
+            act.setCheckable(True)
+            act.setChecked(
+                self._port_type == "lumped"
+                and str(self._port_width_axis or "").lower() == axis
+            )
+            act.setToolTip(
+                f"Area lumped port: as wide as the clicked metal along {axis.upper()}\n"
+                f"and zero thickness towards {other.upper()} (a sheet at the click)."
+            )
+            act.triggered.connect(
+                lambda _checked=False, a=axis: self._on_port_type_action("lumped", a)
+            )
         for axis in (ax_a, ax_b):
             other = ax_b if axis == ax_a else ax_a
             act = sub.addAction(f"MSL, width along {axis.upper()}")
             act.setCheckable(True)
             act.setChecked(
                 self._port_type == "msl"
-                and str(self._msl_orientation or "").lower() == axis
+                and str(self._port_width_axis or "").lower() == axis
             )
             act.setToolTip(
                 f"Microstrip port: as wide as the clicked metal along {axis.upper()},\n"
@@ -1384,10 +1414,10 @@ class MeshGeometryViewer(QWidget):
             )
 
     def _on_port_type_action(self, kind: str, axis: str) -> None:
-        """Menu slot: switch the port type (MSL also arms port mode)."""
+        """Menu slot: switch the port type (also arms port mode)."""
         self.set_port_type(kind, axis)
-        if kind == "msl" and not self._port_mode:
-            self.set_port_mode(True)  # MSL only makes sense with port mode
+        if not self._port_mode:
+            self.set_port_mode(True)  # the choice is about the next click
 
     def _in_plane_axes(self) -> tuple[str, str, str]:
         """(axis_a, axis_b, normal) of the shown slice (XY as fallback)."""
@@ -1489,13 +1519,15 @@ class MeshGeometryViewer(QWidget):
         The port runs along the slice normal (into the screen): from the bottom
         face of the clicked metal down to the top face of the next metal surface
         (if there is none below, the next one above is used instead — its bottom
-        face). ``kind``/``orientation`` default to the menu selection; MSL ports
-        additionally span the clicked metal's width along the chosen in-plane
-        axis and one mesh cell along the other in-plane axis (the line).
+        face). ``kind``/``orientation`` default to the menu selection. With a
+        width axis the port is as wide as the clicked metal along that in-plane
+        axis; MSL ports are one mesh cell long along the other in-plane axis
+        (the line), a lumped area port stays a sheet at the click.
 
         Returns a dict with ``start``/``stop`` (drawing units), ``type``,
-        ``direction``, ``prop_direction``/``exc_direction``, ``metal``,
-        ``partner`` and ``side`` — or ``None`` when no second metal is found.
+        ``direction``, ``prop_direction``/``exc_direction``, ``width_axis``/
+        ``width``, ``metal``, ``partner`` and ``side`` — or ``None`` when no
+        second metal is found.
         """
         ax_a, ax_b, normal = _SLICE_AXES[key]
         ia, ib, inorm = _AXIS[ax_a], _AXIS[ax_b], _AXIS[normal]
@@ -1523,11 +1555,11 @@ class MeshGeometryViewer(QWidget):
         start[ia], start[ib] = float(a), float(b)
         stop[ia], stop[ib] = float(a), float(b)
         start[inorm], stop[inorm] = float(start_n), float(stop_n)
-        port_kind, msl_axis = self._port_type, self._msl_orientation
+        port_kind, width_axis = self._port_type, self._port_width_axis
         if kind:
             port_kind = "msl" if str(kind).lower() == "msl" else "lumped"
         if orientation:
-            msl_axis = str(orientation).lower()
+            width_axis = str(orientation).strip().lower()
         box = {
             "type": port_kind,
             "start": start,
@@ -1540,18 +1572,32 @@ class MeshGeometryViewer(QWidget):
             "side": side,
             "warning": "",
         }
+        iw = _AXIS.get(str(width_axis or "").lower())
+        if iw is not None and iw == inorm:
+            iw = None  # the width must lie in the slice plane
+        w_lo, w_hi = 0.0, 0.0
+        if iw is not None:
+            w_lo, w_hi = sorted((float(cur_info.start[iw]), float(cur_info.stop[iw])))
+            if w_hi - w_lo <= eps:  # degenerate metal -> use the click
+                w_lo = w_hi = float(a) if iw == ia else float(b)
         if port_kind != "msl":
+            if iw is None:
+                return box  # line: no in-plane extent at all
+            # Area lumped port: as wide as the clicked metal, zero thickness
+            # towards the other in-plane axis (a sheet at the click). The length
+            # along the slice normal (metal face to metal face) is unchanged, so
+            # openEMS sees a 2-D box with the full metal width.
+            start[iw], stop[iw] = w_lo, w_hi
+            box.update(width_axis=_axis_letter(iw), width=w_hi - w_lo)
             return box
         # MSL: as wide as the clicked metal and one mesh cell long along the line
-        # (openEMS needs that cell for its propagation sense + its strip). A
-        # lumped port stays a line: no in-plane extent at all.
-        iw = _AXIS.get(str(msl_axis).lower())
-        if iw is None or iw == inorm:
+        # (openEMS needs that cell for its propagation sense + its strip).
+        if iw is None:
             iw = ia  # no/!in-plane orientation -> first in-plane axis
+            w_lo, w_hi = sorted((float(cur_info.start[iw]), float(cur_info.stop[iw])))
+            if w_hi - w_lo <= eps:
+                w_lo = w_hi = float(a) if iw == ia else float(b)
         ip = ib if iw == ia else ia
-        w_lo, w_hi = sorted((float(cur_info.start[iw]), float(cur_info.stop[iw])))
-        if w_hi - w_lo <= eps:  # degenerate metal -> use the click
-            w_lo = w_hi = float(a) if iw == ia else float(b)
         p_lo, p_hi = self._cell_around(_axis_letter(ip), float(a) if ip == ia else float(b))
         vals = {ia: [float(a), float(a)], ib: [float(b), float(b)]}
         vals[iw] = [w_lo, w_hi]
@@ -1571,8 +1617,9 @@ class MeshGeometryViewer(QWidget):
 
         The two in-plane coordinates come straight from the click, the third one
         from the current slice plane (the plane slider snaps to mesh lines, the
-        click itself does not). The box (and, for MSL, the width) is derived from
-        the metal surfaces around the click — see :meth:`port_box_at`.
+        click itself does not). The box (and, with a width axis, the width) is
+        derived from the metal surfaces around the click - see
+        :meth:`port_box_at`.
         """
         key = _slice_key(self.cmb_view.currentText())
         if key is None:
@@ -1593,14 +1640,21 @@ class MeshGeometryViewer(QWidget):
             # no second metal surface: keep the old behaviour (click = both ends)
             pt = [0.0, 0.0, 0.0]
             pt[ia], pt[ib], pt[inorm] = a, b, plane
-            prop = ib if self._msl_orientation == ax_a else ia
+            iw = _AXIS.get(str(self._port_width_axis or "").lower())
+            if iw is not None and iw == inorm:
+                iw = None
+            prop = ""
+            if self._port_type == "msl":
+                iw = ia if iw is None else iw
+                prop = _axis_letter(ib if iw == ia else ia)
             box = {
                 "type": self._port_type,
                 "start": list(pt),
                 "stop": list(pt),
                 "direction": normal,
-                "prop_direction": _axis_letter(prop) if self._port_type == "msl" else "",
+                "prop_direction": prop,
                 "exc_direction": normal if self._port_type == "msl" else "",
+                "width_axis": _axis_letter(iw) if iw is not None else "",
                 "metal": "",
                 "partner": "",
                 "side": "",

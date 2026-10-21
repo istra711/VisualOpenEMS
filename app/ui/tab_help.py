@@ -135,16 +135,25 @@ Port mode (right-click → "Port mode (click in a slice to place)")
     Without a second metal at that spot the click is used for Start and Stop
     (give the port a length by hand).
   • Right-click → **"Port type"** decides what the click places:
-    - **Lumped** (default): the line described above (Start/Stop on the two
+    - **Lumped (line)** (default): the line described above (Start/Stop on the two
       metal faces, Direction = the slice normal);
-    - **MSL, width along X/Y/Z**: the same box, but as wide as the **clicked
+    - **Lumped, width along X/Y**: an **area lumped port** — the same length along
+      the slice normal, but as wide as the **clicked metal** along the chosen
+      in-plane axis, with zero thickness towards the other in-plane axis (a
+      sheet at the click, e.g. the strip width of a microstrip cross-section).
+      The port list/tree mark it "area along X/Y". openEMS distributes the
+      Resistance over the whole box, so a 50 Ω area port stays 50 Ω (no N-fold
+      splitting) — for wide metals this is often the better choice than a
+      single line;
+    - **MSL, width along X/Y**: the same box, but as wide as the **clicked
       metal** along the chosen in-plane axis and **one mesh cell long** along the
       other in-plane axis (the line/propagation axis — openEMS needs that cell
       for its propagation sense and its strip). Propagation and excitation
-      direction are prefilled for the generator, and picking an MSL entry also
-      turns port mode on.
-    - A **lumped** port stays a line: no width at all (Start/Stop differ only
-      along the slice normal).
+      direction are prefilled for the generator.
+    Picking any entry turns port mode on. The choice can be changed per port
+    later in the Port dialog ("Width (lumped)": Line / Area along x/y/z — the
+    box is rebuilt from the metal when the mode changes, hand-edited Start/Stop
+    values of an unchanged mode are kept).
     The in-plane axes in the menu follow the slice you are in (XY → X/Y,
     XZ → X/Z, YZ → Y/Z).
   • A red dot with its (x, y) coordinates marks the spot, then the Port dialog
@@ -408,7 +417,16 @@ with live editors: changes apply immediately (no Apply/Close round-trip).
 
 Ports
   • Double-click a port (or Edit Port…) — name, type (lumped / MSL / rect waveguide),
-    resistance, direction, start/stop, mesh dirs, **Active**, excite flag.
+    resistance, direction, **Width (lumped)**, start/stop, mesh dirs, **Active**,
+    excite flag.
+  • **Width (lumped)** (only for lumped ports): "Line (no width)" = a 1-D port
+    (Start/Stop differ only along Direction), or "Area - as wide as the metal
+    (x/y/z)" = an area/sheet port widened to the metal the port was placed on
+    along that axis. Changing the mode rebuilds the box (line → collapses the
+    transverse axes to the middle, area → widens to the metal and flattens the
+    other transverse axis); an unchanged mode leaves your Start/Stop edits
+    alone. openEMS only sees the box, so the generated script needs no change:
+    the Resistance is the total box resistance (a 50 Ω wide port stays 50 Ω).
   • **Active** (checkbox in the dialog, "Active on/off" button in the window):
     switch a port off without deleting it. An inactive port stays in the project
     (list/tree show "[off]", it is drawn grey/dashed in the Mesh Viewer) but is
@@ -427,6 +445,9 @@ Ports
   • Rule of thumb — which port type:
       Antenna / wire / diode-style feed (a lumped source across a gap)
         → Lumped port  =  CST "Discrete (Face) Port".
+      Wide metal (strip / pad / sheet) fed across a gap
+        → Lumped port, width = metal width (area port) — same 50 Ω, but the
+          current is spread over the real metal width.
       Feed on a microstrip line / planar circuit (guided mode, defined Z0)
         → MSL port     =  CST "Waveguide / MSL Port".
     A lumped port is a quasi-lumped source (S-params referenced to its Resistance);

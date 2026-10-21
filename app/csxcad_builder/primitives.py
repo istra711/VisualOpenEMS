@@ -494,7 +494,9 @@ def pcb_filter_primitives(
         ),
     ]
     # Lumped edge ports at +-port_offset: vertical gap between ground and the
-    # strip, as wide as the line. Port 2 starts unexcited (run 2 flips this).
+    # strip, as wide as the line (area lumped ports: y = metal width, x = a
+    # zero-thickness sheet at the port plane). Port 2 starts unexcited (run 2
+    # flips this).
     p.ports = [
         PortDef(
             name="in1",
@@ -505,6 +507,7 @@ def pcb_filter_primitives(
             direction="z",
             excite_port=True,
             mesh_dirs="xy",
+            lumped_width="y",
         ),
         PortDef(
             name="out1",
@@ -515,6 +518,7 @@ def pcb_filter_primitives(
             direction="z",
             excite_port=False,
             mesh_dirs="xy",
+            lumped_width="y",
         ),
     ]
     p.dumps = [

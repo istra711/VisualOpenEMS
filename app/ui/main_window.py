@@ -1867,7 +1867,8 @@ class MainWindow(QMainWindow):
         for p in self.project.ports:
             off = "" if bool(getattr(p, "active", True)) else "  [off]"
             self.port_list.addItem(
-                f"{p.name}: {p.type} {p.start} -> {p.stop} R={p.resistance}{off}"
+                f"{p.name}: {p.type}{self._port_width_text(p, short=True)} "
+                f"{p.start} -> {p.stop} R={p.resistance}{off}"
             )
         if getattr(self, "tree", None) is not None:
             self._refresh_tree()
@@ -3676,24 +3677,105 @@ class MainWindow(QMainWindow):
             self._log("Port mode OFF")
 
     def _on_mesh_port_type_changed(self, kind: str, orientation: str) -> None:
-        """Port type / MSL orientation chosen in the Mesh Viewer's menu."""
+        """Port type / width axis chosen in the Mesh Viewer's menu."""
+        axis = str(orientation or "").upper()
         if str(kind) == "msl":
             self._log(
                 f"Port type: MSL — width follows the clicked metal along "
-                f"{str(orientation or '?').upper()}; the line runs along the other "
-                "in-plane axis"
+                f"{axis or '?'}; the line runs along the other in-plane axis"
+            )
+        elif axis:
+            self._log(
+                f"Port type: Lumped, area — as wide as the clicked metal along "
+                f"{axis}, zero thickness towards the other in-plane axis"
             )
         else:
             self._log("Port type: Lumped (line from the clicked metal to the next)")
+
+    def _primitive_span(self, name: str, axis: str) -> tuple[float, float] | None:
+        """Extent of the project primitive ``name`` along ``axis`` (None if unknown).
+
+        Used by "width = metal" to re-derive a lumped area port's width after the
+        mode was changed in the Port dialog.
+        """
+        letter = str(axis or "").strip().lower()
+        if not name or letter not in ("x", "y", "z"):
+            return None
+        k = "xyz".index(letter)
+        prims = self.primitives or (self.project.primitives or [])
+        for pr in prims:
+            if str(pr.get("name") or "") != str(name):
+                continue
+            try:
+                lo = float(pr["start"][k])
+                hi = float(pr["stop"][k])
+            except (KeyError, TypeError, ValueError, IndexError):
+                return None
+            return (lo, hi) if hi >= lo else (hi, lo)
+        return None
+
+    def _apply_port_width(self, port, previous: str = "line") -> None:
+        """Match a lumped port's box to its width mode (only if the mode changed).
+
+        ``"line"`` collapses the two axes across the excitation direction to the
+        middle of the box (a 1-D port); an axis letter widens it to the extent of
+        the metal it was placed on and keeps the other transverse axis at the
+        middle (a zero-thickness sheet = area port). Boxes the user edited by
+        hand are left alone when the mode did not change.
+        """
+        mode = str(getattr(port, "lumped_width", "line") or "line").strip().lower()
+        if mode in ("", "none", "-"):
+            mode = "line"
+        if str(port.type) != "lumped":
+            port.lumped_width = "line"
+            return
+        direction = str(port.direction or "z").strip().lower()
+        if direction not in ("x", "y", "z"):
+            direction = "z"
+        di = "xyz".index(direction)
+        if mode in ("x", "y", "z") and mode == direction:
+            self._log(
+                f"  Port {port.name}: width axis {mode.upper()} is the excitation "
+                "direction — using a line instead"
+            )
+            mode = "line"
+        elif mode not in ("x", "y", "z", "line"):
+            self._log(f"  Port {port.name}: unknown width '{mode}' — using a line")
+            mode = "line"
+        port.lumped_width = mode
+        if mode == str(previous or "line").strip().lower():
+            return  # unchanged: do not touch a hand-edited box
+        if mode == "line":
+            for k in range(3):
+                if k == di:
+                    continue
+                mid = 0.5 * (float(port.start[k]) + float(port.stop[k]))
+                port.start[k] = port.stop[k] = mid
+            return
+        wi = "xyz".index(mode)
+        span = self._primitive_span(str(getattr(port, "metal", "") or ""), mode)
+        if span is None:
+            self._log(
+                f"  Port {port.name}: metal '{getattr(port, 'metal', '') or '?'}' "
+                f"not found — keep the box, widen it along {mode.upper()} by hand"
+            )
+        else:
+            port.start[wi], port.stop[wi] = float(span[0]), float(span[1])
+        for k in range(3):
+            if k in (di, wi):
+                continue
+            mid = 0.5 * (float(port.start[k]) + float(port.stop[k]))
+            port.start[k] = port.stop[k] = mid
 
     def _on_mesh_port_place(self, request) -> None:
         """A click in the Mesh Viewer's port mode: configure a port there.
 
         ``request`` comes from the viewer and already holds the computed box: the
         port runs along the slice normal from the bottom face of the clicked metal
-        to the top face of the next metal surface (MSL: as wide as the clicked
-        metal, one mesh cell along the line). The dialog opens prefilled and the
-        port is appended on OK.
+        to the top face of the next metal surface (lumped area/MSL: as wide as
+        the clicked metal along the chosen in-plane axis; MSL is also one mesh
+        cell long along the line). The dialog opens prefilled and the port is
+        appended on OK.
         """
         viewer = self.mesh_viewer
         if self._polar_ports_blocked():  # lumped ports need a cartesian mesh
@@ -3707,6 +3789,7 @@ class MainWindow(QMainWindow):
         start = [float(v) for v in (req.get("start") or [0.0, 0.0, 0.0])]
         stop = [float(v) for v in (req.get("stop") or start)]
         kind = str(req.get("type") or "lumped")
+        width_axis = str(req.get("width_axis") or "").strip().lower()
         pd = self.settings.port_defaults()
         seed = _PD(
             name=f"in{len(self.project.ports) + 1}",
@@ -3719,6 +3802,8 @@ class MainWindow(QMainWindow):
             direction=str(req.get("direction") or pd.get("direction") or "z"),
             prop_direction=str(req.get("prop_direction") or ""),
             exc_direction=str(req.get("exc_direction") or ""),
+            lumped_width=(width_axis if kind == "lumped" else "line") or "line",
+            metal=str(req.get("metal") or ""),
         )
         where_extra = ""
         if req.get("metal") or req.get("partner"):
@@ -3726,8 +3811,8 @@ class MainWindow(QMainWindow):
             where_extra = (
                 f" [{req.get('metal') or '?'} → {req.get('partner') or '?'} ({side})]"
             )
-        if kind == "msl":
-            where_extra += f" width along {str(req.get('width_axis') or '?').upper()}"
+        if kind == "msl" or (kind == "lumped" and width_axis):
+            where_extra += f" width along {width_axis.upper()}"
         self._log(
             f"Placed {kind.upper()} port candidate at "
             f"x={start[0]:.4g}, y={start[1]:.4g}, z={start[2]:.4g}"
@@ -3752,13 +3837,27 @@ class MainWindow(QMainWindow):
         port = dlg.result_port
         if port is None or port.start == port.stop:
             return  # cancelled / still degenerate
+        self._apply_port_width(port, previous=seed.lumped_width)
         self.project.ports.append(port)
         self._refresh_ports()
         self.mesh_viewer.set_ports(self.project.ports)
         self._log(
-            f"Port {port.name}: {port.type} {port.start}→{port.stop} "
-            f"R={port.resistance}"
+            f"Port {port.name}: {port.type}{self._port_width_text(port)} "
+            f"{port.start}→{port.stop} R={port.resistance}"
         )
+
+    @staticmethod
+    def _port_width_text(port, short: bool = False) -> str:
+        """``", area along Y"`` for a lumped area port, ``", line"`` for a line.
+
+        ``short`` drops the "line" marker (compact port list).
+        """
+        if str(getattr(port, "type", "")) != "lumped":
+            return ""
+        mode = str(getattr(port, "lumped_width", "line") or "line").lower()
+        if mode in ("x", "y", "z"):
+            return f", area along {mode.upper()}"
+        return "" if short else ", line"
 
     def _selected_port_index(self) -> int:
         row = self.port_list.currentRow()
@@ -3777,17 +3876,22 @@ class MainWindow(QMainWindow):
             self._log("Select a port to edit (double-click a row)")
             return
         old = self.project.ports[idx]
+        old_mode = str(getattr(old, "lumped_width", "line") or "line").lower()
         dlg = PortDialog(self, port=old, coord_system=self.project.mesh.coord_system)
         if dlg.exec() and dlg.result_port:
-            self.project.ports[idx] = dlg.result_port
+            new_port = dlg.result_port
+            self._apply_port_width(new_port, previous=old_mode)
+            self.project.ports[idx] = new_port
             self._refresh_ports()
+            self.mesh_viewer.set_ports(self.project.ports)
             if idx < self.port_list.count():
                 self.port_list.setCurrentRow(idx)
             self._log(
-                f"Port updated: {dlg.result_port.name} {dlg.result_port.type} "
-                f"{dlg.result_port.start}→{dlg.result_port.stop} "
-                f"R={dlg.result_port.resistance} dir={dlg.result_port.direction} "
-                f"excite={dlg.result_port.excite_port}"
+                f"Port updated: {new_port.name} {new_port.type}"
+                f"{self._port_width_text(new_port)} "
+                f"{new_port.start}→{new_port.stop} "
+                f"R={new_port.resistance} dir={new_port.direction} "
+                f"excite={new_port.excite_port}"
             )
 
     def _on_remove_port(self) -> None:
@@ -3993,7 +4097,12 @@ class MainWindow(QMainWindow):
             _add(f"Mat: {m.name} ({m.kind})", "mat", i)
         for i, p in enumerate(self.project.ports):
             off = "" if bool(getattr(p, "active", True)) else " [off]"
-            _add(f"Port: {p.name} {p.type} {p.start}→{p.stop}{off}", "port", i)
+            _add(
+                f"Port: {p.name} {p.type}{self._port_width_text(p, short=True)} "
+                f"{p.start}→{p.stop}{off}",
+                "port",
+                i,
+            )
         for i, d in enumerate(self.project.dumps):
             _add(f"Dump: {d.name} ({d.quantity})", "dump", i)
         n = self.project.nf2ff
