@@ -75,6 +75,18 @@ def _axis_letter(index: int) -> str:
     return ("x", "y", "z")[int(index)] if 0 <= int(index) < 3 else ""
 
 
+def _close(a, b, rel: float = 1e-6) -> bool:
+    """True when two coordinates are equal up to a relative tolerance.
+
+    The CSX AABBs come back float32-rounded, the project boxes are doubles.
+    """
+    try:
+        fa, fb = float(a), float(b)
+    except (TypeError, ValueError):
+        return False
+    return abs(fa - fb) <= rel * max(1.0, abs(fa), abs(fb))
+
+
 #: Plane slider travel (internal steps): base resolution = /SLIDER_BASE_STEP
 #: (= 2000 steps, twice the old 0..1000) and Ctrl gives the full 0..20000
 #: (10x finer than the base resolution).
@@ -258,6 +270,8 @@ class MeshGeometryViewer(QWidget):
         #: what a click places: "lumped" or "msl" (+ the MSL width axis letter)
         self._port_type = "lumped"
         self._msl_orientation = ""
+        #: object selected in the Project / Geometry list (boxes + names)
+        self._highlight: dict = {"boxes": [], "names": [], "label": ""}
         #: modifier state at the last slider mouse event (Ctrl = fine/free)
         self._slider_mods = Qt.KeyboardModifier.NoModifier
         #: (slice key "XY"/"XZ"/"YZ", x, y) of the unconfirmed placement
@@ -1124,6 +1138,155 @@ class MeshGeometryViewer(QWidget):
             self._redraw()
         except Exception as e:  # noqa: BLE001 — never crash the GUI on redraw
             print(f"mesh viewer ports update error: {e}")
+
+    # ------------------------------------------------- object highlight (tree)
+    def set_highlight(self, boxes=None, names=None, label: str = "") -> None:
+        """Highlight the object selected in the Project / Geometry list.
+
+        ``boxes`` are ``(start, stop)`` pairs in drawing units, ``names`` are
+        object / material / port names — a drawn element is highlighted when its
+        box or its name matches. Passing nothing clears the highlight.
+        """
+        clean_boxes: list = []
+        for box in boxes or []:
+            try:
+                b0, b1 = box
+                clean_boxes.append(
+                    (
+                        tuple(float(v) for v in b0),
+                        tuple(float(v) for v in b1),
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+        self._highlight = {
+            "boxes": clean_boxes,
+            "names": [str(n) for n in (names or []) if str(n)],
+            "label": str(label or ""),
+        }
+        try:
+            self._redraw()  # keeps the zoom while the view type is unchanged
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer highlight redraw error: {e}")
+
+    def highlight(self) -> dict:
+        """Current highlight (``boxes``/``names``/``label``)."""
+        return dict(self._highlight)
+
+    def clear_highlight(self) -> None:
+        """Drop the highlight of the Project / Geometry selection."""
+        self.set_highlight()
+
+    def _is_highlighted(self, start=None, stop=None, name: str = "") -> bool:
+        """True when this element is the one selected in the geometry list."""
+        hl = getattr(self, "_highlight", None) or {}
+        boxes = hl.get("boxes") or []
+        names = hl.get("names") or []
+        if not boxes and not names:
+            return False
+        if name:
+            mine = str(name).lower()
+            base = mine.split("#")[0]  # CSX property names look like "copper#1"
+            wanted = {str(n).lower() for n in names}
+            if mine in wanted or base in wanted:
+                return True
+        if start is None or stop is None:
+            return False
+        for b0, b1 in boxes:
+            try:
+                if all(
+                    _close(start[k], b0[k]) and _close(stop[k], b1[k])
+                    for k in range(3)
+                ):
+                    return True
+            except (TypeError, ValueError, IndexError):
+                continue
+        return False
+
+    def _draw_highlight(
+        self, ax, ia: int, ib: int, inorm: int, plane, infos, ports, nf2ff
+    ) -> bool:
+        """Thick yellow outline around the highlighted object (slice/overview).
+
+        ``plane`` = the slice coordinate along the normal axis, or None to draw
+        every footprint (overview projections).
+        """
+        hl = getattr(self, "_highlight", None) or {}
+        if not (hl.get("boxes") or hl.get("names")):
+            return False
+        eps = 1e-9
+        style = dict(
+            fill=False, edgecolor="#ffd400", linewidth=3.0, zorder=8,
+            label="selected",
+        )
+        drawn = False
+        for info in infos or []:
+            try:
+                st, sp = info.start, info.stop
+            except AttributeError:
+                continue
+            if not self._is_highlighted(st, sp, getattr(info, "name", "")):
+                continue
+            if plane is not None and (
+                plane < st[inorm] - eps or plane > sp[inorm] + eps
+            ):
+                continue
+            ax.add_patch(
+                Rectangle(
+                    (st[ia], st[ib]),
+                    sp[ia] - st[ia],
+                    sp[ib] - st[ib],
+                    **style,
+                )
+            )
+            drawn = True
+        for p in ports or []:
+            st = getattr(p, "start", None) or (
+                p.get("start") if isinstance(p, dict) else None
+            )
+            sp = getattr(p, "stop", None) or (
+                p.get("stop") if isinstance(p, dict) else None
+            )
+            if not st or not sp:
+                continue
+            if not self._is_highlighted(st, sp, getattr(p, "name", "")):
+                continue
+            if plane is not None:
+                tol = self._cell_span(
+                    self._grid_mesh(), _axis_letter(inorm), (st[inorm] + sp[inorm]) / 2.0
+                )
+                if plane < min(st[inorm], sp[inorm]) - tol or plane > max(
+                    st[inorm], sp[inorm]
+                ) + tol:
+                    continue
+            x0, x1 = min(st[ia], sp[ia]), max(st[ia], sp[ia])
+            y0, y1 = min(st[ib], sp[ib]), max(st[ib], sp[ib])
+            if abs(x1 - x0) < eps and abs(y1 - y0) < eps:
+                ax.plot(
+                    [(x0 + x1) / 2], [(y0 + y1) / 2], marker="o", markersize=12,
+                    markerfacecolor="none", markeredgecolor="#ffd400",
+                    markeredgewidth=3.0, zorder=8, label="selected",
+                )
+            else:
+                ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, **style))
+            drawn = True
+        if nf2ff is not None:
+            st = getattr(nf2ff, "start", None)
+            sp = getattr(nf2ff, "stop", None)
+            if st and sp and self._is_highlighted(st, sp, "nf2ff"):
+                if plane is None or not (
+                    plane < min(st[inorm], sp[inorm]) or plane > max(st[inorm], sp[inorm])
+                ):
+                    ax.add_patch(
+                        Rectangle(
+                            (min(st[ia], sp[ia]), min(st[ib], sp[ib])),
+                            abs(sp[ia] - st[ia]),
+                            abs(sp[ib] - st[ib]),
+                            **style,
+                        )
+                    )
+                    drawn = True
+        return drawn
 
     # --------------------------------------------------------------- port mode
     def set_port_mode(self, on: bool) -> None:
@@ -2169,10 +2332,25 @@ class MeshGeometryViewer(QWidget):
                         )
                     )
 
+        # Object selected in the Project / Geometry list -> thick outline
+        sel_drawn = self._draw_highlight(ax, ia, ib, inorm, plane, infos, ports, nf2ff)
+
         ax.set_xlabel(ax_a + " [mm]")
         ax.set_ylabel(ax_b + " [mm]")
         note = "  [OUTSIDE DOMAIN]" if outside else ""
-        ax.set_title(f"{view} slice @ {normal}={plane:.4g} mm{note}", color="red" if outside else "black")
+        sel = ""
+        hl = getattr(self, "_highlight", None) or {}
+        if hl.get("boxes") or hl.get("names"):
+            label = hl.get("label") or "selection"
+            sel = (
+                f"  [selected: {label}]"
+                if sel_drawn
+                else f"  [selected: {label} - not in this plane]"
+            )
+        ax.set_title(
+            f"{view} slice @ {normal}={plane:.4g} mm{note}{sel}",
+            color="red" if outside else "black",
+        )
         ax.set_aspect("equal", adjustable="datalim")
         ax.grid(True, alpha=0.25)
         # unique legend entries
@@ -2252,6 +2430,8 @@ class MeshGeometryViewer(QWidget):
                             fill=False, edgecolor="purple", linestyle="-.", linewidth=1.2,
                         )
                     )
+            # object selected in the Project / Geometry list -> thick outline
+            self._draw_highlight(ax, ia, ib, inorm, None, infos, ports, nf2ff)
             ax.set_xlabel("xyz"[ia] + " [mm]")
             ax.set_ylabel("xyz"[ib] + " [mm]")
             ax.set_title(f"{name} projection")

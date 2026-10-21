@@ -334,6 +334,39 @@ def main() -> int:
         viewer._redraw()
         print("  ports independent of structure + legend follows toggles: OK")
 
+        # --- highlight of the object selected in the Project/Geometry list ----
+        _YELLOW = (1.0, 212 / 255, 0.0)
+
+        def _yellow(fig) -> int:
+            n = 0
+            for _ax in fig.axes:
+                for _p in _ax.patches:
+                    _ec = tuple(_p.get_edgecolor())
+                    if _ec[:3] == _YELLOW and abs(_ec[3] - 1.0) < 1e-9:
+                        n += 1
+            return n
+
+        _pr = max(primitives, key=lambda p: abs(float(p["stop"][2]) - float(p["start"][2])))
+        viewer.cmb_view.setCurrentText("Overview")
+        viewer._redraw()
+        assert _yellow(viewer.fig_slice) == 0, "nothing selected but something is highlighted"
+        viewer.set_highlight(
+            boxes=[(_pr["start"], _pr["stop"])],
+            names=[str(_pr.get("name", ""))],
+            label="Prim: test",
+        )
+        assert viewer.highlight()["label"] == "Prim: test"
+        assert viewer._is_highlighted(_pr["start"], _pr["stop"]), "box match failed"
+        assert not viewer._is_highlighted((0.0, 0.0, 0.0), (0.1, 0.1, 0.1)), "false match"
+        assert _yellow(viewer.fig_slice) >= 1, "highlighted object not outlined"
+        # name matching also accepts the CSX form ("copper" -> "copper#1")
+        viewer.set_highlight(names=[str(_pr.get("material", "copper"))])
+        assert viewer._is_highlighted(None, None, f"{_pr.get('material', 'copper')}#1")
+        viewer.clear_highlight()
+        assert not viewer.highlight()["boxes"] and not viewer.highlight()["names"]
+        assert _yellow(viewer.fig_slice) == 0, "highlight not cleared"
+        print("  geometry-list highlight (box + name, overview/slice): OK")
+
         # --- port perpendicular to the slice (dipole style) -------------------
         # x-directed port sitting in the z=0 plane: in the XY view its extent
         # along the normal is zero, so belonging to the local cell it must

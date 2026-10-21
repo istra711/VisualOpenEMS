@@ -304,6 +304,8 @@ class MainWindow(QMainWindow):
         )
         lv.addWidget(self.tree)
         self.tree.itemDoubleClicked.connect(self._on_tree_double_clicked)
+        # selecting an entry highlights the object in the Mesh Viewer
+        self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree.keyPressEvent = self._tree_key_press  # type: ignore[method-assign]
@@ -331,6 +333,8 @@ class MainWindow(QMainWindow):
         self.mat_list = QListWidget()
         gv.addWidget(QLabel("Materials"))
         gv.addWidget(self.mat_list)
+        # a material picked here highlights its objects in the Mesh Viewer too
+        self.mat_list.itemSelectionChanged.connect(self._on_material_selection_changed)
         self._refresh_materials()
         tabs.addTab(geom_tab, "Geometry")
 
@@ -1747,6 +1751,85 @@ class MainWindow(QMainWindow):
             self.mat_list.addItem(f"{m.name} ({m.kind})")
         if getattr(self, "tree", None) is not None:
             self._refresh_tree()
+
+    def _on_material_selection_changed(self) -> None:
+        """A material picked in the Geometry tab highlights its objects."""
+        row = self.mat_list.currentRow()
+        if row < 0 or row >= len(self.project.materials):
+            return
+        self._highlight_in_viewer(*self._material_highlight(row))
+
+    # ----- highlight the Project / Geometry selection in the Mesh Viewer ----
+    def _material_highlight(self, index: int) -> tuple[list, list, str]:
+        """(boxes, names, label) for the material at ``index``."""
+        if not (0 <= index < len(self.project.materials)):
+            return [], [], ""
+        m = self.project.materials[index]
+        boxes = [
+            (pr.get("start"), pr.get("stop"))
+            for pr in self.primitives
+            if str(pr.get("material", "")) == m.name
+        ]
+        return boxes, [m.name], f"Mat: {m.name}"
+
+    def _tree_selection_highlight(self, kind: str, idx: int) -> tuple[list, list, str]:
+        """(boxes, names, label) for the entry selected in the tree.
+
+        ``boxes`` are the exact (start, stop) pairs of the selected object (the
+        viewer matches them against its primitives/ports/NF2FF), ``names`` cover
+        imported CAD objects, whose CSX primitives are named after the property.
+        """
+        if kind == "prim" and 0 <= idx < len(self.primitives):
+            pr = self.primitives[idx]
+            name = str(pr.get("name") or "")
+            return [(pr.get("start"), pr.get("stop"))], [name], f"Prim: {name}"
+        if kind == "mat":
+            return self._material_highlight(idx)
+        if kind == "assign" and 0 <= idx < len(self.project.assignments):
+            a = self.project.assignments[idx]
+            return [], [a.object_name, a.material], f"Assign: {a.object_name}"
+        if kind == "geom" and 0 <= idx < len(self.project.geometry_files):
+            gf = self.project.geometry_files[idx]
+            objects = [str(n) for n in (gf.object_names or []) if str(n)]
+            mats = [
+                str(a.material)
+                for a in self.project.assignments
+                if str(a.object_name) in objects and a.material
+            ]
+            names = objects + mats + [Path(gf.path).stem]
+            return [], names, f"Geom: {Path(gf.path).name}"
+        if kind == "port" and 0 <= idx < len(self.project.ports):
+            p = self.project.ports[idx]
+            return [(p.start, p.stop)], [p.name], f"Port: {p.name}"
+        if kind == "dump" and 0 <= idx < len(self.project.dumps):
+            d = self.project.dumps[idx]
+            return [(d.start, d.stop)], [d.name], f"Dump: {d.name}"
+        if kind == "nf2ff":
+            n = self.project.nf2ff
+            return [(n.start, n.stop)], [], "NF2FF box"
+        return [], [], ""
+
+    def _highlight_in_viewer(self, boxes, names, label: str) -> None:
+        viewer = getattr(self, "mesh_viewer", None)
+        if viewer is None or not hasattr(viewer, "set_highlight"):
+            return
+        try:
+            viewer.set_highlight(boxes=boxes, names=names, label=label)
+        except Exception as e:  # noqa: BLE001 — never break the GUI on a highlight
+            print("mesh viewer highlight failed:", e)
+
+    def _on_tree_selection_changed(self) -> None:
+        """Highlight the object selected in the Project / Geometry list."""
+        items = self.tree.selectedItems()
+        if not items:
+            self._highlight_in_viewer([], [], "")  # nothing selected -> no highlight
+            return
+        item = items[0]
+        k_raw = item.data(Qt.UserRole)
+        i_raw = item.data(Qt.UserRole + 1)
+        kind = "" if k_raw is None else str(k_raw)
+        idx = -1 if i_raw is None else int(i_raw)
+        self._highlight_in_viewer(*self._tree_selection_highlight(kind, idx))
 
     def _refresh_ports(self) -> None:
         self.port_list.clear()
