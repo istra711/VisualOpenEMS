@@ -63,19 +63,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the right-click menu gained **"Port type"**: *Lumped* (default) or
     *MSL, width along X/Y/Z* — the entries follow the in-plane axes of the slice
     you are in (XY → X/Y, XZ → X/Z, YZ → Y/Z). An MSL port is as wide as the
-    **clicked metal** along the chosen axis and has **zero length along the
-    line** (the other in-plane axis is the propagation direction, prefilled
-    together with the excitation direction for `AddMSLPort`). openEMS needs a
-    propagation *sense*, so the generated run script widens such a box by one
-    grid cell itself (the project keeps the zero length); picking an MSL entry
-    also arms port mode.
+    **clicked metal** along the chosen axis and **one mesh cell long** along the
+    other in-plane axis (the line, propagation direction — openEMS needs it for
+    its propagation sense and its strip); a **lumped** port stays a line without
+    any width. Propagation/excitation direction are prefilled for
+    `AddMSLPort`; picking an MSL entry also arms port mode. (A *manually* made
+    MSL port with zero length along the line is widened by one grid cell at run
+    time — see `extend_zero_propagation` — since openEMS would otherwise get a
+    zero propagation sense.)
   - the Port dialog opens with the computed box (Start/Stop/Direction/prop/exc
     for MSL) and stays editable; the clicked coordinates stay unsnapped.
-  Tests: `tests/mesh_port_place_smoke.py` (strip-over-ground scene: lumped span,
-  MSL width + zero length along the line, menu entries per slice, fallback, log
-  hints), `tests/test_msl_port.py` (zero-length box needs an explicit
-  propagation axis; `extend_zero_propagation` widens it by one grid cell);
-  pure-logic helper `_is_metal()`.
+  Tests: `tests/mesh_port_place_smoke.py` (strip-over-ground scene: lumped span
+  with no width, MSL width + one cell along the line, menu entries per slice,
+  fallback, log hints), `tests/test_msl_port.py` (a zero-length MSL box needs an
+  explicit propagation axis; `extend_zero_propagation` widens it by one grid
+  cell); pure-logic helper `_is_metal()`.
 
 - **Field Viewer: field info + selectable standard view**
   (`app/ui/vtk_viewer.py`, `app/settings.py`, `app/ui/main_window.py`):
