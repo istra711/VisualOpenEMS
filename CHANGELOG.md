@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Selecting an object in the Geometry list shows it in the Mesh Viewer**
+  (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`): a click on an entry in the
+  left Project / Geometry list (or a material in the Geometry tab) not only
+  highlights the object, it also **puts the slice plane on the middle of its
+  height** — e.g. an XY slice with an object spanning z = 0…5 mm moves the plane
+  to z = 2.5 mm, so the object really is visible in that slice
+  (`focus_highlight()`, clamped to the FDTD domain by the plane spinbox).
+  Programmatic list rebuilds (which re-select the same row after every edit) do
+  not move the plane again — only a click in the list does. The highlight now
+  also counts elements in the *neighbouring cell* of the plane (like the port
+  overlay), so an object between two mesh lines shows up too.
+  Tests: `tests/mesh_port_place_smoke.py` (strip -> 1.0175, ground -> 0.0175,
+  visible in the slice, plane untouched by the port placement that rebuilds the
+  list).
+
 - **Ports can be switched off ("Active")** (`app/models/project.py`,
   `app/ui/geometry_editors.py`, `app/ui/main_window.py`,
   `app/ui/mesh_viewer.py`, `app/simulation/{script_gen,multirun}.py`): the Port
