@@ -1356,9 +1356,8 @@ class MeshGeometryViewer(QWidget):
                 and str(self._msl_orientation or "").lower() == axis
             )
             act.setToolTip(
-                f"Microstrip port: the metal's width is along {axis.upper()}, so the\n"
-                f"line runs along {other.upper()} (propagation). The port box stays\n"
-                "zero-width — openEMS extends it to the metal edges itself."
+                f"Microstrip port: as wide as the clicked metal along {axis.upper()},\n"
+                f"propagating along the other in-plane axis ({other.upper()})."
             )
             act.triggered.connect(
                 lambda _checked=False, a=axis: self._on_port_type_action("msl", a)
@@ -1523,15 +1522,17 @@ class MeshGeometryViewer(QWidget):
         }
         if port_kind != "msl":
             return box
-        # MSL: zero width (openEMS extends the port to the metal edges itself) and
-        # one mesh cell along the line. The chosen orientation fixes which
-        # in-plane axis is the width -> the line runs along the other one.
+        # MSL: as wide as the clicked metal, one mesh cell along the line
         iw = _AXIS.get(str(msl_axis).lower())
         if iw is None or iw == inorm:
             iw = ia  # no/!in-plane orientation -> first in-plane axis
         ip = ib if iw == ia else ia
+        w_lo, w_hi = sorted((float(cur_info.start[iw]), float(cur_info.stop[iw])))
+        if w_hi - w_lo <= eps:  # degenerate metal -> use the click
+            w_lo = w_hi = float(a) if iw == ia else float(b)
         p_lo, p_hi = self._cell_around(_axis_letter(ip), float(a) if ip == ia else float(b))
         vals = {ia: [float(a), float(a)], ib: [float(b), float(b)]}
+        vals[iw] = [w_lo, w_hi]
         vals[ip] = [p_lo, p_hi]
         for k in (ia, ib):
             start[k], stop[k] = vals[k][0], vals[k][1]
@@ -1539,7 +1540,7 @@ class MeshGeometryViewer(QWidget):
             prop_direction=_axis_letter(ip),
             exc_direction=normal,
             width_axis=_axis_letter(iw),
-            width=0.0,
+            width=w_hi - w_lo,
         )
         return box
 

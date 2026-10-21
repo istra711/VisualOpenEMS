@@ -3708,11 +3708,7 @@ class MainWindow(QMainWindow):
                 f" [{req.get('metal') or '?'} → {req.get('partner') or '?'} ({side})]"
             )
         if kind == "msl":
-            where_extra += (
-                f" line along {str(req.get('prop_direction') or '?').upper()}"
-                f", excitation {str(req.get('exc_direction') or '?').upper()}"
-                f", width along {str(req.get('width_axis') or '?').upper()}=0"
-            )
+            where_extra += f" width along {str(req.get('width_axis') or '?').upper()}"
         self._log(
             f"Placed {kind.upper()} port candidate at "
             f"x={start[0]:.4g}, y={start[1]:.4g}, z={start[2]:.4g}"

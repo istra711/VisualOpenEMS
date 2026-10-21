@@ -134,12 +134,11 @@ Port mode (right-click → "Port mode (click in a slice to place)")
   • Right-click → **"Port type"** decides what the click places:
     - **Lumped** (default): the line described above (Start/Stop on the two
       metal faces, Direction = the slice normal);
-    - **MSL, width along X/Y/Z**: the same box, but the chosen in-plane axis is
-      the metal's **width** direction — the line (propagation) then runs along
-      the other in-plane axis and the port box stays **zero-width** (openEMS
-      extends an MSL port to the metal edges itself). Propagation and excitation
-      direction are prefilled for the generator, and picking an MSL entry also
-      turns port mode on.
+    - **MSL, width along X/Y/Z**: the same box, but as wide as the **clicked
+      metal** along the chosen in-plane axis and one mesh cell long along the
+      other in-plane axis (the line/propagation axis). Propagation and
+      excitation direction are prefilled for the generator, and picking an MSL
+      entry also turns port mode on.
     The in-plane axes in the menu follow the slice you are in (XY → X/Y,
     XZ → X/Z, YZ → Y/Z).
   • A red dot with its (x, y) coordinates marks the spot, then the Port dialog

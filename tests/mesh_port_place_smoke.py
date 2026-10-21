@@ -220,9 +220,9 @@ def main() -> int:
     msl = win.project.ports[-1]
     assert len(win.project.ports) == n_ports + 1, win.project.ports
     assert msl.type == "msl", msl.type
-    # width along y stays 0 (openEMS extends the port to the metal edges)
-    assert abs(msl.start[1] - msl.stop[1]) < 1e-12, msl
-    assert abs(msl.start[1] - click_y) < 1e-12, msl
+    # width along y = the strip's width (2..3)
+    assert abs(min(msl.start[1], msl.stop[1]) - 2.0) < 1e-4, msl
+    assert abs(max(msl.start[1], msl.stop[1]) - 3.0) < 1e-4, msl
     # propagation along x: one mesh cell (non-zero, far below the strip length)
     prop = abs(msl.stop[0] - msl.start[0])
     assert 0.0 < prop < 10.0, msl
@@ -232,7 +232,7 @@ def main() -> int:
     )
     # excitation spans the substrate (strip bottom -> ground top)
     assert abs(msl.start[2] - 1.0) < 1e-4 and abs(msl.stop[2] - 0.035) < 1e-4, msl
-    assert "width along Y=0" in win.log_view.toPlainText()
+    assert "width along Y" in win.log_view.toPlainText()
     # the axes resolve for the generator (openEMS AddMSLPort)
     from app.simulation.msl import resolve_msl_axes
 
