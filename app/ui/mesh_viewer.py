@@ -1193,22 +1193,35 @@ class MeshGeometryViewer(QWidget):
         to z = 2.5 mm, so the object is visible in that slice. The value is
         clamped to the FDTD domain by the plane spinbox. Returns True when the
         plane was changed.
+
+        The plot is repainted even when the plane does not (visibly) move: a
+        ``setValue()`` that rounds to the same 4 decimals emits no
+        ``valueChanged`` (the CSX boxes are float32-rounded, so ``mid`` almost
+        never equals the spinbox value bit for bit). Without that explicit
+        redraw the slice kept the outline/label of the *previous* selection —
+        exactly the "I clicked this object but the old one stays highlighted"
+        report.
         """
         key = _slice_key(self.cmb_view.currentText())
         if key is None:
-            return False  # Overview / Cell sizes: no slice plane
-        normal = _SLICE_AXES[key][2]
-        idx = _AXIS[normal]
+            self._redraw()  # Overview / Cell sizes draw the highlight too
+            return False
+        idx = _AXIS[_SLICE_AXES[key][2]]
         boxes = self._highlight_boxes()
         if not boxes:
+            self._redraw()  # label/count may have changed without a match
             return False
         lo = min(min(float(b[0][idx]), float(b[1][idx])) for b in boxes)
         hi = max(max(float(b[0][idx]), float(b[1][idx])) for b in boxes)
         mid = 0.5 * (lo + hi)
-        if abs(float(self.spn_plane.value()) - mid) <= 1e-12:
+        before = float(self.spn_plane.value())
+        if abs(before - mid) <= 1e-12:
             self._redraw()
             return False
         self.spn_plane.setValue(mid)  # -> _on_plane_changed -> redraw
+        if abs(float(self.spn_plane.value()) - before) <= 1e-12:
+            # setValue() was swallowed by the spinbox rounding -> no signal
+            self._redraw()
         return True
 
     def _highlight_boxes(self) -> list[tuple[tuple, tuple]]:

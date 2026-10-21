@@ -256,6 +256,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Highlighting in the Mesh Viewer did not follow the "Project / Geometry"
+  selection** (`app/ui/mesh_viewer.py`, `tests/mesh_viewer_smoke.py`): clicking
+  an entry updated the stored highlight but not the picture, so the slice kept
+  the outline and the `[selected: …]` title of the *previously* clicked object
+  (report: `Prim: msl_line` selected in the list, `Prim: msl_stub` still
+  highlighted — same for the boards). Cause: `focus_highlight()` moved the slice
+  plane onto the object's middle with `spn_plane.setValue(mid)` and relied on
+  its `valueChanged` signal for the redraw. The plane spinbox rounds to 4
+  decimals and the CSX boxes are float32-rounded, so that `setValue()` was
+  usually a no-op → no signal → no redraw. Now the slice is always repainted
+  when the value does not actually change — and also when the selection matches
+  no drawn element (e.g. an imported CAD entry) or when Overview / Cell sizes is
+  shown. Test: `tests/mesh_viewer_smoke.py` (two clicks on the same plane must
+  swap the title; a non-matching selection must refresh it too).
+
 - **A port placed by a click in the Mesh Viewer aborted the run
   ("mesh validation failed")** (`app/meshing/port_align.py` (new),
   `app/meshing/easy_wrapper.py`, `app/meshing/build_task.py`,
