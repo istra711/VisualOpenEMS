@@ -1356,8 +1356,9 @@ class MeshGeometryViewer(QWidget):
                 and str(self._msl_orientation or "").lower() == axis
             )
             act.setToolTip(
-                f"Microstrip port: as wide as the clicked metal along {axis.upper()},\n"
-                f"propagating along the other in-plane axis ({other.upper()})."
+                f"Microstrip port: the metal's width is along {axis.upper()}, so the\n"
+                f"line runs along {other.upper()} (propagation). The port box stays\n"
+                "zero-width — openEMS extends it to the metal edges itself."
             )
             act.triggered.connect(
                 lambda _checked=False, a=axis: self._on_port_type_action("msl", a)
@@ -1522,17 +1523,15 @@ class MeshGeometryViewer(QWidget):
         }
         if port_kind != "msl":
             return box
-        # MSL: as wide as the clicked metal, one mesh cell along the line
+        # MSL: zero width (openEMS extends the port to the metal edges itself) and
+        # one mesh cell along the line. The chosen orientation fixes which
+        # in-plane axis is the width -> the line runs along the other one.
         iw = _AXIS.get(str(msl_axis).lower())
         if iw is None or iw == inorm:
             iw = ia  # no/!in-plane orientation -> first in-plane axis
         ip = ib if iw == ia else ia
-        w_lo, w_hi = sorted((float(cur_info.start[iw]), float(cur_info.stop[iw])))
-        if w_hi - w_lo <= eps:  # degenerate metal -> use the click
-            w_lo = w_hi = float(a) if iw == ia else float(b)
         p_lo, p_hi = self._cell_around(_axis_letter(ip), float(a) if ip == ia else float(b))
         vals = {ia: [float(a), float(a)], ib: [float(b), float(b)]}
-        vals[iw] = [w_lo, w_hi]
         vals[ip] = [p_lo, p_hi]
         for k in (ia, ib):
             start[k], stop[k] = vals[k][0], vals[k][1]
@@ -1540,7 +1539,7 @@ class MeshGeometryViewer(QWidget):
             prop_direction=_axis_letter(ip),
             exc_direction=normal,
             width_axis=_axis_letter(iw),
-            width=w_hi - w_lo,
+            width=0.0,
         )
         return box
 
@@ -2285,21 +2284,28 @@ class MeshGeometryViewer(QWidget):
                     continue
                 x0, x1 = min(st[ia], sp[ia]), max(st[ia], sp[ia])
                 y0, y1 = min(st[ib], sp[ib]), max(st[ib], sp[ib])
+                active = bool(getattr(p, "active", True))
+                # inactive ports (PortDef.active=False) are greyed out
+                face = (1.0, 0.2, 0.2, 0.55) if active else (0.55, 0.55, 0.55, 0.35)
+                edge = "darkred" if active else "grey"
+                linestyle = "-" if active else ":"
+                label = "Ports" if active else "Ports (off)"
                 # degenerate (line/point) ports → draw marker at center
                 if abs(x1 - x0) < eps and abs(y1 - y0) < eps:
                     ax.plot(
                         [(x0 + x1) / 2], [(y0 + y1) / 2],
-                        marker="o", markersize=8, color="red",
+                        marker="o", markersize=8, color="red" if active else "grey",
                         markeredgecolor="white", markeredgewidth=0.8, zorder=5,
-                        label="Ports",
+                        label=label,
                     )
                 else:
                     ax.add_patch(
                         Rectangle(
                             (x0, y0), x1 - x0, y1 - y0,
-                            facecolor=(1.0, 0.2, 0.2, 0.55),
-                            edgecolor="darkred", linewidth=1.2, zorder=5,
-                            label="Ports",
+                            facecolor=face,
+                            edgecolor=edge, linewidth=1.2, linestyle=linestyle,
+                            zorder=5,
+                            label=label,
                         )
                     )
 
@@ -2418,7 +2424,11 @@ class MeshGeometryViewer(QWidget):
                         continue
                     cx = 0.5 * (st[ia] + sp[ia])
                     cy = 0.5 * (st[ib] + sp[ib])
-                    ax.plot([cx], [cy], marker="o", markersize=5, color="red", zorder=5)
+                    active = bool(getattr(p, "active", True))
+                    ax.plot(
+                        [cx], [cy], marker="o", markersize=5,
+                        color="red" if active else "grey", zorder=5,
+                    )
             if self.chk_nf2ff.isChecked() and nf2ff is not None:
                 st = getattr(nf2ff, "start", None)
                 sp = getattr(nf2ff, "stop", None)

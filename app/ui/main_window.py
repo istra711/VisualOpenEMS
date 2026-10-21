@@ -81,6 +81,8 @@ class MainWindow(QMainWindow):
         self._current_file_path: Path | None = None
         # signature of the project state the Mesh Viewer's CSX was built from
         self._mesh_sig: str | None = None
+        #: signature the viewer's current (geometry-only) scene was built from
+        self._viewer_geometry_sig: str | None = None
         # user deleted the mesh -> suppress the automatic rebuild until the next
         # explicit Build Mesh
         self._mesh_deleted = False
@@ -502,13 +504,23 @@ class MainWindow(QMainWindow):
         self.port_list = QListWidget()
         self.port_list.setToolTip(
             "Project ports.\nDouble-click a row to edit (type, R, direction, start/stop).\n"
+            "'[off]' = inactive: kept in the project but not simulated.\n"
             "Defaults for FreeCAD import: Settings -> Port defaults."
         )
         port_btn_row = QHBoxLayout()
         self.btn_edit_port = QPushButton("Edit Port…")
         self.btn_del_port = QPushButton("Remove Port")
+        self.btn_toggle_port = QPushButton("Active on/off")
+        self.btn_toggle_port.setToolTip(
+            "Switch the selected port on/off.\n"
+            "Inactive ports stay in the project (shown as '[off]'), are drawn\n"
+            "greyed out and are not written to the simulation: no port number,\n"
+            "no S-parameter column, ignored by 'Run All Ports'."
+        )
+        self.btn_toggle_port.clicked.connect(self._on_toggle_port_active)
         port_btn_row.addWidget(self.btn_edit_port)
         port_btn_row.addWidget(self.btn_del_port)
+        port_btn_row.addWidget(self.btn_toggle_port)
         port_btn_row.addStretch(1)
         pv.addWidget(QLabel("Ports (double-click to edit)"))
         pv.addWidget(self.port_list)
@@ -1834,11 +1846,27 @@ class MainWindow(QMainWindow):
     def _refresh_ports(self) -> None:
         self.port_list.clear()
         for p in self.project.ports:
+            off = "" if bool(getattr(p, "active", True)) else "  [off]"
             self.port_list.addItem(
-                f"{p.name}: {p.type} {p.start} -> {p.stop} R={p.resistance}"
+                f"{p.name}: {p.type} {p.start} -> {p.stop} R={p.resistance}{off}"
             )
         if getattr(self, "tree", None) is not None:
             self._refresh_tree()
+
+    def _on_toggle_port_active(self) -> None:
+        """Switch the selected port on/off (it stays in the project)."""
+        idx = self._selected_port_index()
+        if idx < 0:
+            self._log("Select a port to switch it on/off (double-click a row)")
+            return
+        p = self.project.ports[idx]
+        p.active = not bool(getattr(p, "active", True))
+        self._refresh_ports()
+        if idx < self.port_list.count():
+            self.port_list.setCurrentRow(idx)
+        self.mesh_viewer.set_ports(self.project.ports)
+        state = "active" if p.active else "inactive (not simulated)"
+        self._log(f"Port {p.name}: {state}")
 
     def _freq_unit(self) -> str:
         return getattr(self, "_freq_unit_name", None) or getattr(
@@ -2644,7 +2672,8 @@ class MainWindow(QMainWindow):
 
         Rebuilds when the loaded CSX no longer matches the project (geometry,
         ports, dumps or mesh parameters changed); otherwise keeps it. Prefers
-        recorded results only when nothing is loaded at all.
+        recorded results only when nothing is loaded at all. The view type, slice
+        plane and zoom the user set are kept across such a rebuild.
         """
         try:
             current = self._mesh_signature()
@@ -2665,9 +2694,98 @@ class MainWindow(QMainWindow):
         else:
             self._log("Mesh Viewer: no recorded mesh — building the mesh now…")
         try:
+            self._auto_mesh_build = True  # entering the tab: keep the current view
             self._build_and_validate()
         except Exception as e:  # noqa: BLE001
             self._log(f"Mesh Viewer: automatic meshing failed: {e}")
+        finally:
+            self._auto_mesh_build = False
+
+    def _maybe_refresh_viewer_geometry(self) -> None:
+        """Show geometry edits in the Mesh Viewer right away (no mesh rebuild).
+
+        Called after the project list changed (add/edit/remove/import): the
+        viewer gets a freshly built scene CSX (geometry + domain, no easyMesh)
+        with the current view/plane/zoom and the grid of the last build. The mesh
+        itself is stale afterwards, so the next tab entry or Build Mesh refreshes
+        it.
+        """
+        viewer = getattr(self, "mesh_viewer", None)
+        if viewer is None or getattr(viewer, "_csx", None) is None:
+            return  # nothing shown yet — entering the tab prepares it
+        if not (self.primitives or self.project.geometry_files):
+            return
+        try:
+            sig = self._mesh_signature()
+        except Exception:  # noqa: BLE001
+            return
+        if sig == getattr(self, "_viewer_geometry_sig", None):
+            return  # the viewer already shows this state
+        self._viewer_geometry_sig = sig
+        self._update_viewer_scene()
+
+    def _update_viewer_scene(self) -> None:
+        """Swap a scene CSX (geometry only) into the Mesh Viewer, view kept."""
+        from app.meshing.build_task import build_scene_csx
+        from app.meshing.preview import mesh_lines_from_csx
+
+        viewer = self.mesh_viewer
+        try:
+            result = build_scene_csx(
+                self.project, list(self.primitives), self._project_work_dir()
+            )
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Mesh Viewer: geometry update failed: {e}")
+            return
+        # carry the grid lines of the last build over, so the picture does not
+        # jump to a coarse default grid while the mesh is stale
+        try:
+            old = getattr(viewer, "_csx", None)
+            if old is not None:
+                lines = mesh_lines_from_csx(old)
+                grid = result.csx.GetGrid()
+                for d, axis in enumerate("xyz"):
+                    arr = lines.get(axis)
+                    if arr is not None and len(arr) >= 2:
+                        grid.SetLines(d, [float(v) for v in arr])
+        except Exception as e:  # noqa: BLE001
+            print("mesh viewer grid carry-over failed:", e)
+        try:
+            viewer.set_project_context(
+                project=self.project,
+                primitives=self.primitives,
+                ports=self.project.ports,
+                nf2ff=self.project.nf2ff,
+            )
+            old_csx = getattr(viewer, "_csx", None)
+            viewer.set_csx(result.csx, keep_view=True)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Mesh Viewer: geometry update failed: {e}")
+            return
+        # CSXCAD/openEMS objects free their C++ side on destruction; a viewer or
+        # matplotlib reference into a freed object hard-crashes the GUI, so both
+        # the replaced CSX and the new scene FDTD are parked (like a mesh build).
+        self._park_retired(old_csx)
+        self._park_retired(result.csx, getattr(result, "fdtd", None))
+        # the mesh grid is from the previous build now -> rebuild on next entry
+        self._mesh_sig = None
+        self._log(
+            "Mesh Viewer: geometry updated (mesh grid from the last build — "
+            "Build Mesh (Ctrl+M) refreshes it)"
+        )
+
+    def _park_retired(self, csx=None, fdtd=None) -> None:
+        """Keep CSXCAD/openEMS objects alive (their destructor can crash the GUI)."""
+        for name, obj in (("_retired_csx", csx), ("_retired_fdtd", fdtd)):
+            if obj is None:
+                continue
+            lst = getattr(self, name, None)
+            if not isinstance(lst, list):
+                lst = []
+                setattr(self, name, lst)
+            lst.append(obj)
+            if len(lst) > 4:  # bound memory
+                del lst[:-4]
 
     def _find_field_series(self, project_dir: Path) -> Path | None:
         """Newest exported field dump (``<project>/vtk/*.vtr``), or ``None``.
@@ -3590,7 +3708,11 @@ class MainWindow(QMainWindow):
                 f" [{req.get('metal') or '?'} → {req.get('partner') or '?'} ({side})]"
             )
         if kind == "msl":
-            where_extra += f" width along {str(req.get('width_axis') or '?').upper()}"
+            where_extra += (
+                f" line along {str(req.get('prop_direction') or '?').upper()}"
+                f", excitation {str(req.get('exc_direction') or '?').upper()}"
+                f", width along {str(req.get('width_axis') or '?').upper()}=0"
+            )
         self._log(
             f"Placed {kind.upper()} port candidate at "
             f"x={start[0]:.4g}, y={start[1]:.4g}, z={start[2]:.4g}"
@@ -3852,7 +3974,8 @@ class MainWindow(QMainWindow):
         for i, m in enumerate(self.project.materials):
             _add(f"Mat: {m.name} ({m.kind})", "mat", i)
         for i, p in enumerate(self.project.ports):
-            _add(f"Port: {p.name} {p.type} {p.start}→{p.stop}", "port", i)
+            off = "" if bool(getattr(p, "active", True)) else " [off]"
+            _add(f"Port: {p.name} {p.type} {p.start}→{p.stop}{off}", "port", i)
         for i, d in enumerate(self.project.dumps):
             _add(f"Dump: {d.name} ({d.quantity})", "dump", i)
         n = self.project.nf2ff
@@ -3863,6 +3986,10 @@ class MainWindow(QMainWindow):
         )
         if restore_row >= 0:
             self.tree.setCurrentRow(restore_row)
+        # geometry edits (add / edit / remove / import) become visible in the
+        # Mesh Viewer right away — the list refresh is the common end point of
+        # all those actions
+        self._maybe_refresh_viewer_geometry()
 
     def _tree_key_press(self, event) -> None:
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
@@ -4385,8 +4512,11 @@ class MainWindow(QMainWindow):
                 nf2ff=self.project.nf2ff,
             )
             self.mesh_viewer.set_auto_grid(result.auto_mesh_lines)
-            self.mesh_viewer.set_csx(CSX, keep_view=auto)
+            # keep the view type, slice plane and zoom across a rebuild (the
+            # user's settings must survive leaving/entering the tab or a build)
+            self.mesh_viewer.set_csx(CSX, keep_view=True)
             self._mesh_sig = self._mesh_signature()
+            self._viewer_geometry_sig = self._mesh_sig
             self._sync_scene_info()
             if not auto:
                 # Switch to the viewer tab so the user sees the new mesh

@@ -134,11 +134,12 @@ Port mode (right-click → "Port mode (click in a slice to place)")
   • Right-click → **"Port type"** decides what the click places:
     - **Lumped** (default): the line described above (Start/Stop on the two
       metal faces, Direction = the slice normal);
-    - **MSL, width along X/Y/Z**: the same box, but as wide as the **clicked
-      metal** along the chosen in-plane axis and one mesh cell long along the
-      other in-plane axis (the line/propagation axis). Propagation and
-      excitation direction are prefilled for the generator, and picking an MSL
-      entry also turns port mode on.
+    - **MSL, width along X/Y/Z**: the same box, but the chosen in-plane axis is
+      the metal's **width** direction — the line (propagation) then runs along
+      the other in-plane axis and the port box stays **zero-width** (openEMS
+      extends an MSL port to the metal edges itself). Propagation and excitation
+      direction are prefilled for the generator, and picking an MSL entry also
+      turns port mode on.
     The in-plane axes in the menu follow the slice you are in (XY → X/Y,
     XZ → X/Z, YZ → Y/Z).
   • A red dot with its (x, y) coordinates marks the spot, then the Port dialog
@@ -402,7 +403,14 @@ with live editors: changes apply immediately (no Apply/Close round-trip).
 
 Ports
   • Double-click a port (or Edit Port…) — name, type (lumped / MSL / rect waveguide),
-    resistance, direction, start/stop, mesh dirs, excite flag.
+    resistance, direction, start/stop, mesh dirs, **Active**, excite flag.
+  • **Active** (checkbox in the dialog, "Active on/off" button in the window):
+    switch a port off without deleting it. An inactive port stays in the project
+    (list/tree show "[off]", it is drawn grey/dashed in the Mesh Viewer) but is
+    **not written to the simulation**: no AddLumpedPort/MSLPort, no port number
+    (the remaining active ports are numbered 1, 2, 3 …), no S-parameter column,
+    ignored by "Run All Ports" and by the mesh validators. Handy to keep spare
+    ports around while simulating a subset.
   • The port's resistance is also the S11 reference (normalisation) impedance:
     a 73 Ω lumped port yields a 73 Ω-referenced S11 and the .s1p header records
     z0=73 (a 50 Ω port keeps the old 50 Ω result). Match it to the reference
@@ -420,7 +428,7 @@ Ports
     an MSL port names the guided mode at the line cross-section (S-params
     referenced to the line impedance). Use the MSL port only where a real line
     with a defined characteristic impedance exists.
-  • Remove Port — delete the selected entry.
+  • Remove Port — delete the selected entry (inactive ports can just stay off).
   • FreeCAD PORT_in1_start/stop or openems_port_* properties are imported automatically.
   • Settings → Port defaults — type, R, excite, mesh dirs used when FreeCAD omits them
     (PORT points are geometry only). Explicit openems_port_* values always win.

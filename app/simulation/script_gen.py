@@ -618,7 +618,16 @@ def main() -> int:
     # the propagation-direction grid lines and needs >= 5 of them, and its
     # signature is AddMSLPort(nr, metal_prop, start, stop, prop_dir, exc_dir).
     deferred_msl = []
-    for idx, port in enumerate(project.ports, start=1):
+    # Switched-off ports (active=False) are not written at all: openEMS numbers
+    # ports consecutively, so only the active ones count (1, 2, 3, …).
+    active_ports = [p for p in project.ports if bool(getattr(p, "active", True))]
+    inactive = [p for p in project.ports if not bool(getattr(p, "active", True))]
+    if inactive:
+        print(
+            "Inactive port(s) skipped: "
+            + ", ".join(str(getattr(p, "name", "?")) for p in inactive)
+        )
+    for idx, port in enumerate(active_ports, start=1):
         start = [f32(x) for x in port.start]
         stop = [f32(x) for x in port.stop]
         if port.type == "lumped":
@@ -681,7 +690,7 @@ def main() -> int:
             targets,
             primitives_mesh_setup=primitives_mesh_setup,
             properties_mesh_setup=properties_mesh_setup,
-            ports=project.ports,
+            ports=active_ports,
         )
     # Zero-thickness PEC sheets only get their 1 nm thickness once the grid
     # exists — the mesher must see the authored geometry.
@@ -719,7 +728,7 @@ def main() -> int:
     report = validate_mesh(
         CSX,
         targets,
-        ports=project.ports,
+        ports=active_ports,
         max_grading=mesh.effective_max_grading_ratio(),
         coord_system=mesh.coord_system,
     )

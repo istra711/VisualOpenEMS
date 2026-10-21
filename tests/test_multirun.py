@@ -7,6 +7,7 @@ merges hand-written partial sparams.json tables into a full S-matrix.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -129,3 +130,49 @@ def test_summarise_table_lines(tmp_path):
 def port_sparams_json_path(plan):
     """Path the run's own post-processing writes (new layout)."""
     return plan.work_dir / "sparams" / "sparams.json"
+
+
+def test_inactive_ports_are_skipped_and_renumbered(tmp_path):
+    """PortDef.active=False: no port number, no run, no excitation."""
+    p = Project.new_default("act")
+    p.ports = [
+        PortDef(name="in1", start=[0, 0, 0], stop=[0, 0, 1], direction="z"),
+        PortDef(
+            name="spare",
+            start=[1, 0, 0],
+            stop=[1, 0, 1],
+            direction="z",
+            active=False,
+        ),
+        PortDef(name="out1", start=[5, 0, 0], stop=[5, 0, 1], direction="z"),
+    ]
+    assert PortDef(name="x").active is True  # default: on
+
+    plans = plan_port_runs(p, _PRIM, tmp_path)
+    # only the two active ports are numbered (1, 2) and planned
+    assert [(pl.port_number, pl.port_name) for pl in plans] == [(1, "in1"), (2, "out1")]
+    assert [pl.port_index for pl in plans] == [0, 1]
+
+    # each run excites exactly its own active port
+    for pl in plans:
+        run = Project.load(pl.project_path)
+        excited = [q.name for q in run.ports if q.excite_port]
+        assert excited == [pl.port_name], (pl.port_number, excited)
+        # the inactive port stays in the copy but is not excited
+        assert [q.name for q in run.ports if not q.active] == ["spare"]
+
+
+def test_inactive_port_gets_no_lumped_port(tmp_path):
+    """The generated script writes ports for the active ports only."""
+    from app.simulation.script_gen import generate_run_script
+
+    p = Project.new_default("act2")
+    p.ports = [
+        PortDef(name="in1", start=[0, 0, 0], stop=[0, 0, 1], direction="z"),
+        PortDef(name="off", start=[1, 0, 0], stop=[1, 0, 1], direction="z", active=False),
+    ]
+    script = Path(generate_run_script(p, tmp_path / "p.fcsim.json", tmp_path / "run"))
+    assert script.exists()
+    run = Project.load(tmp_path / "run" / "project_copy.json")
+    active = [q.name for q in run.ports if q.active]
+    assert active == ["in1"], active

@@ -26,8 +26,8 @@ from app.models.project import Project
 class PortRunPlan:
     """One excitation run of the multi-run driver."""
 
-    port_index: int  # 0-based position in project.ports
-    port_number: int  # 1-based openEMS port number
+    port_index: int  # 0-based position in the ACTIVE port list (see PortDef.active)
+    port_number: int  # 1-based openEMS port number (active ports only)
     port_name: str
     work_dir: Path  # per-run WORK_DIR (script writes simulation/ sparams/ nf2ff/)
     project_path: Path
@@ -55,7 +55,7 @@ def plan_port_runs(
     """
     from app.simulation.script_gen import generate_run_script
 
-    ports = list(project.ports)
+    ports = [p for p in project.ports if bool(getattr(p, "active", True))]
     numbers = list(only_ports) if only_ports is not None else list(range(1, len(ports) + 1))
     if len(numbers) < 2:
         raise ValueError("multi-run needs at least 2 ports")
@@ -66,7 +66,10 @@ def plan_port_runs(
         if number < 1 or number > len(ports):
             raise ValueError(f"port number {number} out of range (1..{len(ports)})")
         run_proj = copy.deepcopy(project)
-        for j, p in enumerate(run_proj.ports, start=1):
+        for p in run_proj.ports:
+            p.excite_port = False  # only the active ones are re-excited below
+        actives = [p for p in run_proj.ports if bool(getattr(p, "active", True))]
+        for j, p in enumerate(actives, start=1):
             p.excite_port = j == number
         run_dir = root / f"port{number}"
         run_dir.mkdir(parents=True, exist_ok=True)
