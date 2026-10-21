@@ -631,11 +631,13 @@ def main() -> int:
         start = [f32(x) for x in port.start]
         stop = [f32(x) for x in port.stop]
         if port.type == "lumped":
+            # "reverse" flips the port polarity (Start/Stop swapped)
+            b_start, b_stop = port.oriented(start, stop)
             pobj = FDTD.AddLumpedPort(
                 idx,
                 port.resistance,
-                start,
-                stop,
+                b_start,
+                b_stop,
                 port.direction,
                 1.0 if port.excite_port else 0.0,
                 priority=15,
@@ -643,6 +645,7 @@ def main() -> int:
             )
             port_objects.append((port, pobj))
         elif port.type == "msl":
+            # the swap happens after the zero-length extension below
             deferred_msl.append((idx, port, start, stop))
         elif port.type == "rect_waveguide":
             FDTD.AddRectWaveGuidePort(
@@ -653,6 +656,11 @@ def main() -> int:
                 port.resistance,
                 excite=1.0 if port.excite_port else 0.0,
             )
+            if bool(getattr(port, "reverse", False)):
+                print(
+                    f"rect_waveguide port '{port.name}': 'reverse' is ignored "
+                    "(its mode direction comes from the Direction field)"
+                )
         else:
             print("Unsupported port type:", port.type)
 
@@ -721,6 +729,11 @@ def main() -> int:
                 f"MSL port '{port.name}': zero length along {prop_dir} -> "
                 f"extended by one cell ({start[pi]:g} .. {stop[pi]:g})"
             )
+        # "reverse" flips the propagation/port sense (Start/Stop swapped); done
+        # after the extension so a zero-length port still gets its cell.
+        start, stop = port.oriented(start, stop)
+        if bool(getattr(port, "reverse", False)):
+            print(f"MSL port '{port.name}': reversed (propagation sense flipped)")
         metal = CSX.AddMetal(f"msl_{idx}_{port.name}_strip")
         pobj = FDTD.AddMSLPort(
             idx,

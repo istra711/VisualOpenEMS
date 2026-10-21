@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ports: "Reverse" option** (`app/models/project.py`,
+  `app/ui/geometry_editors.py`, `app/ui/main_window.py`,
+  `app/ui/mesh_viewer.py`, `app/simulation/script_gen.py`): the Port dialog has
+  a **Reverse (swap Start/Stop)** checkbox (`PortDef.reverse`, default off).
+  The run script then swaps Start and Stop for that port: openEMS derives the
+  port polarity from `sign(stop - start)`, so a lumped port's excitation and
+  current probe change sign and an MSL port gets the opposite propagation sense
+  — the port is measured the other way round. The box does not move (the
+  project keeps its original Start/Stop); the port list, the project tree and
+  the Mesh Viewer info panel mark it "[rev]". MSL ports are reversed *after*
+  the zero-length one-cell extension, so a sheet port still gets its cell.
+  rect_waveguide ports ignore it (their mode direction is the Direction field)
+  and the generated script says so.
+  Tests: `tests/test_msl_port.py`
+  (`orient_port_box` + generated script), `tests/port_defaults_smoke.py`
+  (dialog round-trip, `[rev]` markers, defaults off).
 - **Lumped ports: "Line" or "Area = metal width"** (`app/models/project.py`,
   `app/ui/mesh_viewer.py`, `app/ui/main_window.py`,
   `app/ui/geometry_editors.py`): a lumped port can be a 1-D line or an **area

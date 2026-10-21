@@ -1866,9 +1866,10 @@ class MainWindow(QMainWindow):
         self.port_list.clear()
         for p in self.project.ports:
             off = "" if bool(getattr(p, "active", True)) else "  [off]"
+            rev = "  [rev]" if bool(getattr(p, "reverse", False)) else ""
             self.port_list.addItem(
                 f"{p.name}: {p.type}{self._port_width_text(p, short=True)} "
-                f"{p.start} -> {p.stop} R={p.resistance}{off}"
+                f"{p.start} -> {p.stop} R={p.resistance}{rev}{off}"
             )
         if getattr(self, "tree", None) is not None:
             self._refresh_tree()
@@ -3844,6 +3845,7 @@ class MainWindow(QMainWindow):
         self._log(
             f"Port {port.name}: {port.type}{self._port_width_text(port)} "
             f"{port.start}→{port.stop} R={port.resistance}"
+            + ("  [reversed: Start/Stop swapped]" if getattr(port, "reverse", False) else "")
         )
 
     @staticmethod
@@ -3891,7 +3893,7 @@ class MainWindow(QMainWindow):
                 f"{self._port_width_text(new_port)} "
                 f"{new_port.start}→{new_port.stop} "
                 f"R={new_port.resistance} dir={new_port.direction} "
-                f"excite={new_port.excite_port}"
+                f"excite={new_port.excite_port} reverse={new_port.reverse}"
             )
 
     def _on_remove_port(self) -> None:
@@ -4097,9 +4099,10 @@ class MainWindow(QMainWindow):
             _add(f"Mat: {m.name} ({m.kind})", "mat", i)
         for i, p in enumerate(self.project.ports):
             off = "" if bool(getattr(p, "active", True)) else " [off]"
+            rev = " [rev]" if bool(getattr(p, "reverse", False)) else ""
             _add(
                 f"Port: {p.name} {p.type}{self._port_width_text(p, short=True)} "
-                f"{p.start}→{p.stop}{off}",
+                f"{p.start}→{p.stop}{rev}{off}",
                 "port",
                 i,
             )
