@@ -520,6 +520,34 @@ def main() -> int:
         assert viewer._sel_line is not None and viewer._sel_line[0] == "x", viewer._sel_line
         print("  click-select a line in the slice: OK")
 
+        # clicking the SAME line again undoes the selection (toggle)
+        viewer._last_click_t = 0.0
+        viewer._on_slice_click(ev)
+        assert not viewer._selected_lines, viewer._selected_lines
+        assert viewer._sel_line is None, viewer._sel_line
+        assert not viewer.lst_edit_lines.selectedItems(), "editor row still selected"
+        viewer._last_click_t = 0.0
+        viewer._on_slice_click(ev)  # ... and a third click selects it again
+        assert viewer._selected_lines == [("x", target)], viewer._selected_lines
+        print("  clicking the selected line again deselects it: OK")
+
+        # right-click "Refresh view (keep zoom)": redraw, zoom kept, selection off
+        _ax = viewer.fig_slice.axes[0]
+        _ax.set_xlim(-3.0, 4.0)
+        _ax.set_ylim(-1.0, 2.0)
+        _before = (_ax.get_xlim(), _ax.get_ylim())
+        viewer.refresh_view()
+        _after = (
+            viewer.fig_slice.axes[0].get_xlim(),
+            viewer.fig_slice.axes[0].get_ylim(),
+        )
+        assert _before == _after, (_before, _after)
+        assert not viewer._selected_lines and viewer._sel_line is None
+        assert not viewer.lst_edit_lines.selectedItems(), "editor row kept after refresh"
+        # ... and the mesh is drawn again (the slice still has its collections)
+        assert viewer.fig_slice.axes[0].collections, "refresh drew nothing"
+        print("  refresh view keeps the zoom + drops the selection: OK")
+
         # a click in free space ADDS a line (no snap band there)
         viewer.cmb_edit_axis.setCurrentText("x")
         # pick a coordinate a full band away from any x line

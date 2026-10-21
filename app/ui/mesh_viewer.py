@@ -785,6 +785,42 @@ class MeshGeometryViewer(QWidget):
                 self.lst_edit_lines.setCurrentRow(i)
                 return
 
+    def _is_line_selected(self, axis: str, coord: float) -> bool:
+        """True when this (axis, coordinate) is one of the highlighted lines."""
+        return any(
+            str(a) == str(axis) and abs(float(c) - float(coord)) < 1e-6
+            for a, c in (self._selected_lines or [])
+        )
+
+    def clear_line_selection(self) -> None:
+        """Drop the mesh-line selection (editor rows + slice highlight).
+
+        The editor list owns the selection: clearing it triggers
+        :meth:`_on_editor_selection`, which empties ``_selected_lines`` and
+        redraws the slice without the highlight.
+        """
+        if hasattr(self, "lst_edit_lines"):
+            self.lst_edit_lines.clearSelection()
+        self._selected_lines = []
+        self._sel_line = None
+
+    def refresh_view(self) -> None:
+        """Redraw the current view from the current mesh data, same zoom/pan.
+
+        The mesh-line selection is undone (see :meth:`clear_line_selection`) and
+        the editor list is rebuilt, so externally changed lines show up.
+        """
+        try:
+            self._refresh_editor()  # also clears _selected_lines / _sel_line
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer refresh (editor) error: {e}")
+        self._selected_lines = []
+        self._sel_line = None
+        try:
+            self._redraw()  # keeps the zoom while the view type is unchanged
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer refresh error: {e}")
+
     def _axis_span(self, axis_name: str) -> float:
         area = get_sim_area(self._csx) if self._csx is not None else None
         idx = {"x": 0, "y": 1, "z": 2}[axis_name]
@@ -818,7 +854,11 @@ class MeshGeometryViewer(QWidget):
                 j = int(np.argmin(np.abs(arr - val)))
                 band = 0.006 * self._axis_span(axis)
                 if band > 0.0 and abs(float(arr[j]) - val) <= band:
-                    self._select_row_for(float(arr[j]))
+                    coord = float(arr[j])
+                    if self._is_line_selected(axis, coord):
+                        self.clear_line_selection()  # clicking it again deselects
+                    else:
+                        self._select_row_for(coord)
                     return
         # Snap a newly added line onto a geometry edge when the click is near one.
         val = self._snap_to_edge(axis, val)
@@ -854,6 +894,12 @@ class MeshGeometryViewer(QWidget):
         act_del.setEnabled(n_sel > 0)
         act_del.setToolTip("Remove the selected line(s) from the mesh (like Del)")
         menu.addSeparator()
+        act_refresh = menu.addAction("Refresh view (keep zoom)")
+        act_refresh.setToolTip(
+            "Redraw the current view from the current mesh data.\n"
+            "View, zoom and pan stay as they are; the mesh-line selection is\n"
+            "dropped (like clicking the selected line again)."
+        )
         act_home = menu.addAction("Reset / Home view")
         chosen = menu.exec(QCursor.pos())
         if chosen is act_editor:
@@ -864,6 +910,8 @@ class MeshGeometryViewer(QWidget):
             self._on_popout()
         elif chosen is act_del:
             self._editor_remove_selected()
+        elif chosen is act_refresh:
+            self.refresh_view()
         elif chosen is act_home:
             try:
                 self.toolbar_slice.home()

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mesh Viewer: "Refresh view (keep zoom)" + toggling the line selection**
+  (`app/ui/mesh_viewer.py`): the plot's right-click menu gained **Refresh view
+  (keep zoom)** — it redraws the current view from the current mesh data with the
+  view type, zoom and pan untouched and the mesh-line selection dropped
+  (`refresh_view()`, which also rebuilds the editor list). And a slice click ON an
+  already selected line now **undoes** the selection (click again to select it
+  back), so the orange highlight can be cleared without touching the editor list.
+  Tests: `tests/mesh_viewer_smoke.py` (double-click on a line toggles, refresh
+  keeps the exact axes limits, drops the selection, still draws the mesh).
+
 - **Mesh Viewer: "Port mode" builds the port from the metal surfaces**
   (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`, `app/ui/tab_help.py`):
   a click in a slice now creates a **lumped** or an **MSL** port whose box is
