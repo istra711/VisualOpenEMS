@@ -125,6 +125,13 @@ class PortDialog(QDialog):
         )
         self.chk_excite = QCheckBox("Excite port")
         self.chk_excite.setChecked(bool(p.excite_port))
+        self.chk_active = QCheckBox("Active (use in the simulation)")
+        self.chk_active.setChecked(bool(getattr(p, "active", True)))
+        self.chk_active.setToolTip(
+            "Untick to switch the port off: it stays in the project (greyed out)\n"
+            "but is not written to the simulation — no port number, no\n"
+            "S-parameter column, ignored by 'Run All Ports'."
+        )
         self.cmb_mesh = QComboBox()
         self.cmb_mesh.addItems(["xyz", "xy", "xz", "yz", "x", "y", "z", ""])
         self.cmb_mesh.setCurrentText(p.mesh_dirs or "xy")
@@ -135,6 +142,7 @@ class PortDialog(QDialog):
         form.addRow("Direction", self.cmb_dir)
         form.addRow("Propagation dir (MSL)", self.cmb_prop)
         form.addRow("Excitation dir (MSL)", self.cmb_exc)
+        form.addRow(self.chk_active)
         form.addRow(self.chk_excite)
         form.addRow("Mesh dirs", self.cmb_mesh)
         self.spn_start = _vec3_row(form, "Start", p.start, coord_system=coord_system)
@@ -165,6 +173,7 @@ class PortDialog(QDialog):
             prop_direction=self.cmb_prop.currentData() or "",
             exc_direction=self.cmb_exc.currentData() or "",
             excite_port=self.chk_excite.isChecked(),
+            active=self.chk_active.isChecked(),
             mesh_dirs=self.cmb_mesh.currentText(),
         )
         self.accept()

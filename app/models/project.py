@@ -63,6 +63,10 @@ class PortDef:
     capacitance: float = 0.0
     direction: str = "x"  # x|y|z for waveguide ports
     excite_port: bool = True
+    #: False = the port is switched off: it is not written to the simulation
+    #: (no AddLumpedPort/MSLPort), does not get a port number and is ignored by
+    #: the S-param / multi-run bookkeeping (kept in the project, greyed out)
+    active: bool = True
     # MSL (microstrip) ports only: propagation + excitation axis (x|y|z).
     # ``direction`` above stays the lumped/waveguide normal axis. Empty means
     # "derive from the port box": propagation = longest edge, excitation =

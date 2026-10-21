@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ports can be switched off ("Active")** (`app/models/project.py`,
+  `app/ui/geometry_editors.py`, `app/ui/main_window.py`,
+  `app/ui/mesh_viewer.py`, `app/simulation/{script_gen,multirun}.py`): the Port
+  dialog has an **Active (use in the simulation)** checkbox and the Ports /
+  Dumps window an **Active on/off** button for the selected port
+  (`PortDef.active`, default on). An inactive port stays in the project — the
+  list and the project tree mark it `[off]`, the Mesh Viewer draws it grey and
+  dashed — but it is not written to the simulation at all: no
+  `AddLumpedPort`/`AddMSLPort`, **no port number** (the remaining active ports
+  are numbered 1, 2, 3 … consecutively, so S-param columns stay consistent),
+  ignored by `validate_mesh`/`generate_mesh` and by "Run All Ports" (which also
+  never excites an inactive port). The log lists skipped ports.
+  Tests: `tests/test_multirun.py` (skip + renumber + no excitation + generated
+  script), `tests/port_defaults_smoke.py` (dialog round-trip, `[off]` markers,
+  toggle button + log).
+
 - **Mesh Viewer: the Project / Geometry selection is highlighted**
   (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`): selecting an entry in the
   left Project / Geometry list (or a material in the Geometry tab's list) now
@@ -43,13 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is exactly the substrate height down to the ground plane. Is there no metal
     below, the next one above is used (its bottom face); the log names both
     metals. No second metal at the click → the old behaviour (click = Start =
-    Stop) plus a hint.
-  - the right-click menu gained **"Port type"**: *Lumped* (default) or
+    Stop) plus a hint.  - the right-click menu gained **"Port type"**: *Lumped* (default) or
     *MSL, width along X/Y/Z* — the entries follow the in-plane axes of the slice
-    you are in (XY → X/Y, XZ → X/Z, YZ → Y/Z). An MSL port is as wide as the
-    **clicked metal** along the chosen axis and one mesh cell long along the
-    other in-plane axis (the line), so propagation/excitation direction are
-    prefilled for `AddMSLPort`; picking an MSL entry also arms port mode.
+    you are in (XY → X/Y, XZ → X/Z, YZ → Y/Z). An MSL port keeps a **zero width**
+    (openEMS extends it to the metal edges itself); the chosen axis fixes which
+    in-plane direction is the metal's width, so the line runs along the other
+    one, and propagation/excitation direction are prefilled for `AddMSLPort`;
+    picking an MSL entry also arms port mode.
   - the Port dialog opens with the computed box (Start/Stop/Direction/prop/exc
     for MSL) and stays editable; the clicked coordinates stay unsnapped.
   Tests: `tests/mesh_port_place_smoke.py` (strip-over-ground scene: lumped span,

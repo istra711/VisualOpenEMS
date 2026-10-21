@@ -153,6 +153,36 @@ def main() -> int:
     assert dlg.result_port.exc_direction == "z"
     print("msl dialog axes:", dlg.result_port.prop_direction, dlg.result_port.exc_direction)
 
+    # 7) "Active" option: dialog round-trip, list marker, quick toggle button
+    off = _PD2(name="off1", start=[0, 0, 0], stop=[0, 0, 1], direction="z", active=False)
+    dlg_off = PortDialog(win, port=off)
+    assert dlg_off.chk_active.isChecked() is False, "dialog must show the port as inactive"
+    dlg_off._accept()
+    assert dlg_off.result_port.active is False, dlg_off.result_port
+    dlg_on = PortDialog(win, port=_PD2(name="on1", start=[0, 0, 0], stop=[0, 0, 1]))
+    assert dlg_on.chk_active.isChecked() is True, "ports default to active"
+    dlg_on._accept()
+    assert dlg_on.result_port.active is True
+
+    win.project.ports = [off]
+    win._refresh_ports()
+    win.port_list.setCurrentRow(0)
+    assert "[off]" in win.port_list.item(0).text(), win.port_list.item(0).text()
+    _port_rows = [
+        win.tree.item(i).text()
+        for i in range(win.tree.count())
+        if win.tree.item(i).text().startswith("Port:")
+    ]
+    assert _port_rows and "[off]" in _port_rows[0], _port_rows
+    win._on_toggle_port_active()
+    assert win.project.ports[0].active is True, "toggle did not switch it on"
+    assert "[off]" not in win.port_list.item(0).text(), win.port_list.item(0).text()
+    win._on_toggle_port_active()
+    assert win.project.ports[0].active is False
+    win._drain_log_queue()
+    assert "inactive" in win.log_view.toPlainText(), win.log_view.toPlainText()[-200:]
+    print("port 'Active' option (dialog/list/toggle): OK")
+
     win.close()
     print("PORT DEFAULTS SMOKE OK")
     return 0
