@@ -367,6 +367,64 @@ def main() -> int:
         assert _yellow(viewer.fig_slice) == 0, "highlight not cleared"
         print("  geometry-list highlight (box + name, overview/slice): OK")
 
+        # --- the outline/label must follow EVERY click, even when the slice
+        # plane does not move ------------------------------------------------
+        # The plane spinbox rounds to 4 decimals and the CSX boxes are
+        # float32-rounded, so moving the plane onto the object's middle is
+        # often a no-op: no valueChanged -> no redraw. The slice then kept the
+        # PREVIOUS object's outline and title (report: "msl_line" selected in
+        # the list, "msl_stub" still highlighted in the slice).
+        _pr2 = max(
+            primitives, key=lambda p: abs(float(p["stop"][2]) - float(p["start"][2]))
+        )
+        assert abs(float(_pr2["stop"][2]) - float(_pr2["start"][2])) > 0.1, (
+            "test needs a primitive with a z extent (substrate)"
+        )
+        _mid2 = 0.5 * (float(_pr2["start"][2]) + float(_pr2["stop"][2]))
+
+        class _RoundedSpin:
+            """Spinbox stand-in: setValue() is swallowed (value unchanged)."""
+
+            def __init__(self, value: float) -> None:
+                self._value = float(value)
+
+            def value(self) -> float:
+                return self._value
+
+            def setValue(self, value: float) -> None:  # noqa: ARG002
+                pass
+
+        viewer.cmb_view.setCurrentText("XY slice")
+
+        def _slice_title() -> str:
+            return viewer.fig_slice.axes[0].get_title()
+
+        _real_spin = viewer.spn_plane
+        try:
+            viewer.spn_plane = _RoundedSpin(_mid2 + 1e-5)  # 4 decimals -> same
+            viewer.set_highlight(
+                boxes=[(_pr2["start"], _pr2["stop"])], label="Prim: first"
+            )
+            assert "Prim: first" in _slice_title(), _slice_title()
+            viewer.set_highlight(
+                boxes=[(_pr2["start"], _pr2["stop"])],
+                label="Prim: second",
+                focus=True,
+            )
+            assert "Prim: second" in _slice_title(), (
+                "highlight did not repaint without a plane change: "
+                f"{_slice_title()!r}"
+            )
+            # a selection that matches nothing must refresh the title as well
+            viewer.set_highlight(
+                boxes=[], names=["does-not-exist"], label="Prim: nowhere", focus=True
+            )
+            assert "Prim: nowhere" in _slice_title(), _slice_title()
+        finally:
+            viewer.spn_plane = _real_spin
+        viewer.clear_highlight()
+        print("  highlight repaints on every click (same plane): OK")
+
         # --- port perpendicular to the slice (dipole style) -------------------
         # x-directed port sitting in the z=0 plane: in the XY view its extent
         # along the normal is zero, so belonging to the local cell it must
