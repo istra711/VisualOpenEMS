@@ -104,6 +104,26 @@ def generate_mesh(
         properties_mesh_setup if properties_mesh_setup is not None else {},
     )
 
+    def _align_ports() -> None:
+        """Re-assert the port box coordinates on the grid (see port_align)."""
+        try:
+            from app.meshing.port_align import describe_stats, ensure_port_lines
+
+            manual = {"x": [], "y": [], "z": []}
+            _manual_all = getattr(mesh, "manual_mesh_lines", None)
+            if isinstance(_manual_all, dict):
+                for _axis in "xyz":
+                    for _v in _manual_all.get(_axis) or []:
+                        try:
+                            manual[_axis].append(float(_v))
+                        except (TypeError, ValueError):
+                            continue
+            stats = ensure_port_lines(CSX, ports, extra_protected=manual)
+            if stats:
+                print(f"  port alignment: {describe_stats(stats)}")
+        except Exception as e:  # noqa: BLE001 — never fail a run on alignment
+            print(f"  port alignment skipped: {e}")
+
     # Graded refinement on the vacuum/dielectric side of metal faces. Runs
     # AFTER easyMesh so the inserted lines survive SmoothMeshLines (the
     # easyMesh-internal graded-transition pass is smoothed away and misses
@@ -121,6 +141,9 @@ def generate_mesh(
                 )
         except Exception as e:  # noqa: BLE001 — never fail a run on refinement
             print(f"  metal-interface graded refinement skipped: {e}")
+    # A port clicked in the Mesh Viewer keeps its exact coordinate: easyMesh
+    # treats the port face as an ordinary edge and may drop it (see port_align).
+    _align_ports()
     # Finally clamp EVERY cell (incl. the PML/absorbing region easyMesh may have
     # stretched) to the hard lambda/10 limit the validator enforces.
     cap_max_cell_size(CSX, mesh, targets)
@@ -170,4 +193,7 @@ def generate_mesh(
         setup["manual_mesh_lines"] = stats
     except Exception as e:  # noqa: BLE001 — never fail a run on the editor
         print(f"  manual mesh lines skipped: {e}")
+    # Manual edits may have removed a line a port needs — the run would abort in
+    # the validator, so re-assert the port coordinates one last time.
+    _align_ports()
     return setup

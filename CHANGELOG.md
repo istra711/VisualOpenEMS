@@ -256,6 +256,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A port placed by a click in the Mesh Viewer aborted the run
+  ("mesh validation failed")** (`app/meshing/port_align.py` (new),
+  `app/meshing/easy_wrapper.py`, `app/meshing/build_task.py`,
+  `app/meshing/validators.py`): port mode deliberately keeps the clicked
+  coordinate (no snapping, no manual mesh lines). easyMesh registers a port as an
+  ordinary — usually zero-length — polygon edge, so
+  `handle_closely_placed_edges`/`SmoothMeshLines` could delete that coordinate
+  and leave an interpolated line a few microns away (in `work/pcb_notch_ports1`
+  the clicked `y=0.0987` was merged into the auto line at `0.0882`). openEMS then
+  snaps the port box onto the nearest grid lines — a line port silently moves,
+  an area port even changes its width — and the validator aborted the whole run
+  with `Port 'in3': y=0.0987 is not on a mesh line`. New pass
+  `port_align.ensure_port_lines()` runs after easyMesh (and again after the
+  Mesh-Editor overrides) and re-asserts every coordinate of every **active**
+  port box: a nearby interpolated line is moved onto the port coordinate (no
+  tiny cell), otherwise a line is inserted; metal/dielectric faces are never
+  moved. Only a port face within 15 % of a local cell of a *geometry* face is
+  left to openEMS' snap and now produces the **warning** `port_snapped` instead
+  of an error. Switched-off ports are no longer validated (the run script drops
+  them before meshing) and `build_task` skips them as well, so the preview mesh
+  matches the simulated one. Tests: `tests/test_port_align.py` (new),
+  `tests/test_models.py` (inactive port, sub-cell snap).
+
 - **Main window: the "Project / Geometry" pane could not be resized any more**
   (`app/ui/mesh_viewer.py`, `app/ui/vtk_viewer.py`, `app/ui/sparam_viewer.py`,
   `app/ui/antenna_viewer.py`): not the splitter was the problem — the tab pages

@@ -12,13 +12,18 @@ from app.meshing.polar import axis_labels
 from app.meshing.rules import MeshTargets
 from app.models.project import PortDef
 
+#: A port coordinate within this fraction of the local cell counts as "on the
+#: mesh" (openEMS snaps the port box by that much). ``port_align`` normally puts
+#: every port coordinate on an exact line; only coordinates right next to a
+#: geometry face are left to the snap.
+PORT_SNAP_FRACTION = 0.15
+
 
 @dataclass
 class Issue:
     severity: str  # "error" | "warning" | "info"
     code: str
     message: str
-
 
 @dataclass
 class MeshReport:
@@ -73,6 +78,21 @@ def _value_on_lines(lines: np.ndarray, value: float, atol: float = 1e-9) -> bool
     if lines.size == 0:
         return False
     return bool(np.any(np.isclose(lines, value, atol=atol)))
+
+
+def _line_proximity(lines: np.ndarray, value: float) -> tuple[float, float]:
+    """``(distance, local_cell)`` of the grid line nearest to ``value``."""
+    if lines.size == 0:
+        return float("inf"), 0.0
+    idx = int(np.argmin(np.abs(lines - value)))
+    dist = abs(float(lines[idx]) - float(value))
+    cands = []
+    if idx > 0:
+        cands.append(float(lines[idx] - lines[idx - 1]))
+    if idx + 1 < lines.size:
+        cands.append(float(lines[idx + 1] - lines[idx]))
+    cell = min(cands) if cands else 0.0
+    return dist, cell
 
 
 def validate_mesh(
@@ -141,6 +161,10 @@ def validate_mesh(
             )
 
     for p in ports or []:
+        # script_gen drops switched-off ports before writing them, so they are
+        # not part of the mesh openEMS sees — do not abort on their coordinates.
+        if not bool(getattr(p, "active", True)):
+            continue
         _check_port(report, lines, p, targets, polar=polar)
 
     _check_primitive_bounds(report, csx, coord_system=coord_system)
@@ -216,54 +240,54 @@ def _check_port(
     def _atol(v: float) -> float:
         return 1e-6 * max(1.0, abs(v)) if polar else 1e-9
 
-    def _on(ax: str, v: float) -> bool:
-        return _value_on_lines(lines[ax], v, atol=_atol(v))
+    def _check(ax: str, value: float, what: str) -> None:
+        """Exact line -> ok; sub-cell snap -> warning; else hard error.
+
+        ``port_align.ensure_port_lines`` puts the port coordinates on the grid,
+        so the tolerance only catches the remaining case of a port face sitting
+        a few microns next to a *geometry* face: inserting its own line there
+        would create a tiny cell, and openEMS' snap moves the port by a
+        negligible fraction of a cell.
+        """
+        arr = lines[ax]
+        if arr.size == 0:  # empty axis -> "empty_mesh" error already reported
+            return
+        if _value_on_lines(arr, value, atol=_atol(value)):
+            return
+        dist, cell = _line_proximity(arr, value)
+        if not polar and cell > 0 and dist <= PORT_SNAP_FRACTION * cell:
+            report.issues.append(
+                Issue(
+                    "warning",
+                    "port_snapped",
+                    f"Port '{port.name}': {what} — openEMS snaps the port box "
+                    f"by {dist:.4g} (nearest mesh line, {100.0 * dist / cell:.0f}% "
+                    "of the local cell)",
+                )
+            )
+            return
+        report.issues.append(Issue("error", "port_alignment", f"Port '{port.name}': {what}"))
 
     nonflat = [axes[i] for i in range(3) if abs(stop[i] - start[i]) > 1e-12]
     flat = [axes[i] for i in range(3) if abs(stop[i] - start[i]) <= 1e-12]
 
     for ax in flat:
-        if not _on(ax, start[axes.index(ax)]):
-            report.issues.append(
-                Issue(
-                    "error",
-                    "port_alignment",
-                    f"Port '{port.name}': {names[axes.index(ax)]}={start[axes.index(ax)]:.6g} "
-                    f"is not on a mesh line",
-                )
-            )
+        i = axes.index(ax)
+        val = float(start[i])
+        _check(ax, val, f"{names[i]}={val:.6g} is not on a mesh line")
 
     if port.type in {"lumped", "probe"} and len(nonflat) == 1:
         # 1D-like port along one axis: the two endpoints should sit on mesh lines
         ax = nonflat[0]
         i = axes.index(ax)
-        for val in (start[i], stop[i]):
-            if not _on(ax, val):
-                report.issues.append(
-                    Issue(
-                        "error",
-                        "port_alignment",
-                        f"Port '{port.name}': {names[i]}={val:.6g} endpoint not on mesh line",
-                    )
-                )
+        for val in (float(start[i]), float(stop[i])):
+            _check(ax, val, f"{names[i]}={val:.6g} endpoint not on mesh line")
     elif len(nonflat) == 2:
         # 2D port: should span exactly one mesh cell in the transverse flat axes
         for ax in flat:
-            arr = lines[ax]
             i = axes.index(ax)
-            val = start[i]
-            # find nearest lines
-            if arr.size == 0:
-                continue
-            idx = int(np.argmin(np.abs(arr - val)))
-            if abs(arr[idx] - val) > _atol(val):
-                report.issues.append(
-                    Issue(
-                        "error",
-                        "port_alignment",
-                        f"Port '{port.name}': 2D port face not aligned on {names[i]} mesh line",
-                    )
-                )
+            val = float(start[i])
+            _check(ax, val, f"2D port face not aligned on {names[i]} mesh line")
 
 
 def report_to_lines(report: MeshReport) -> list[str]:
