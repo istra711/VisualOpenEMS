@@ -9,6 +9,8 @@ empty.
 
 from __future__ import annotations
 
+import bisect
+
 _AXES = ("x", "y", "z")
 
 
@@ -38,6 +40,7 @@ def resolve_msl_axes(port) -> tuple[str, str]:
     ext = [abs(float(port.stop[i]) - float(port.start[i])) for i in range(3)]
     prop = _axis(getattr(port, "prop_direction", ""))
     exc = _axis(getattr(port, "exc_direction", ""))
+    explicit_prop = prop is not None
 
     by_extent = sorted(range(3), key=lambda i: ext[i])  # ascending
     nonzero = [i for i in by_extent if ext[i] > 0]
@@ -62,7 +65,10 @@ def resolve_msl_axes(port) -> tuple[str, str]:
             f"both '{prop}' — set prop_direction/exc_direction explicitly"
         )
     pi, ei = _AXES.index(prop), _AXES.index(exc)
-    if ext[pi] <= 0:
+    if ext[pi] <= 0 and not explicit_prop:
+        # a derived propagation axis must come from a real extent; an explicit
+        # one may sit on a zero-length port plane (the generator extends the box
+        # by one grid cell, openEMS needs it for its current probes)
         raise ValueError(
             f"MSL port '{_port_name(port)}': zero extent in propagation axis "
             f"'{prop}' — the port box must span the line direction"
@@ -77,3 +83,31 @@ def resolve_msl_axes(port) -> tuple[str, str]:
 
 def _port_name(port) -> str:
     return str(getattr(port, "name", "") or "port")
+
+
+def extend_zero_propagation(start, stop, prop_dir, grid_lines):
+    """Give an MSL port box one grid cell along the line when it has none.
+
+    openEMS computes ``MSLPort.direction = sign(stop - start)`` along
+    ``prop_dir``: a zero length yields 0, which zeroes the weight of its current
+    probes (and adds no strip), so the port plane is widened to the next grid
+    line. The port in the project keeps its zero length — only the generated
+    simulation gets the cell. Returns ``(start, stop, extended)``.
+    """
+    idx = _AXES.index(prop_dir) if str(prop_dir) in _AXES else None
+    if idx is None or abs(float(stop[idx]) - float(start[idx])) > 0.0:
+        return list(start), list(stop), False
+    lines = sorted(float(v) for v in (grid_lines if grid_lines is not None else []))
+    if len(lines) < 2:
+        return list(start), list(stop), False
+    pos = float(start[idx])
+    j = bisect.bisect_right(lines, pos)  # first line beyond the port plane
+    if j >= len(lines):  # beyond the last line -> widen towards the grid
+        j = len(lines) - 1
+    if lines[j] == pos:  # exactly on a line -> the next one, else the previous
+        j = j + 1 if j + 1 < len(lines) else j - 1
+    if j < 0 or lines[j] == pos:
+        return list(start), list(stop), False  # no usable line
+    widened = list(stop)
+    widened[idx] = lines[j]
+    return list(start), widened, True
