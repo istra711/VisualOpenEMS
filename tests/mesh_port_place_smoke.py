@@ -223,9 +223,10 @@ def main() -> int:
     # width along y = the strip's width (2..3)
     assert abs(min(msl.start[1], msl.stop[1]) - 2.0) < 1e-4, msl
     assert abs(max(msl.start[1], msl.stop[1]) - 3.0) < 1e-4, msl
-    # propagation along x: one mesh cell (non-zero, far below the strip length)
-    prop = abs(msl.stop[0] - msl.start[0])
-    assert 0.0 < prop < 10.0, msl
+    # zero length along the line (openEMS gets the direction from prop_direction;
+    # the generator widens the box by one grid cell for its current probes)
+    assert abs(msl.stop[0] - msl.start[0]) < 1e-12, msl
+    assert abs(msl.start[0] - click_x) < 1e-12, msl
     assert msl.prop_direction == "x" and msl.exc_direction == "z", (
         msl.prop_direction,
         msl.exc_direction,
@@ -233,12 +234,16 @@ def main() -> int:
     # excitation spans the substrate (strip bottom -> ground top)
     assert abs(msl.start[2] - 1.0) < 1e-4 and abs(msl.stop[2] - 0.035) < 1e-4, msl
     assert "width along Y" in win.log_view.toPlainText()
-    # the axes resolve for the generator (openEMS AddMSLPort)
-    from app.simulation.msl import resolve_msl_axes
+    # the axes resolve (openEMS AddMSLPort) and the generator adds the cell
+    from app.simulation.msl import extend_zero_propagation, resolve_msl_axes
 
     assert resolve_msl_axes(msl) == ("x", "z"), resolve_msl_axes(msl)
+    _s, _p, _w = extend_zero_propagation(
+        msl.start, msl.stop, "x", [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    )
+    assert _w is True and _p[0] > _s[0], (_s, _p)
     print("  MSL port: width", min(msl.start[1], msl.stop[1]), "->",
-          max(msl.start[1], msl.stop[1]), "prop", prop)
+          max(msl.start[1], msl.stop[1]), "zero length along the line")
 
     # --- click next to the strip: no second metal -> click as both ends ---
     v.set_port_type("lumped")

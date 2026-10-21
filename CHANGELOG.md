@@ -59,16 +59,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is exactly the substrate height down to the ground plane. Is there no metal
     below, the next one above is used (its bottom face); the log names both
     metals. No second metal at the click → the old behaviour (click = Start =
-    Stop) plus a hint.  - the right-click menu gained **"Port type"**: *Lumped* (default) or
+    Stop) plus a hint.
+  - the right-click menu gained **"Port type"**: *Lumped* (default) or
     *MSL, width along X/Y/Z* — the entries follow the in-plane axes of the slice
     you are in (XY → X/Y, XZ → X/Z, YZ → Y/Z). An MSL port is as wide as the
-    **clicked metal** along the chosen axis and one mesh cell long along the
-    other in-plane axis (the line), so propagation/excitation direction are
-    prefilled for `AddMSLPort`; picking an MSL entry also arms port mode.
+    **clicked metal** along the chosen axis and has **zero length along the
+    line** (the other in-plane axis is the propagation direction, prefilled
+    together with the excitation direction for `AddMSLPort`). openEMS needs a
+    propagation *sense*, so the generated run script widens such a box by one
+    grid cell itself (the project keeps the zero length); picking an MSL entry
+    also arms port mode.
   - the Port dialog opens with the computed box (Start/Stop/Direction/prop/exc
     for MSL) and stays editable; the clicked coordinates stay unsnapped.
   Tests: `tests/mesh_port_place_smoke.py` (strip-over-ground scene: lumped span,
-  MSL width + one cell, menu entries per slice, fallback, log hints);
+  MSL width + zero length along the line, menu entries per slice, fallback, log
+  hints), `tests/test_msl_port.py` (zero-length box needs an explicit
+  propagation axis; `extend_zero_propagation` widens it by one grid cell);
   pure-logic helper `_is_metal()`.
 
 - **Field Viewer: field info + selectable standard view**

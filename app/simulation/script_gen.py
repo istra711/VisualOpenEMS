@@ -172,7 +172,7 @@ from app.postproc import fields as fld
 from app.postproc import nf2ff as nf
 from app.postproc import sparams as sp
 from app.csxcad_builder.quantize import f32, inflate_sheet_box, zero_extent_axes
-from app.simulation.msl import resolve_msl_axes
+from app.simulation.msl import extend_zero_propagation, resolve_msl_axes
 from app.simulation.excitation import apply_excitation
 
 
@@ -708,6 +708,19 @@ def main() -> int:
         except ValueError as e:
             print(f"ERROR: MSL port '{port.name}' skipped: {e}")
             continue
+        # A zero length along the line tells openEMS nothing about the
+        # propagation direction (MSLPort.direction = sign(stop-start) -> 0 ->
+        # zero-weight current probes) and gives no strip, so the box is extended
+        # by one grid cell here. The port in the project keeps its zero length.
+        pi = ("x", "y", "z").index(prop_dir)
+        start, stop, widened = extend_zero_propagation(
+            start, stop, prop_dir, CSX.GetGrid().GetLines(pi)
+        )
+        if widened:
+            print(
+                f"MSL port '{port.name}': zero length along {prop_dir} -> "
+                f"extended by one cell ({start[pi]:g} .. {stop[pi]:g})"
+            )
         metal = CSX.AddMetal(f"msl_{idx}_{port.name}_strip")
         pobj = FDTD.AddMSLPort(
             idx,
