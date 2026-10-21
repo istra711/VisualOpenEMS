@@ -105,6 +105,58 @@ def test_port_alignment_error():
     assert any(i.code == "port_alignment" for i in report.issues)
 
 
+def test_port_alignment_skips_inactive_ports():
+    """script_gen drops switched-off ports -> no mesh lines, no hard error."""
+    from CSXCAD import ContinuousStructure
+    from app.meshing.rules import compute_targets
+    from app.meshing.validators import validate_mesh
+    from app.models.project import MeshSpec, PortDef
+
+    csx = ContinuousStructure()
+    csx.GetGrid().SetDeltaUnit(1e-3)
+    mesh = csx.GetGrid()
+    mesh.SetLines("x", [0, 1, 2, 3])
+    mesh.SetLines("y", [0, 1, 2, 3])
+    mesh.SetLines("z", [0, 1, 2, 3])
+    spec = MeshSpec(drawing_unit="mm", start_frequency=1e6, stop_frequency=1e6)
+    targets = compute_targets(spec, eps_max=1.0)
+    off = PortDef(
+        name="off",
+        type="lumped",
+        start=[0.5, 0.5, 0],
+        stop=[0.5, 0.5, 1],
+        direction="z",
+        active=False,
+    )
+    report = validate_mesh(csx, targets, ports=[off], max_grading=2.0)
+    assert not any(i.code == "port_alignment" for i in report.issues)
+    assert report.ok
+
+
+def test_port_alignment_tolerates_a_sub_cell_snap():
+    """Within 15 % of a local cell openEMS' snap is negligible -> warning only."""
+    from CSXCAD import ContinuousStructure
+    from app.meshing.rules import compute_targets
+    from app.meshing.validators import validate_mesh
+    from app.models.project import MeshSpec, PortDef
+
+    csx = ContinuousStructure()
+    csx.GetGrid().SetDeltaUnit(1e-3)
+    mesh = csx.GetGrid()
+    mesh.SetLines("x", [0, 1, 2, 3])
+    mesh.SetLines("y", [0, 1, 2, 3])
+    mesh.SetLines("z", [0, 1, 2, 3])
+    spec = MeshSpec(drawing_unit="mm", start_frequency=1e6, stop_frequency=1e6)
+    targets = compute_targets(spec, eps_max=1.0)
+    close = PortDef(
+        name="near", type="lumped", start=[1.05, 1.0, 0], stop=[1.05, 1.0, 1], direction="z"
+    )
+    report = validate_mesh(csx, targets, ports=[close], max_grading=2.0)
+    snapped = [i for i in report.issues if i.code == "port_snapped"]
+    assert snapped and snapped[0].severity == "warning", report.issues
+    assert report.ok
+
+
 def test_primitive_outside_domain():
     from CSXCAD import ContinuousStructure
     from app.meshing.rules import compute_targets
@@ -142,6 +194,8 @@ def main() -> int:
         test_mesh_targets,
         test_validate_mesh_errors_on_coarse,
         test_port_alignment_error,
+        test_port_alignment_skips_inactive_ports,
+        test_port_alignment_tolerates_a_sub_cell_snap,
         test_primitive_outside_domain,
     ]
     failed = 0

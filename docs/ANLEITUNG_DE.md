@@ -351,6 +351,7 @@ Warning) — der Mesh Viewer umrahmt solche Primitive rot und schreibt
 | FreeCAD startet nicht | Settings **FreeCAD GUI** (`FreeCAD.exe` neben `FreeCADCmd`) |
 | Export ohne STL | In FreeCAD exportieren / FreeCAD… → Export CAD… |
 | Sim bricht ab / leere S-Params | Mesh/Port prüfen; Log-Pfad `work\<Projekt>\` |
+| `[ERROR] port_alignment … is not on a mesh line` | Port-Koordinate lag auf keiner Gitterlinie (z. B. Klick im Port-Modus). Die GUI setzt die Port-Koordinaten inzwischen selbst als Gitterlinie (nahe Zwischenlinien werden verschoben, „port alignment: …" im Mesh-Log); nur direkt an einer Metallkante bleibt ein Versatz < 15 % einer Zelle (Warnung `port_snapped`). Nach dem Update **Build Mesh** erneut ausführen. |
 | `AssertionError` in `openEMS.Run` | `project_run.py` hat relative Pfade (`WORK_DIR=…`) → Skript neu erzeugen (Pfade werden absolut gespeichert) |
 | Warnung `outside the field domain` | Dump/NF2FF-Box zu klein → **Fit NF2FF to Geometry**; das Skript warnt und klemmt die Box in den FDTD-Bereich |
 | Domain (schwarzer Rahmen) zu groß/klein | **Air margin** in Sim Params → Boundary conditions (auto = λ/4 bei Stop-Frequenz, sonst mm-Wert für alle Flächen) → danach **Build Mesh** + **Fit NF2FF** (siehe 5.6) |

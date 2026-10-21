@@ -126,6 +126,16 @@ Port mode (right-click → "Port mode (click in a slice to place)")
     coordinates — no snapping to mesh lines or geometry edges. The two in-plane
     coordinates come from the click, the third one from the current slice plane
     (the plane slider itself still snaps to mesh lines).
+  • **The mesh follows the port**, not the other way round: easyMesh registers a
+    port face as an ordinary (often zero-length) edge and may drop such a
+    coordinate, so after meshing every coordinate of every **active** port box is
+    re-asserted on the grid — a nearby interpolated line is moved onto the port
+    coordinate (no micrometre cell), otherwise a line is inserted; metal and
+    dielectric faces are never moved. The mesh log shows e.g.
+    "port alignment: y 1 moved". Only a port face within 15 % of a cell right
+    next to a **metal edge** keeps a tiny offset (openEMS snaps it there) — the
+    mesh report then shows the warning `port_snapped` instead of aborting the
+    run. Switched-off ports do not influence the mesh.
   • **The box is derived from the metal surfaces around the click.** The port
     runs into the screen (along the slice normal) and its length is found
     automatically: from the **bottom face of the clicked metal** to the **top

@@ -267,8 +267,12 @@ def build_mesh_and_validate(
             raise ValueError(f"Unknown primitive kind: {kind}")
 
     # MSL ports need the generated grid lines -> build them after the mesh.
+    # Switched-off ports are not part of the run (script_gen drops them before
+    # numbering, so the run's mesh has no lines at their coordinates) — skip them
+    # here as well so the preview mesh matches the simulated one.
+    active_ports = [p for p in project.ports if bool(getattr(p, "active", True))]
     deferred_msl_ports: list[tuple[int, object, list, list]] = []
-    for idx, port in enumerate(project.ports, start=1):
+    for idx, port in enumerate(active_ports, start=1):
         start = [_f32(x) for x in port.start]
         stop = [_f32(x) for x in port.stop]
         excite = 1.0 if port.excite_port else 0.0
@@ -306,7 +310,7 @@ def build_mesh_and_validate(
                 project.boundary,
                 targets,
                 primitives_mesh_setup=primitives_mesh_setup,
-                ports=project.ports,
+                ports=active_ports,
             )
         # Zero-thickness PEC sheets only get their 1 nm thickness once the grid
         # exists — the mesher must see the authored geometry.
@@ -353,7 +357,7 @@ def build_mesh_and_validate(
         report = validate_mesh(
             CSX,
             targets,
-            ports=project.ports,
+            ports=active_ports,
             max_grading=mesh.effective_max_grading_ratio(),
             coord_system=mesh.coord_system,
         )
