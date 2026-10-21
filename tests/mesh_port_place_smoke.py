@@ -6,8 +6,11 @@ must be appended, appear in the component/port list and the red placement marker
 must be cleared afterwards.
 
 The box is derived from the metal surfaces around the click:
-* Lumped: a line along the slice normal from the bottom face of the clicked
-  metal to the top face of the next metal surface (below, else above).
+* Lumped (line): a line along the slice normal from the bottom face of the
+  clicked metal to the top face of the next metal surface (below, else above).
+* Lumped, width along X/Y: the same length, but as wide as the clicked metal
+  along the chosen in-plane axis and a zero-thickness sheet towards the other
+  one (an area/sheet port).
 * MSL: the same box, but as wide as the clicked metal along the chosen in-plane
   axis and one mesh cell long along the line (propagation) axis.
 
@@ -128,18 +131,31 @@ def main() -> int:
     sub = menu.actions()[0].menu()
     labels = [a.text() for a in sub.actions()]
     # XY slice -> the in-plane axes are X and Y
-    assert labels == ["Lumped", "MSL, width along X", "MSL, width along Y"], labels
-    assert sub.actions()[0].isChecked(), "Lumped must be the default"
+    assert labels == [
+        "Lumped (line)",
+        "Lumped, width along X",
+        "Lumped, width along Y",
+        "MSL, width along X",
+        "MSL, width along Y",
+    ], labels
+    assert sub.actions()[0].isChecked(), "Lumped (line) must be the default"
     types_seen: list[tuple[str, str]] = []
     v.port_type_changed.connect(lambda k, o: types_seen.append((k, o)))
-    sub.actions()[2].trigger()  # MSL, width along Y
+    sub.actions()[4].trigger()  # MSL, width along Y
     assert v.port_type() == ("msl", "y"), v.port_type()
     assert types_seen == [("msl", "y")], types_seen
     assert v._port_mode is True, "picking MSL must arm port mode"
     win._drain_log_queue()
     assert "Port type: MSL" in win.log_view.toPlainText()
     v.set_port_type("lumped")
-    assert v.port_type() == ("lumped", "y")
+    assert v.port_type() == ("lumped", ""), "Lumped must reset to a line"
+    sub.actions()[2].trigger()  # Lumped, width along Y
+    assert v.port_type() == ("lumped", "y"), v.port_type()
+    assert sub.actions()[2].isChecked(), "the chosen entry must show as checked"
+    win._drain_log_queue()
+    assert "Lumped, area" in win.log_view.toPlainText(), win.log_view.toPlainText()[-300:]
+    v.set_port_type("lumped")
+    assert v.port_type() == ("lumped", ""), v.port_type()
 
     # --- fake click in the XY slice, ON the strip -------------------------
     click_x, click_y = 4.25, 2.5  # inside the strip (x 0..10, y 2..3)
@@ -173,6 +189,8 @@ def main() -> int:
                 exc_direction=p.exc_direction,
                 excite_port=p.excite_port,
                 mesh_dirs=p.mesh_dirs,
+                lumped_width=p.lumped_width,
+                metal=p.metal,
             )
 
     # the plane sits inside the strip (so the strip is the "current" metal);
@@ -205,6 +223,8 @@ def main() -> int:
     assert port.direction == "z", port.direction
     # a lumped port is a line: it has NO width in the slice plane
     assert port.start[0] == port.stop[0] and port.start[1] == port.stop[1], port
+    assert port.lumped_width == "line", port.lumped_width
+    assert port.metal == "strip", port.metal
     assert seen["coord_system"] == "cartesian", seen["coord_system"]
     log = win.log_view.toPlainText()
     assert "strip" in log and "gnd" in log and "below" in log, log[-400:]
@@ -245,6 +265,27 @@ def main() -> int:
     assert resolve_msl_axes(msl) == ("x", "z"), resolve_msl_axes(msl)
     print("  MSL port: width", min(msl.start[1], msl.stop[1]), "->",
           max(msl.start[1], msl.stop[1]), "one cell along the line:", prop)
+
+    # --- Lumped AREA port: as wide as the metal, zero thickness ----------
+    v.set_port_type("lumped", "y")  # "Lumped, width along Y"
+    n_ports = len(win.project.ports)
+    _click(click_x, click_y)
+    area = win.project.ports[-1]
+    assert len(win.project.ports) == n_ports + 1, win.project.ports
+    assert area.type == "lumped" and area.lumped_width == "y", area
+    # width along y = the strip's width (2..3) ...
+    assert abs(min(area.start[1], area.stop[1]) - 2.0) < 1e-4, area
+    assert abs(max(area.start[1], area.stop[1]) - 3.0) < 1e-4, area
+    # ... x stays at the click: a zero-thickness sheet (not one cell!)
+    assert abs(area.start[0] - click_x) < 1e-12, area
+    assert abs(area.stop[0] - click_x) < 1e-12, area
+    # length still spans the substrate (strip bottom -> ground top)
+    assert abs(area.start[2] - 1.0) < 1e-4 and abs(area.stop[2] - 0.035) < 1e-4, area
+    assert area.direction == "z" and area.metal == "strip", area
+    _rows = [win.port_list.item(i).text() for i in range(win.port_list.count())]
+    assert "area along Y" in _rows[-1], _rows[-1]
+    print("  lumped AREA port: width", min(area.start[1], area.stop[1]), "->",
+          max(area.start[1], area.stop[1]), "sheet at x =", area.start[0])
 
     # --- click next to the strip: no second metal -> click as both ends ---
     v.set_port_type("lumped")

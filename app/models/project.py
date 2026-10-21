@@ -76,6 +76,17 @@ class PortDef:
     # mesh hints
     mesh_dirs: str = "xyz"
     metal_edge_res: float | None = None
+    # Lumped ports only: ``"line"`` = a 1-D port with no width, or an in-plane
+    # axis letter ("x"/"y"/"z") = as wide as the metal the port was placed on
+    # along that axis (an area/sheet port, e.g. the strip width of a microstrip
+    # cross-section). openEMS only sees ``start``/``stop`` - the box itself
+    # carries the width; the GUI uses this to rebuild the box when the mode is
+    # changed (Port dialog, "Lumped, width along X/Y" in the Mesh Viewer).
+    lumped_width: str = "line"
+    #: Name of the metal primitive the port was placed on (Mesh Viewer port
+    #: mode) - used to re-derive the metal width and shown in the log. Empty
+    #: for ports typed in by hand or imported from FreeCAD.
+    metal: str = ""
 
 
 @dataclass

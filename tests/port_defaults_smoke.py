@@ -183,6 +183,74 @@ def main() -> int:
     assert "inactive" in win.log_view.toPlainText(), win.log_view.toPlainText()[-200:]
     print("port 'Active' option (dialog/list/toggle): OK")
 
+    # 8) Lumped width option: "line" vs "area = metal width"
+    #    (Port dialog combo + the main window helper that rebuilds the box)
+    assert _PD2(name="d").lumped_width == "line", "lumped ports default to a line"
+    ln = _PD2(
+        name="ln1",
+        start=[4.25, 2.5, 1.0],
+        stop=[4.25, 2.5, 0.035],
+        direction="z",
+        metal="strip",
+    )
+    dlg_ln = PortDialog(win, port=ln)
+    assert dlg_ln.cmb_width.isEnabled() is True
+    assert dlg_ln.cmb_width.currentData() == "line", dlg_ln.cmb_width.currentText()
+    dlg_ln.cmb_width.setCurrentIndex(dlg_ln.cmb_width.findData("y"))
+    dlg_ln._accept()
+    assert dlg_ln.result_port.lumped_width == "y", dlg_ln.result_port
+    assert dlg_ln.result_port.metal == "strip", "the metal reference must survive"
+    dlg_msl = PortDialog(win, port=msl)
+    assert dlg_msl.cmb_width.isEnabled() is False, "MSL ports have no lumped width"
+    dlg_msl._accept()
+    assert dlg_msl.result_port.lumped_width == "line", dlg_msl.result_port
+
+    win.primitives = [
+        {"kind": "box", "name": "strip", "start": [0.0, 2.0, 1.0], "stop": [10.0, 3.0, 1.035]}
+    ]
+    conv = _PD2(
+        name="conv",
+        start=[4.25, 2.5, 1.0],
+        stop=[4.25, 2.5, 0.035],
+        direction="z",
+        lumped_width="y",
+        metal="strip",
+    )
+    win._apply_port_width(conv, previous="line")  # line -> area
+    assert abs(conv.start[1] - 2.0) < 1e-12 and abs(conv.stop[1] - 3.0) < 1e-12, conv
+    assert conv.start[0] == conv.stop[0] == 4.25, "the line axis must stay a sheet"
+    assert abs(conv.start[2] - 1.0) < 1e-12 and abs(conv.stop[2] - 0.035) < 1e-12, conv
+    # unchanged mode: hand-edited Start/Stop values survive
+    hand = _PD2(
+        name="hand",
+        start=[4.0, 2.2, 1.0],
+        stop=[4.0, 2.8, 0.035],
+        direction="z",
+        lumped_width="y",
+        metal="strip",
+    )
+    win._apply_port_width(hand, previous="y")
+    assert hand.start[0] == 4.0 and hand.start[1] == 2.2, hand
+    # area -> line: collapse the transverse axes to the middle
+    conv.lumped_width = "line"
+    win._apply_port_width(conv, previous="y")
+    assert conv.start[1] == conv.stop[1] == 2.5, conv
+    assert conv.start[0] == conv.stop[0] == 4.25, conv
+    # a width along the excitation direction is not a width -> line
+    bad = _PD2(
+        name="bad",
+        start=[0.0, 0.0, 0.0],
+        stop=[0.0, 0.0, 1.0],
+        direction="z",
+        lumped_width="z",
+        metal="strip",
+    )
+    win._apply_port_width(bad, previous="line")
+    assert bad.lumped_width == "line", bad
+    win._drain_log_queue()
+    assert "excitation direction" in win.log_view.toPlainText()
+    print("lumped width 'line' / 'area = metal width': OK")
+
     win.close()
     print("PORT DEFAULTS SMOKE OK")
     return 0

@@ -92,8 +92,8 @@ class _FakePortDialog:
 
 
 class _FakeDumpDialog:
-    def __init__(self, parent=None, dump=None, coord_system="cartesian"):
-        del coord_system  # accepted for API parity
+    def __init__(self, parent=None, dump=None, coord_system="cartesian", **kwargs):
+        del coord_system, kwargs  # accepted for API parity (fit_box / nf2ff_box)
         from app.models.project import DumpDef
 
         self.result = DumpDef(name="Ht", quantity="H", frequency=1e9)
