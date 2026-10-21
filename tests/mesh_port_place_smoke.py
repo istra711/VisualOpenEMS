@@ -66,8 +66,49 @@ def main() -> int:
 
     # synchronous build -> the viewer gets a CSX (slices + plane slider usable)
     win._build_and_validate()
+    win._refresh_tree()
     v = win.mesh_viewer
     assert v._csx is not None, "mesh build did not reach the viewer"
+
+    # --- selecting an object in the Project/Geometry list highlights it ----
+    def _tree_row(prefix: str) -> int:
+        for i in range(win.tree.count()):
+            if win.tree.item(i).text().startswith(prefix):
+                return i
+        return -1
+
+    _strip_row = _tree_row("Prim: strip")
+    _gnd_row = _tree_row("Prim: gnd")
+    assert _strip_row >= 0 and _gnd_row >= 0, "primitives missing from the tree"
+    v.cmb_view.setCurrentText("XY slice")
+    v.spn_plane.setValue(1.01)  # inside the strip
+    win.tree.setCurrentRow(_strip_row)
+    hl = v.highlight()
+    assert hl["label"] == "Prim: strip", hl
+    assert hl["boxes"] and hl["boxes"][0][0][2] == 1.0, hl
+    assert v._is_highlighted((0.0, 2.0, 1.0), (10.0, 3.0, 1.035)), "strip not highlighted"
+    _ax = v.fig_slice.axes[0]
+    _yellow = [
+        p
+        for p in _ax.patches
+        if tuple(p.get_edgecolor())[:3] == (1.0, 212 / 255, 0.0)
+    ]
+    assert _yellow, "selected object not outlined in the slice"
+    assert "[selected: Prim: strip]" in _ax.get_title(), _ax.get_title()
+    # a selection that is not in the current plane is reported in the title
+    win.tree.setCurrentRow(_gnd_row)
+    assert v.highlight()["label"] == "Prim: gnd"
+    assert "not in this plane" in v.fig_slice.axes[0].get_title(), (
+        v.fig_slice.axes[0].get_title()
+    )
+    # material picked in the Geometry tab highlights all its objects
+    win.mat_list.setCurrentRow(0)  # copper
+    hl = v.highlight()
+    assert hl["label"] == "Mat: copper" and len(hl["boxes"]) == 2, hl
+    # clearing the selection removes the highlight
+    win.tree.clearSelection()
+    assert not v.highlight()["boxes"] and not v.highlight()["names"], v.highlight()
+    print("  geometry-list selection highlights the object: OK")
 
     # --- port mode toggle -------------------------------------------------
     assert v._port_mode is False

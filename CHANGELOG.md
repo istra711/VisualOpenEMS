@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mesh Viewer: the Project / Geometry selection is highlighted**
+  (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`): selecting an entry in the
+  left Project / Geometry list (or a material in the Geometry tab's list) now
+  outlines that object in the viewer — a thick yellow outline in the slice and in
+  the Overview, and the slice title shows `[selected: <entry>]`. Matching is by
+  the object's box (primitives, ports, NF2FF, dumps) and by name (imported CAD
+  objects / materials; the CSX `copper#1` form matches `copper`), so an entry that
+  does not reach the current slice plane says `- not in this plane` instead of
+  silently showing nothing. Clearing the selection clears the highlight
+  (`set_highlight()`/`clear_highlight()`, kept across redraws and refreshes).
+  Tests: `tests/mesh_viewer_smoke.py` (box + name matching, outline drawn,
+  cleared), `tests/mesh_port_place_smoke.py` (tree selection, material list,
+  title notes).
+
 - **Mesh Viewer: "Refresh view (keep zoom)" + toggling the line selection**
   (`app/ui/mesh_viewer.py`): the plot's right-click menu gained **Refresh view
   (keep zoom)** — it redraws the current view from the current mesh data with the
