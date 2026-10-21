@@ -61,11 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     metals. No second metal at the click → the old behaviour (click = Start =
     Stop) plus a hint.  - the right-click menu gained **"Port type"**: *Lumped* (default) or
     *MSL, width along X/Y/Z* — the entries follow the in-plane axes of the slice
-    you are in (XY → X/Y, XZ → X/Z, YZ → Y/Z). An MSL port keeps a **zero width**
-    (openEMS extends it to the metal edges itself); the chosen axis fixes which
-    in-plane direction is the metal's width, so the line runs along the other
-    one, and propagation/excitation direction are prefilled for `AddMSLPort`;
-    picking an MSL entry also arms port mode.
+    you are in (XY → X/Y, XZ → X/Z, YZ → Y/Z). An MSL port is as wide as the
+    **clicked metal** along the chosen axis and one mesh cell long along the
+    other in-plane axis (the line), so propagation/excitation direction are
+    prefilled for `AddMSLPort`; picking an MSL entry also arms port mode.
   - the Port dialog opens with the computed box (Start/Stop/Direction/prop/exc
     for MSL) and stays editable; the clicked coordinates stay unsnapped.
   Tests: `tests/mesh_port_place_smoke.py` (strip-over-ground scene: lumped span,
