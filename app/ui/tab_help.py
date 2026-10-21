@@ -111,12 +111,15 @@ Mesh editor (right-hand panel) — manual mesh lines
     the line selection is dropped) and "Reset / Home view".
   • **Selecting an entry in the Project / Geometry list highlights that object in
     the viewer** (thick yellow outline in the slice and in the Overview; the
-    slice title shows "selected: …"). This works for primitives and materials
-    (all objects of that material), for ports (their box), the NF2FF box, dumps
-    and imported CAD objects (matched by object/material name). If the object
-    does not reach the current slice plane the title says "not in this plane".
-    A material picked in the Geometry tab's list highlights its objects too;
-    clearing the selection clears the highlight.
+    slice title shows "selected: …") **and puts the slice plane on the middle of
+    that object's height** — an XY slice and an object spanning z = 0…5 mm move
+    the plane to z = 2.5 mm, so the object is visible in the slice. This works
+    for primitives and materials (all objects of that material), for ports (their
+    box), the NF2FF box, dumps and imported CAD objects (matched by
+    object/material name). A programmatic list rebuild (after an edit) does not
+    move the plane again; only a click in the list does. A material picked in the
+    Geometry tab's list highlights its objects too; clearing the selection clears
+    the highlight.
 
 Port mode (right-click → "Port mode (click in a slice to place)")
   • Click ANYWHERE in an XY/XZ/YZ slice to place a port at exactly those

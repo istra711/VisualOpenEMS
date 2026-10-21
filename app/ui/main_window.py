@@ -83,6 +83,8 @@ class MainWindow(QMainWindow):
         self._mesh_sig: str | None = None
         #: signature the viewer's current (geometry-only) scene was built from
         self._viewer_geometry_sig: str | None = None
+        #: True while the tree / material list is rebuilt (programmatic selection)
+        self._tree_rebuilding = False
         # user deleted the mesh -> suppress the automatic rebuild until the next
         # explicit Build Mesh
         self._mesh_deleted = False
@@ -1758,9 +1760,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Save video", f"Video export failed:\n{e}")
 
     def _refresh_materials(self) -> None:
-        self.mat_list.clear()
-        for m in self.project.materials:
-            self.mat_list.addItem(f"{m.name} ({m.kind})")
+        self._tree_rebuilding = True
+        try:
+            self.mat_list.clear()
+            for m in self.project.materials:
+                self.mat_list.addItem(f"{m.name} ({m.kind})")
+        finally:
+            self._tree_rebuilding = False
         if getattr(self, "tree", None) is not None:
             self._refresh_tree()
 
@@ -1769,7 +1775,9 @@ class MainWindow(QMainWindow):
         row = self.mat_list.currentRow()
         if row < 0 or row >= len(self.project.materials):
             return
-        self._highlight_in_viewer(*self._material_highlight(row))
+        self._highlight_in_viewer(
+            *self._material_highlight(row), focus=not self._tree_rebuilding
+        )
 
     # ----- highlight the Project / Geometry selection in the Mesh Viewer ----
     def _material_highlight(self, index: int) -> tuple[list, list, str]:
@@ -1821,27 +1829,38 @@ class MainWindow(QMainWindow):
             return [(n.start, n.stop)], [], "NF2FF box"
         return [], [], ""
 
-    def _highlight_in_viewer(self, boxes, names, label: str) -> None:
+    def _highlight_in_viewer(
+        self, boxes, names, label: str, focus: bool = True
+    ) -> None:
         viewer = getattr(self, "mesh_viewer", None)
         if viewer is None or not hasattr(viewer, "set_highlight"):
             return
         try:
-            viewer.set_highlight(boxes=boxes, names=names, label=label)
+            viewer.set_highlight(boxes=boxes, names=names, label=label, focus=focus)
         except Exception as e:  # noqa: BLE001 — never break the GUI on a highlight
             print("mesh viewer highlight failed:", e)
 
     def _on_tree_selection_changed(self) -> None:
-        """Highlight the object selected in the Project / Geometry list."""
+        """Highlight the object selected in the Project / Geometry list.
+
+        The slice plane jumps to the middle of the object (see
+        ``MeshGeometryViewer.focus_highlight``) — but only for a real click: the
+        tree is rebuilt after every edit and re-selects the same row, which must
+        not pull the plane back while working.
+        """
         items = self.tree.selectedItems()
         if not items:
-            self._highlight_in_viewer([], [], "")  # nothing selected -> no highlight
+            self._highlight_in_viewer([], [], "", focus=False)  # no highlight
             return
         item = items[0]
         k_raw = item.data(Qt.UserRole)
         i_raw = item.data(Qt.UserRole + 1)
         kind = "" if k_raw is None else str(k_raw)
         idx = -1 if i_raw is None else int(i_raw)
-        self._highlight_in_viewer(*self._tree_selection_highlight(kind, idx))
+        self._highlight_in_viewer(
+            *self._tree_selection_highlight(kind, idx),
+            focus=not self._tree_rebuilding,
+        )
 
     def _refresh_ports(self) -> None:
         self.port_list.clear()
@@ -3934,6 +3953,9 @@ class MainWindow(QMainWindow):
         return it
 
     def _refresh_tree(self) -> None:
+        # a rebuild re-selects the previous row: that must not move the slice
+        # plane (only a real click in the list focuses the object)
+        self._tree_rebuilding = True
         prev: tuple[str, int] = ("", -1)
         cur = self.tree.currentItem()
         if cur is not None:
@@ -3982,6 +4004,7 @@ class MainWindow(QMainWindow):
         )
         if restore_row >= 0:
             self.tree.setCurrentRow(restore_row)
+        self._tree_rebuilding = False
         # geometry edits (add / edit / remove / import) become visible in the
         # Mesh Viewer right away — the list refresh is the common end point of
         # all those actions

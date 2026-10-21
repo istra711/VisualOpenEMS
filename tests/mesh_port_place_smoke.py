@@ -87,6 +87,9 @@ def main() -> int:
     assert hl["label"] == "Prim: strip", hl
     assert hl["boxes"] and hl["boxes"][0][0][2] == 1.0, hl
     assert v._is_highlighted((0.0, 2.0, 1.0), (10.0, 3.0, 1.035)), "strip not highlighted"
+    # selecting an object also puts the slice on the MIDDLE of its height
+    # (strip z 1.0…1.035 -> 1.0175, ground 0…0.035 -> 0.0175)
+    assert abs(v.spn_plane.value() - 1.0175) < 1e-3, v.spn_plane.value()
     _ax = v.fig_slice.axes[0]
     _yellow = [
         p
@@ -95,10 +98,10 @@ def main() -> int:
     ]
     assert _yellow, "selected object not outlined in the slice"
     assert "[selected: Prim: strip]" in _ax.get_title(), _ax.get_title()
-    # a selection that is not in the current plane is reported in the title
-    win.tree.setCurrentRow(_gnd_row)
-    assert v.highlight()["label"] == "Prim: gnd"
-    assert "not in this plane" in v.fig_slice.axes[0].get_title(), (
+    win.tree.setCurrentRow(_gnd_row)  # -> plane jumps to the ground's middle, so
+    assert v.highlight()["label"] == "Prim: gnd"  # it becomes visible as well
+    assert abs(v.spn_plane.value() - 0.0175) < 1e-3, v.spn_plane.value()
+    assert "[selected: Prim: gnd]" in v.fig_slice.axes[0].get_title(), (
         v.fig_slice.axes[0].get_title()
     )
     # material picked in the Geometry tab highlights all its objects
@@ -108,7 +111,7 @@ def main() -> int:
     # clearing the selection removes the highlight
     win.tree.clearSelection()
     assert not v.highlight()["boxes"] and not v.highlight()["names"], v.highlight()
-    print("  geometry-list selection highlights the object: OK")
+    print("  geometry-list selection highlights + focuses the object: OK")
 
     # --- port mode toggle -------------------------------------------------
     assert v._port_mode is False
@@ -172,9 +175,11 @@ def main() -> int:
                 mesh_dirs=p.mesh_dirs,
             )
 
-    # the plane sits inside the strip (so the strip is the "current" metal)
+    # the plane sits inside the strip (so the strip is the "current" metal);
+    # set it now, after the tree selections above moved it around
     v.spn_plane.setValue(1.01)
     plane = float(v.spn_plane.value())
+    assert abs(plane - 1.01) < 1e-3, plane
 
     def _click(x: float, y: float) -> None:
         """Simulate a slice left-click (never a double-click) + drain the log."""
