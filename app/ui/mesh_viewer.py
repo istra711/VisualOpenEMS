@@ -20,7 +20,6 @@ from PySide6.QtGui import QBrush, QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -56,6 +55,12 @@ from app.meshing.preview import (
     mesh_cells_from_lines,
     mesh_lines_from_csx,
     primitives_outside_domain,
+)
+from app.ui.object_display import (
+    display_alpha,
+    display_rgb,
+    display_visible,
+    normalize_display,
 )
 
 # Axis index helpers
@@ -275,15 +280,10 @@ class MeshGeometryViewer(QWidget):
         self._port_width_axis = ""
         #: object selected in the Project / Geometry list (boxes + names)
         self._highlight: dict = {"boxes": [], "names": [], "label": ""}
-        #: user colour/transparency of the geometry objects drawn in the plots
-        #: (None = the per-kind default colours of ``default_color_for``)
-        self._obj_rgb: tuple[float, float, float] | None = None
-        self._obj_alpha: float = 0.7  # 30 % transparency
-        #: per-object overrides keyed by the primitive name ("objects" in the
-        #: settings): {"color": (r, g, b) | None, "transparency": 0..100 | None}
-        self._obj_styles: dict[str, dict] = {}
-        #: callback(style: dict) — the main window persists the settings
-        self.on_object_style_changed = None
+        #: per-object display (colour / transparency / visible) of the drawn
+        #: objects, keyed by the identity of the CSX primitive info; rebuilt on
+        #: every redraw from the project's ``object_display``
+        self._scene_display: dict[int, dict] = {}
         #: modifier state at the last slider mouse event (Ctrl = fine/free)
         self._slider_mods = Qt.KeyboardModifier.NoModifier
         #: (slice key "XY"/"XZ"/"YZ", x, y) of the unconfirmed placement
@@ -348,44 +348,6 @@ class MeshGeometryViewer(QWidget):
         self.chk_geom = QCheckBox("Geometry")
         self.chk_geom.setChecked(True)
         self.chk_geom.setToolTip("Draw the geometry (primitives, imported CAD) in the slice plots.")
-        # colour + transparency of the geometry objects (they are hard to see on
-        # dark/light backgrounds or when many of them overlap)
-        self.cmb_object = QComboBox()
-        self.cmb_object.setMinimumWidth(170)
-        self.cmb_object.setToolTip(
-            "Object the colour/transparency controls below apply to.\n"
-            "'All objects' sets the default for every object; picking a single\n"
-            "object overrides the default for that one (ports are excluded)."
-        )
-        self.cmb_object.addItem("All objects", "")
-        self.btn_obj_color = QPushButton("Object colour…")
-        self.btn_obj_color.setToolTip(
-            "Use one colour for the selected object (or all objects).\n"
-            "Default: one colour per kind (metal orange, dielectric blue, ...)."
-        )
-        self.btn_obj_color.clicked.connect(self._choose_object_color)
-        self.btn_obj_reset = QPushButton("Reset")
-        self.btn_obj_reset.setToolTip(
-            "Reset the selected object to the default colour/transparency.\n"
-            "With 'All objects' this clears every per-object override and\n"
-            "restores 30 % transparency."
-        )
-        self.btn_obj_reset.clicked.connect(self._reset_object_style)
-        self.slider_obj_alpha = QSlider(Qt.Orientation.Horizontal)
-        self.slider_obj_alpha.setRange(0, 100)
-        self.slider_obj_alpha.setValue(30)
-        self.slider_obj_alpha.setFixedWidth(120)
-        self.slider_obj_alpha.setToolTip(
-            "Transparency of the geometry objects (0 % = solid, 100 % = invisible).\n"
-            "More transparency reveals the mesh grid and overlapping objects\n"
-            "behind them; the outlines stay visible."
-        )
-        self.slider_obj_alpha.valueChanged.connect(self._on_object_transparency)
-        self.lbl_obj_alpha = QLabel("30 %")
-        self.lbl_obj_alpha.setMinimumWidth(42)
-        self.lbl_obj_alpha.setToolTip(self.slider_obj_alpha.toolTip())
-        # connect only now: adding the first item already emits currentIndexChanged
-        self.cmb_object.currentIndexChanged.connect(self._on_object_selected)
         self.chk_ports = QCheckBox("Ports")
         self.chk_ports.setChecked(True)
         self.chk_ports.setToolTip("Draw the ports in the slice plots.")
@@ -433,19 +395,8 @@ class MeshGeometryViewer(QWidget):
         bar2.addWidget(self.btn_popout)
         root.addLayout(bar2)
 
-        # object appearance (colour / transparency) — own row, the bar above is
-        # already at the window's minimum width
-        bar3 = QHBoxLayout()
-        bar3.addWidget(QLabel("Objects:"))
-        bar3.addWidget(self.cmb_object)
-        bar3.addWidget(self.btn_obj_color)
-        bar3.addWidget(self.btn_obj_reset)
-        bar3.addSpacing(14)
-        bar3.addWidget(QLabel("Transparency"))
-        bar3.addWidget(self.slider_obj_alpha)
-        bar3.addWidget(self.lbl_obj_alpha)
-        bar3.addStretch(1)
-        root.addLayout(bar3)
+        # object appearance (colour / transparency / visibility) is edited per
+        # object in the Geometry dialogs (see app.ui.object_display)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         self._split = split
@@ -503,7 +454,6 @@ class MeshGeometryViewer(QWidget):
         # initial readouts (slider values are set before the signals hook up)
         self._update_plane_info()
         self._update_mesh_info()
-        self._update_object_widgets()
 
         # Mesh editor
         self.chk_editor.toggled.connect(self._on_editor_toggled)
@@ -883,236 +833,72 @@ class MeshGeometryViewer(QWidget):
         self._selected_lines = []
         self._sel_line = None
 
-    # ------------------------------------------------- object colour / alpha
-    def object_style(self) -> dict:
-        """Colour + transparency of the geometry objects (JSON-serialisable).
-
-        ``color``/``transparency`` are the defaults for every object; ``objects``
-        holds per-object overrides keyed by the primitive name shown in the
-        "Objects" combo (ports excluded).
-        """
-        rgb = [float(c) for c in self._obj_rgb] if self._obj_rgb is not None else None
-        objects: dict[str, dict] = {}
-        for name, entry in self._obj_styles.items():
-            item: dict = {}
-            if entry.get("color") is not None:
-                item["color"] = [float(c) for c in entry["color"]]
-            if entry.get("transparency") is not None:
-                item["transparency"] = int(entry["transparency"])
-            if item:
-                objects[name] = item
-        return {
-            "color": rgb,
-            "transparency": int(round((1.0 - self._obj_alpha) * 100.0)),
-            "objects": objects,
-        }
-
-    def set_object_style(self, style: dict | None, *, notify: bool = False) -> None:
-        """Apply colour/transparency (startup, settings, pop-out mirror).
-
-        ``color`` is ``None`` for the per-kind default colours; ``objects`` may
-        carry per-object overrides. Values are clamped, unknown keys ignored and
-        malformed entries dropped.
-        """
-        rgb: tuple[float, float, float] | None = None
-        transparency = 30
-        objects: dict[str, dict] = {}
-        if isinstance(style, dict):
-            rgb = self._parse_rgb(style.get("color"))
-            transparency = self._parse_transparency(style.get("transparency"), 30)
-            raw_objects = style.get("objects")
-            if isinstance(raw_objects, dict):
-                for name, raw in raw_objects.items():
-                    if not isinstance(raw, dict) or not str(name):
-                        continue
-                    entry: dict = {}
-                    color = self._parse_rgb(raw.get("color"))
-                    if color is not None:
-                        entry["color"] = color
-                    if "transparency" in raw:
-                        entry["transparency"] = self._parse_transparency(
-                            raw.get("transparency"), transparency
-                        )
-                    if entry:
-                        objects[str(name)] = entry
-        self._obj_rgb = rgb
-        self._obj_alpha = 1.0 - transparency / 100.0
-        self._obj_styles = objects
-        self._update_object_widgets()
-        self._redraw()
-        if notify and callable(self.on_object_style_changed):
-            self.on_object_style_changed(self.object_style())
+    # ----------------------------------------- object display (Mesh Viewer)
+    def _object_display(self, name: str) -> dict:
+        """Display settings of a project object (defaults when none are set)."""
+        store = getattr(self._project, "object_display", None) if self._project else None
+        raw = store.get(name) if isinstance(store, dict) else None
+        return normalize_display(raw)
 
     @staticmethod
-    def _parse_rgb(raw) -> tuple[float, float, float] | None:
-        if not isinstance(raw, (list, tuple)) or len(raw) < 3:
-            return None
-        try:
-            vals = tuple(min(1.0, max(0.0, float(v))) for v in raw[:3])
-        except (TypeError, ValueError):
-            return None
-        return vals  # type: ignore[return-value]
+    def _primitive_built(pr: dict) -> bool:
+        """False for stl primitives whose mesh file is gone (dropped by the run)."""
+        if str(pr.get("kind", "")) != "stl":
+            return True
+        path = pr.get("path") or pr.get("mesh_path") or ""
+        return bool(path) and Path(path).exists()
 
-    @staticmethod
-    def _parse_transparency(raw, fallback: int) -> int:
-        try:
-            return min(100, max(0, int(raw)))
-        except (TypeError, ValueError):
-            return int(fallback)
+    def _display_map(self, infos) -> dict[int, dict]:
+        """Map every drawn CSX primitive onto its object's display settings.
 
-    def _selected_object(self) -> str:
-        """Name picked in the Objects combo ("" = all objects)."""
-        return str(self.cmb_object.currentData() or "")
-
-    def _on_object_selected(self, _idx: int) -> None:
-        self._update_object_widgets()
-
-    def _style_for(self, name: str) -> dict:
-        """Per-object override for ``name`` (exact, else first matching #index)."""
-        entry = self._obj_styles.get(name)
-        if entry is not None:
-            return entry
-        for key in sorted(self._obj_styles):
-            if key.startswith(name + "#"):
-                return self._obj_styles[key]
-        return {}
-
-    def _choose_object_color(self) -> None:
-        name = self._selected_object()
-        current = self._style_for(name).get("color") if name else None
-        if current is None:
-            current = self._obj_rgb
-        start = (
-            QColor.fromRgbF(*current)
-            if current is not None
-            else QColor.fromRgbF(0.85, 0.55, 0.2)  # metal, the most common object
-        )
-        color = QColorDialog.getColor(start, self, "Colour of the geometry objects")
-        if not color.isValid():
-            return
-        rgb = (color.redF(), color.greenF(), color.blueF())
-        if name:
-            self._obj_styles.setdefault(name, {})["color"] = rgb
-        else:
-            self._obj_rgb = rgb
-        self._update_object_widgets()
-        self._redraw()
-        self._emit_object_style()
-
-    def _reset_object_style(self) -> None:
-        """Reset the selection: one object, or everything with "All objects"."""
-        name = self._selected_object()
-        if name:
-            self._obj_styles.pop(name, None)
-        else:
-            self._obj_styles.clear()
-            self._obj_rgb = None
-            self._obj_alpha = 0.7
-        self._update_object_widgets()
-        self._redraw()
-        self._emit_object_style()
-
-    def _on_object_transparency(self, value: int) -> None:
-        value = max(0, min(100, int(value)))
-        name = self._selected_object()
-        if name:
-            self._obj_styles.setdefault(name, {})["transparency"] = value
-        else:
-            self._obj_alpha = 1.0 - value / 100.0
-        self._update_object_widgets()
-        self._redraw()
-        self._emit_object_style()
-
-    def _emit_object_style(self) -> None:
-        if callable(self.on_object_style_changed):
-            self.on_object_style_changed(self.object_style())
-
-    def _update_object_widgets(self) -> None:
-        name = self._selected_object()
-        style = self._style_for(name) if name else {}
-        pct = style.get("transparency")
-        if pct is None:
-            pct = int(round((1.0 - self._obj_alpha) * 100.0))
-        rgb = style.get("color")
-        if rgb is None:
-            rgb = self._obj_rgb
-        who = f"object '{name}'" if name else "all objects"
-        self.lbl_obj_alpha.setText(f"{pct} %")
-        self.slider_obj_alpha.blockSignals(True)
-        self.slider_obj_alpha.setValue(int(pct))
-        self.slider_obj_alpha.blockSignals(False)
-        self.slider_obj_alpha.setToolTip(
-            f"Transparency of {who} (0 % = solid, 100 % = invisible).\n"
-            "More transparency reveals the mesh grid and objects behind;\n"
-            "the outlines stay visible."
-        )
-        self.btn_obj_color.setText("Object colour…")
-        if rgb is None:
-            self.btn_obj_color.setStyleSheet("")
-            self.btn_obj_color.setToolTip(
-                f"Colour of {who}: default per-kind colour\n"
-                "(metal orange, dielectric blue, ...). Click to override."
-            )
-            self.btn_obj_reset.setEnabled(bool(name) or bool(self._obj_styles))
-            self.btn_obj_reset.setToolTip(
-                "Reset the selected object to the default colour/transparency."
-                if name
-                else "Clear every per-object override and restore the defaults."
-            )
-            return
-        r, g, b = (int(round(c * 255)) for c in rgb)
-        self.btn_obj_color.setStyleSheet(
-            "QPushButton {"
-            f" background-color: rgb({r}, {g}, {b});"
-            f" color: {'black' if 0.299 * r + 0.587 * g + 0.114 * b > 150 else 'white'};"
-            " }"
-        )
-        self.btn_obj_color.setToolTip(
-            f"Colour of {who}: rgb({r}, {g}, {b}). Click to change."
-        )
-        self.btn_obj_reset.setEnabled(True)
-
-    def _object_color(self, kind: str, name: str) -> tuple[float, float, float, float]:
-        """Face RGBA of an object: per-object/global override or kind default."""
-        base = default_color_for(kind, name)
-        rgb = self._obj_rgb if self._obj_rgb is not None else base[:3]
-        alpha = self._obj_alpha
-        style = self._style_for(name)
-        if style.get("color") is not None:
-            rgb = style["color"]
-        if style.get("transparency") is not None:
-            alpha = 1.0 - float(style["transparency"]) / 100.0
-        return (rgb[0], rgb[1], rgb[2], alpha)
-
-    def _sync_object_combo(self, infos) -> None:
-        """Keep the Objects combo in sync with the scene (selection survives)."""
-        names: list[str] = []
+        The build groups the project primitives into one CSX property per
+        material (info names ``<material>#<index>``). Walking the project
+        primitives in list order and the infos in property order therefore
+        assigns each drawn primitive to the object it came from — independent
+        of the material grouping. Two properties can share a name (an old
+        recorded run), so the primitives are keyed by identity, not by name.
+        """
+        queues: dict[str, list[dict]] = {}
+        for pr in self._primitives or []:
+            if not self._primitive_built(pr):
+                continue  # the run script drops stl primitives with a missing mesh
+            mat = str(pr.get("material") or "copper")
+            queues.setdefault(mat, []).append(pr)
+        out: dict[int, dict] = {}
         for info in infos:
             if self._is_port_artifact(info.kind):
-                continue
-            name = str(info.name or "").strip()
-            if name and name not in names:
-                names.append(name)
-        if not names:
-            # before the first build: fall back to the project primitives
-            for pr in self._primitives:
-                name = str(pr.get("name") or "").strip()
-                if name and name not in names:
-                    names.append(name)
-        names.sort(key=str.lower)
-        current = self._selected_object()
-        existing = [str(self.cmb_object.itemData(i) or "") for i in range(self.cmb_object.count())]
-        if existing == ["", *names]:
-            return
-        self.cmb_object.blockSignals(True)
-        self.cmb_object.clear()
-        self.cmb_object.addItem("All objects", "")
-        for name in names:
-            self.cmb_object.addItem(name, name)
-        idx = self.cmb_object.findData(current)
-        self.cmb_object.setCurrentIndex(idx if idx >= 0 else 0)
-        self.cmb_object.blockSignals(False)
-        self._update_object_widgets()
+                continue  # ports are drawn separately and never styled
+            mat = str(info.name).rsplit("#", 1)[0]
+            queue = queues.get(mat)
+            if not queue:
+                continue  # object of a recorded run that is not in the project
+            pr = queue.pop(0)
+            out[id(info)] = self._object_display(str(pr.get("name") or ""))
+        return out
+
+    def _info_display(self, info) -> dict:
+        """Display settings of one drawn CSX primitive (defaults when unknown)."""
+        disp = self._scene_display.get(id(info))
+        return disp if isinstance(disp, dict) else normalize_display(None)
+
+    def _info_hidden(self, info) -> bool:
+        """True when the object behind this CSX primitive is switched invisible."""
+        disp = self._scene_display.get(id(info))
+        return disp is not None and not display_visible(disp)
+
+    def _object_color(
+        self,
+        kind: str,
+        name: str,
+        display: dict | None = None,
+    ) -> tuple[float, float, float, float]:
+        """Face RGBA: per-object colour/transparency or the per-kind default."""
+        disp = display if isinstance(display, dict) else normalize_display(None)
+        base = default_color_for(kind, name)
+        rgb = display_rgb(disp)
+        if rgb is None:
+            rgb = base[:3]
+        return (rgb[0], rgb[1], rgb[2], display_alpha(disp))
 
     @staticmethod
     def _object_edge(
@@ -1289,7 +1075,6 @@ class MeshGeometryViewer(QWidget):
             ports=self._ports,
             nf2ff=self._nf2ff,
         )
-        host.set_object_style(self.object_style())  # same colours in the pop-out
         lay.addWidget(host)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(dlg.reject)
@@ -2416,11 +2201,11 @@ class MeshGeometryViewer(QWidget):
             self._scene_infos = list(infos)
             self._scene_area = area
             infos = list(infos)
-            self._sync_object_combo(infos)
+            self._scene_display = self._display_map(infos)
             return mesh, infos, self._ports, self._nf2ff, area
         empty = {"x": np.asarray([]), "y": np.asarray([]), "z": np.asarray([])}
         infos = list(self._scene_infos)
-        self._sync_object_combo(infos)
+        self._scene_display = self._display_map(infos)
         return empty, infos, self._ports, self._nf2ff, self._scene_area
 
     # Cached-scene accessors: fall back to the last build when the mesh grid has
@@ -2596,12 +2381,14 @@ class MeshGeometryViewer(QWidget):
             for info in infos:
                 if self._is_port_artifact(info.kind):
                     continue  # ports are drawn by the "Show ports" block below
+                if self._info_hidden(info):
+                    continue  # object switched invisible in the Geometry dialog
                 lo_n, hi_n = info.start[inorm], info.stop[inorm]
                 if plane < lo_n - eps or plane > hi_n + eps:
                     continue
                 x0, x1 = info.start[ia], info.stop[ia]
                 y0, y1 = info.start[ib], info.stop[ib]
-                color = self._object_color(info.kind, info.name)
+                color = self._object_color(info.kind, info.name, self._info_display(info))
                 bad = info.name in outside
                 circle = _circle_in_slice(
                     info.start, info.stop, getattr(info, "radius", 0.0), ia, ib, inorm
@@ -2632,6 +2419,9 @@ class MeshGeometryViewer(QWidget):
         if self.chk_geom.isChecked():
             eps = 1e-9
             for pr in self._primitives:
+                disp = self._object_display(str(pr.get("name") or ""))
+                if not display_visible(disp):
+                    continue  # object switched invisible in the Geometry dialog
                 st = pr.get("start", [0, 0, 0])
                 sp = pr.get("stop", [0, 0, 0])
                 if plane < st[inorm] - eps or plane > sp[inorm] + eps:
@@ -2641,7 +2431,8 @@ class MeshGeometryViewer(QWidget):
                 mat = pr.get("material", "")
                 color = self._object_color(
                     "Metal" if "copper" in mat or "ground" in mat else "Material",
-                    pr.get("name", mat),
+                    str(pr.get("name", mat)),
+                    disp,
                 )
                 edge = color[:3] + (max(0.9, color[3]),)
                 circle = None
@@ -2794,7 +2585,9 @@ class MeshGeometryViewer(QWidget):
                     )
                 )
             for info in infos:
-                color = self._object_color(info.kind, info.name)
+                if self._info_hidden(info):
+                    continue  # object switched invisible in the Geometry dialog
+                color = self._object_color(info.kind, info.name, self._info_display(info))
                 bad = info.name in outside
                 circle = _circle_in_slice(
                     info.start, info.stop, getattr(info, "radius", 0.0), ia, ib, inorm

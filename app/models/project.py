@@ -364,6 +364,10 @@ class Project:
     patch_params: dict[str, Any] | None = None
     # generic CSX primitives (box/cylinder/polygon/stl dicts) for non-patch projects
     primitives: list[dict[str, Any]] | None = None
+    #: Mesh Viewer appearance per object (edited in the object dialogs):
+    #: ``{name: {"color": [r, g, b] | None, "transparency": 0-100,
+    #: "visible": bool}}`` — ``color=None`` = the per-kind default colours
+    object_display: dict[str, Any] = field(default_factory=dict)
     #: artifacts of the last simulation run (absolute paths), written by the
     #: GUI so a re-opened project can restore the Mesh Viewer / S-param Viewer
     #: without rebuilding: {"sim_dir", "csx_xml", "sparams", "nf2ff", "time"}
@@ -438,6 +442,8 @@ class Project:
         data["patch_params"] = dict(pp) if isinstance(pp, dict) else None
         prims = data.get("primitives")
         data["primitives"] = list(prims) if isinstance(prims, list) else None
+        od = data.get("object_display")
+        data["object_display"] = dict(od) if isinstance(od, dict) else {}
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in data.items() if k in known})
 

@@ -10,8 +10,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QColorDialog
+from PySide6.QtWidgets import QApplication
 
 
 def main() -> int:
@@ -302,156 +301,113 @@ def main() -> int:
         viewer._redraw()
         print("  visibility toggles + zoom preservation: OK")
 
-        # --- object colour / transparency -----------------------------------
+        # --- per-object display from the project ----------------------------
+        # Colour/transparency/visibility are edited in the object dialogs
+        # (Geometry menu / project tree) and stored per object name in
+        # Project.object_display; the Mesh Viewer applies them.
         viewer.cmb_view.setCurrentText("XY slice")
-        viewer.spn_plane.setValue(0.7)
+        viewer.spn_plane.setValue(0.0)  # ground copper + substrate lie in the plane
         viewer.chk_geom.setChecked(True)
         viewer.chk_ports.setChecked(False)
         viewer._redraw()
 
-        def _obj_patches(ax):
-            """Filled geometry patches (not ports / outlines / highlight)."""
-            return [
-                p for p in ax.patches
-                if p.get_label() not in ("", "_nolegend_", "Ports", "Ports (off)")
-                and p.get_facecolor()[3] > 0.0
-            ]
-
-        assert viewer.object_style() == {
-            "color": None, "transparency": 30, "objects": {},
-        }, viewer.object_style()
-        base_faces = {
-            tuple(round(c, 3) for c in p.get_facecolor()[:3])
-            for p in _obj_patches(viewer.fig_slice.axes[0])
-        }
-        assert len(base_faces) >= 2, f"per-kind colours missing: {base_faces}"
-
-        seen_styles: list[dict] = []
-        viewer.on_object_style_changed = seen_styles.append
-        viewer.set_object_style(
-            {"color": [0.1, 0.8, 0.2], "transparency": 75}, notify=True
-        )
-        expected = {
-            "color": [0.1, 0.8, 0.2], "transparency": 75, "objects": {},
-        }
-        assert seen_styles and seen_styles[-1] == expected, seen_styles
-        patches = _obj_patches(viewer.fig_slice.axes[0])
-        assert patches, "no geometry drawn"
-        for p in patches:
-            face = p.get_facecolor()
-            assert [round(c, 3) for c in face[:3]] == [0.1, 0.8, 0.2], face
-            assert abs(face[3] - 0.25) < 1e-6, f"transparency not applied: {face}"
-            edge = p.get_edgecolor()
-            if tuple(round(c, 3) for c in edge[:3]) == (1.0, 0.0, 0.0):
-                continue  # OUTSIDE DOMAIN marker stays red
-            assert edge[3] >= 0.8, f"outline vanished: {edge}"
-        assert viewer.lbl_obj_alpha.text() == "75 %", viewer.lbl_obj_alpha.text()
-        # the Overview uses the same colour/alpha
-        viewer.cmb_view.setCurrentText("Overview")
-        ov_faces = {
-            tuple(round(c, 3) for c in p.get_facecolor()[:3])
-            for p in viewer.fig_slice.axes[0].patches
-            if abs(p.get_facecolor()[3] - 0.25) < 1e-6
-        }
-        assert ov_faces == {(0.1, 0.8, 0.2)}, ov_faces
-
-        # reset (with "All objects" selected) -> per-kind colours again
-        viewer.cmb_object.setCurrentIndex(0)
-        viewer._reset_object_style()
-        assert viewer.object_style() == {
-            "color": None, "transparency": 30, "objects": {},
-        }, viewer.object_style()
-        assert viewer.lbl_obj_alpha.text() == "30 %", viewer.lbl_obj_alpha.text()
-
-        # --- per-object colour / transparency (ports excluded) --------------
-        viewer.cmb_view.setCurrentText("XY slice")
-        viewer.spn_plane.setValue(0.0)  # ground copper + substrate are visible
-        viewer._redraw()
-        items = [
-            viewer.cmb_object.itemData(i)
-            for i in range(viewer.cmb_object.count())
-        ]
-        assert items[0] == "", items
-        assert "substrate#0" in items and "copper#0" in items, items
-        assert not any(str(n).startswith("port_") for n in items), items
-
         def _labelled(ax, label):
             return [p for p in ax.patches if p.get_label() == label]
 
-        def _room_for(substrate, copper):
-            assert substrate, "substrate not drawn at z = 0"
-            assert copper, "copper not drawn at z = 0"
-
         substrate = _labelled(viewer.fig_slice.axes[0], "substrate#0")
-        copper = _labelled(viewer.fig_slice.axes[0], "copper#0")
-        _room_for(substrate, copper)
+        ground = _labelled(viewer.fig_slice.axes[0], "copper#0")
+        assert substrate and ground, "substrate/ground not drawn at z = 0"
         default_alpha = substrate[0].get_facecolor()[3]
-        copper_default = [round(c, 3) for c in copper[0].get_facecolor()[:3]]
         assert abs(default_alpha - 0.7) < 1e-6, default_alpha
 
-        viewer.cmb_object.setCurrentIndex(viewer.cmb_object.findData("substrate#0"))
-        assert viewer.lbl_obj_alpha.text() == "30 %", viewer.lbl_obj_alpha.text()
-        magenta = QColor(220, 20, 140)
-        with patch.object(QColorDialog, "getColor", return_value=magenta):
-            viewer._choose_object_color()
-        viewer.slider_obj_alpha.setValue(0)  # opaque, only for the substrate
-        assert seen_styles, "per-object change not persisted"
-        entry = seen_styles[-1].get("objects", {}).get("substrate#0")
-        assert entry is not None, seen_styles[-1]
-        assert [round(c, 3) for c in entry["color"]] == [0.863, 0.078, 0.549], entry
-        assert entry["transparency"] == 0, entry
-        assert seen_styles[-1]["color"] is None, seen_styles[-1]
-        assert seen_styles[-1]["transparency"] == 30, seen_styles[-1]
+        project.object_display = {
+            "substrate": {
+                "color": [220 / 255, 20 / 255, 140 / 255],
+                "transparency": 0,
+                "visible": True,
+            },
+            "ground": {"color": None, "transparency": 50, "visible": False},
+        }
+        viewer.refresh_view()
 
         substrate = _labelled(viewer.fig_slice.axes[0], "substrate#0")
-        copper = _labelled(viewer.fig_slice.axes[0], "copper#0")
-        _room_for(substrate, copper)
+        assert substrate, "the visible object disappeared"
         for p in substrate:
             face = p.get_facecolor()
             assert [round(c, 3) for c in face[:3]] == [0.863, 0.078, 0.549], face
             assert abs(face[3] - 1.0) < 1e-6, f"object transparency not applied: {face}"
-        for p in copper:  # untouched object keeps the global default
-            face = p.get_facecolor()
-            assert [round(c, 3) for c in face[:3]] == copper_default, face
-            assert abs(face[3] - default_alpha) < 1e-6, face
-
-        # selecting another scope shows its own values
-        viewer.cmb_object.setCurrentIndex(0)
-        assert viewer.lbl_obj_alpha.text() == "30 %", viewer.lbl_obj_alpha.text()
-        viewer.cmb_object.setCurrentIndex(viewer.cmb_object.findData("substrate#0"))
-        assert viewer.lbl_obj_alpha.text() == "0 %", viewer.lbl_obj_alpha.text()
-
-        # round-trip through the persisted style
-        state = viewer.object_style()
-        viewer.set_object_style(
-            {
-                "color": None,
-                "transparency": 30,
-                "objects": {"copper#0": {"color": [0.0, 0.0, 1.0], "transparency": 10}},
-            }
+        assert not _labelled(viewer.fig_slice.axes[0], "copper#0"), (
+            "invisible object is still drawn"
         )
-        assert viewer.object_style() == {
-            "color": None,
-            "transparency": 30,
-            "objects": {"copper#0": {"color": [0.0, 0.0, 1.0], "transparency": 10}},
-        }, viewer.object_style()
-        viewer.set_object_style(state)
+        # ... the mapping knows the object behind every CSX primitive (the two
+        # copper properties share the name "copper#0", so key it by identity) ...
+        scene = viewer._scene_infos
+        ground_info = next(i for i in scene if i.name == "copper#0")
+        patch_info = [i for i in scene if i.name == "copper#0"][1]
+        substrate_info = next(i for i in scene if i.name == "substrate#0")
+        assert viewer._info_display(ground_info)["visible"] is False
+        assert viewer._info_display(patch_info)["visible"] is True
+        assert viewer._info_display(substrate_info)["visible"] is True
+        # ... but never maps the port artefacts
+        port_infos = [i for i in scene if viewer._is_port_artifact(i.kind)]
+        assert port_infos, "no port artefacts in the scene"
+        for info in port_infos:
+            assert id(info) not in viewer._scene_display, info.name
 
-        # "Reset" with a single object selected -> only that override is gone
-        viewer.cmb_object.setCurrentIndex(viewer.cmb_object.findData("substrate#0"))
-        viewer._reset_object_style()
-        assert viewer.object_style()["objects"] == {}, viewer.object_style()
+        # the Overview honours the same settings
+        viewer.cmb_view.setCurrentText("Overview")
+        viewer._redraw()
+
+        def _filled(ax):
+            return sum(1 for p in ax.patches if p.get_facecolor()[3] > 0)
+
+        visible_count = _filled(viewer.fig_slice.axes[0])
+        project.object_display = {
+            "substrate": {"color": None, "transparency": 30, "visible": False},
+            "ground": {"color": None, "transparency": 30, "visible": False},
+            "patch": {"color": None, "transparency": 30, "visible": False},
+        }
+        viewer.refresh_view()
+        assert _filled(viewer.fig_slice.axes[0]) < visible_count, "hidden objects still drawn"
+
+        # defaults again -> the per-kind colours come back
+        project.object_display = {}
+        viewer.refresh_view()
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer._redraw()
         substrate = _labelled(viewer.fig_slice.axes[0], "substrate#0")
-        _room_for(substrate, copper)
-        for p in substrate:
-            assert abs(p.get_facecolor()[3] - default_alpha) < 1e-6, p.get_facecolor()
+        assert substrate and abs(substrate[0].get_facecolor()[3] - default_alpha) < 1e-6
 
-        viewer.on_object_style_changed = None
+        # --- the object dialogs expose the display options ------------------
+        from app.ui.geometry_editors import AssignmentDialog, PrimitiveBoxDialog
+        from app.ui.object_display import normalize_display
+
+        box_dlg = PrimitiveBoxDialog(
+            display={"color": None, "transparency": 55, "visible": False}
+        )
+        assert box_dlg.display_values() == {
+            "color": None, "transparency": 55, "visible": False,
+        }, box_dlg.display_values()
+        assign_dlg = AssignmentDialog(
+            ["ground"],
+            ["copper"],
+            display_for=lambda _name: {
+                "color": [0.1, 0.2, 0.3], "transparency": 10, "visible": True,
+            },
+        )
+        assert assign_dlg.display_values() == {
+            "color": [0.1, 0.2, 0.3], "transparency": 10, "visible": True,
+        }, assign_dlg.display_values()
+        assert normalize_display({"transparency": 999})["transparency"] == 100
+        assert normalize_display("nonsense") == {
+            "color": None, "transparency": 30, "visible": True,
+        }
+
         viewer.chk_ports.setChecked(True)
         viewer.cmb_view.setCurrentText("XY slice")
         viewer._redraw()
-        print("  object colour / transparency (slice + overview): OK")
-        print("  per-object colour / transparency (ports excluded): OK")
+        print("  per-object display from the project (colour/transparency/visible): OK")
+        print("  object dialogs + display normalisation: OK")
 
         # --- ports independent of the structure; legend follows the toggles --
         viewer.cmb_view.setCurrentText("XY slice")

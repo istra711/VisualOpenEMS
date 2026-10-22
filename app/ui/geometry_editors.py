@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.project import DumpDef, GeomAssignment, MaterialDef, PortDef
+from app.ui.object_display import DisplayOptionsWidget
 
 MATERIAL_KINDS = ["pec", "dielectric", "conducting_sheet", "lumped_rlc", "ignore"]
 PORT_TYPES = ["lumped", "msl", "rect_waveguide"]
@@ -233,10 +234,12 @@ class AssignmentDialog(QDialog):
         material_names: list[str],
         parent: QWidget | None = None,
         assignment: GeomAssignment | None = None,
+        display: dict | None = None,
+        display_for=None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Material assignment")
-        self.resize(360, 220)
+        self.resize(380, 360)
         a = assignment or GeomAssignment(object_name="", role="dielectric")
         self._keep_notes = getattr(a, "notes", "") or ""
         self.result: GeomAssignment | None = None
@@ -261,12 +264,26 @@ class AssignmentDialog(QDialog):
         form.addRow("Role", self.cmb_role)
         form.addRow("Material", self.cmb_mat)
         form.addRow("Priority", self.spn_pri)
+        self.display = DisplayOptionsWidget(
+            display_for(self.cmb_obj.currentText()) if callable(display_for) else display,
+            self,
+        )
+        if callable(display_for):
+            # follow the object picked in the combo (new assignment / rename)
+            self.cmb_obj.currentTextChanged.connect(
+                lambda name: self.display.set_values(display_for(name))
+            )
+        form.addRow(self.display)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         form.addRow(bb)
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
+
+    def display_values(self) -> dict:
+        """Colour / transparency / visibility picked for this object."""
+        return self.display.values()
 
     def _accept(self) -> None:
         obj = self.cmb_obj.currentText().strip()
@@ -335,7 +352,19 @@ class MaterialDialog(QDialog):
         self.accept()
 
 
-class PrimitiveBoxDialog(QDialog):
+class _DisplayMixin:
+    """Per-object Mesh Viewer display options (colour / transparency / visibility)."""
+
+    def display_values(self) -> dict:
+        """Colour / transparency / visibility picked for this object."""
+        return self.display.values()
+
+    def _add_display(self, form: QFormLayout, display: dict | None) -> None:
+        self.display = DisplayOptionsWidget(display, self)
+        form.addRow(self.display)
+
+
+class PrimitiveBoxDialog(QDialog, _DisplayMixin):
     """Add/edit a box primitive (any antenna/PCB metal or dielectric volume)."""
 
     def __init__(
@@ -343,10 +372,11 @@ class PrimitiveBoxDialog(QDialog):
         parent: QWidget | None = None,
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
+        display: dict | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Box primitive")
-        self.resize(380, 360)
+        self.resize(400, 520)
         self._coord_system = coord_system
         if coord_system == "cylindrical":
             # In cylindrical mode a "box" is a wedge in (rho, phi, z).
@@ -376,6 +406,7 @@ class PrimitiveBoxDialog(QDialog):
         self.spn_stop = _vec3_row(
             form, "Stop", list(p.get("stop", [10, 10, 0.5])), coord_system=coord_system
         )
+        self._add_display(form, display)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -403,16 +434,17 @@ class PrimitiveBoxDialog(QDialog):
         self.accept()
 
 
-class PrimitiveCylinderDialog(QDialog):
+class PrimitiveCylinderDialog(QDialog, _DisplayMixin):
     def __init__(
         self,
         parent: QWidget | None = None,
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
+        display: dict | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Cylinder primitive")
-        self.resize(380, 320)
+        self.resize(400, 480)
         self._coord_system = coord_system
         p = prim or {"name": "cyl1", "material": "copper", "start": [0, 0, 0], "stop": [0, 0, 5], "radius": 0.5}
         self._keep_extra = dict(p) if prim else {}
@@ -440,6 +472,7 @@ class PrimitiveCylinderDialog(QDialog):
         self.spn_stop = _vec3_row(
             form, "Stop (axis B)", list(p.get("stop", [0, 0, 5])), coord_system=coord_system
         )
+        self._add_display(form, display)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -464,7 +497,7 @@ class PrimitiveCylinderDialog(QDialog):
         self.accept()
 
 
-class PrimitiveSphereDialog(QDialog):
+class PrimitiveSphereDialog(QDialog, _DisplayMixin):
     """Add/edit a sphere primitive (exact openEMS AddSphere)."""
 
     def __init__(
@@ -472,10 +505,11 @@ class PrimitiveSphereDialog(QDialog):
         parent: QWidget | None = None,
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
+        display: dict | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Sphere primitive")
-        self.resize(380, 340)
+        self.resize(400, 500)
         self._coord_system = coord_system
         p = prim or {
             "name": "sphere1",
@@ -505,6 +539,7 @@ class PrimitiveSphereDialog(QDialog):
         self.spn_center = _vec3_row(
             form, "Center", list(p.get("center", [0, 0, 0])), coord_system=coord_system
         )
+        self._add_display(form, display)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -533,7 +568,7 @@ class PrimitiveSphereDialog(QDialog):
         self.accept()
 
 
-class PrimitivePolygonDialog(QDialog):
+class PrimitivePolygonDialog(QDialog, _DisplayMixin):
     """Add/edit a polygon primitive (flat sheet or extruded prism).
 
     Points are given in the plane perpendicular to the axis: axis z ->
@@ -546,10 +581,11 @@ class PrimitivePolygonDialog(QDialog):
         parent: QWidget | None = None,
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
+        display: dict | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Polygon primitive")
-        self.resize(420, 460)
+        self.resize(420, 560)
         self._coord_system = coord_system
         p = prim or {
             "name": "poly1",
@@ -602,6 +638,7 @@ class PrimitivePolygonDialog(QDialog):
         )
         self.ed_points.setPlaceholderText("x, y  (one point per line, >= 3 points)")
         form.addRow("Points", self.ed_points)
+        self._add_display(form, display)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )

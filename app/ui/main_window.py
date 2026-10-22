@@ -50,6 +50,7 @@ from app.simulation.script_gen import generate_run_script
 from app.csxcad_builder.primitives import patch_antenna_primitives
 from app.csxcad_builder.quantize import f32 as _f32
 from app.freecad_io.freecad_mesh import tessellate_cad_to_meshes
+from app.ui.object_display import DisplayOptionsWidget, normalize_display
 from app.ui.tab_help import show_tab_help
 
 # Tree kinds the context menu / geometry menu can duplicate (geom and nf2ff
@@ -485,11 +486,6 @@ class MainWindow(QMainWindow):
         self.mesh_viewer.port_place_requested.connect(self._on_mesh_port_place)
         self.mesh_viewer.port_mode_changed.connect(self._on_mesh_port_mode_changed)
         self.mesh_viewer.port_type_changed.connect(self._on_mesh_port_type_changed)
-        # object colour/transparency (remembered across sessions)
-        self.mesh_viewer.set_object_style(
-            getattr(self.settings, "mesh_viewer_objects", None)
-        )
-        self.mesh_viewer.on_object_style_changed = self._on_mesh_object_style_changed
         viewer_layout.addWidget(self.mesh_viewer)
         self.mesh_viewer_tab_index = tabs.addTab(viewer_tab, "Mesh Viewer")
 
@@ -2994,6 +2990,36 @@ class MainWindow(QMainWindow):
                 names.append(str(pr["name"]))
         return names
 
+    # ----- per-object Mesh Viewer display (edited in the object dialogs) ----
+    def _object_display(self, name: str) -> dict:
+        """Mesh Viewer appearance of one object (defaults when none are set)."""
+        store = getattr(self.project, "object_display", None)
+        raw = store.get(name) if isinstance(store, dict) else None
+        return normalize_display(raw)
+
+    def _store_object_display(self, name: str, values: dict | None) -> None:
+        """Store the display options of one object and repaint the Mesh Viewer."""
+        name = str(name or "").strip()
+        if not name:
+            return
+        if not isinstance(getattr(self.project, "object_display", None), dict):
+            self.project.object_display = {}
+        self.project.object_display[name] = normalize_display(values)
+        viewer = getattr(self, "mesh_viewer", None)
+        if viewer is not None:
+            try:
+                viewer.refresh_view()  # colour / transparency / visibility
+            except Exception as e:  # noqa: BLE001 - never block the edit
+                print("mesh viewer display refresh failed:", e)
+
+    def _rename_object_display(self, old: str, new: str) -> None:
+        """Keep the display settings when an object is renamed."""
+        store = getattr(self.project, "object_display", None)
+        if not isinstance(store, dict) or not old or not new or old == new:
+            return
+        if old in store:
+            store[new] = store.pop(old)
+
     def _material_names(self) -> list[str]:
         return [m.name for m in self.project.materials] or ["copper", "substrate", "vacuum"]
 
@@ -3588,6 +3614,7 @@ class MainWindow(QMainWindow):
             self._object_names_for_dialog(),
             self._material_names(),
             self,
+            display_for=self._object_display,
         )
         if dlg.exec() and dlg.result:
             a = dlg.result
@@ -3596,6 +3623,7 @@ class MainWindow(QMainWindow):
                 x for x in self.project.assignments if x.object_name != a.object_name
             ]
             self.project.assignments.append(a)
+            self._store_object_display(a.object_name, dlg.display_values())
             self._sync_assignment_materials_to_primitives()
             self._refresh_tree()
             self._log(f"Assignment: {a.object_name} -> {a.role}/{a.material}")
@@ -3619,6 +3647,7 @@ class MainWindow(QMainWindow):
             pr = dlg.result
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
             self.primitives.append(pr)
+            self._store_object_display(pr["name"], dlg.display_values())
             self._log(f"Box primitive: {pr['name']} {pr['material']} {pr['start']}→{pr['stop']}")
             self._refresh_tree()
 
@@ -3630,6 +3659,7 @@ class MainWindow(QMainWindow):
             pr = dlg.result
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
             self.primitives.append(pr)
+            self._store_object_display(pr["name"], dlg.display_values())
             self._log(
                 f"Cylinder primitive: {pr['name']} r={pr['radius']} "
                 f"{pr['start']}→{pr['stop']}"
@@ -3664,6 +3694,7 @@ class MainWindow(QMainWindow):
             pr = dlg.result
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
             self.primitives.append(pr)
+            self._store_object_display(pr["name"], dlg.display_values())
             self._log(
                 f"Sphere primitive: {pr['name']} r={pr['radius']} center={pr['center']}"
             )
@@ -3679,6 +3710,7 @@ class MainWindow(QMainWindow):
             pr = dlg.result
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
             self.primitives.append(pr)
+            self._store_object_display(pr["name"], dlg.display_values())
             self._log(
                 f"Polygon primitive: {pr['name']} axis={pr['axis']} "
                 f"coord={pr['coord']} length={pr['length']} "
@@ -4390,7 +4422,10 @@ class MainWindow(QMainWindow):
                     "polygon": PrimitivePolygonDialog,
                 }[ptype]
                 dlg = dialog_cls(
-                    self, prim=pr, coord_system=self.project.mesh.coord_system
+                    self,
+                    prim=pr,
+                    coord_system=self.project.mesh.coord_system,
+                    display=self._object_display(str(pr.get("name") or "")),
                 )
                 if dlg.exec() and dlg.result:
                     old_name = pr.get("name")
@@ -4398,6 +4433,7 @@ class MainWindow(QMainWindow):
                     new_name = dlg.result.get("name")
                     if old_name and new_name and old_name != new_name:
                         self._rename_primitive(old_name, new_name)
+                    self._store_object_display(new_name, dlg.display_values())
                     self._log(
                         f"Primitive updated: {new_name} {dlg.result.get('material')} "
                         f"{dlg.result.get('start')}→{dlg.result.get('stop')}"
@@ -4418,6 +4454,7 @@ class MainWindow(QMainWindow):
                 self._material_names(),
                 self,
                 assignment=a,
+                display_for=self._object_display,
             )
             if dlg.exec() and dlg.result:
                 old_obj = a.object_name
@@ -4433,6 +4470,7 @@ class MainWindow(QMainWindow):
                     for pr in self.primitives:
                         if pr.get("name") == old_obj:
                             pr["name"] = new.object_name
+                self._store_object_display(new.object_name, dlg.display_values())
                 self._sync_assignment_materials_to_primitives()
                 self._log(
                     f"Assignment updated: {new.object_name} -> {new.role}/{new.material}"
@@ -4532,6 +4570,10 @@ class MainWindow(QMainWindow):
         form.addRow("Name (imported)", ed_name)
         form.addRow("Material", cmb_mat)
         form.addRow("Priority", spn_pri)
+        display = DisplayOptionsWidget(
+            self._object_display(str(pr.get("name", ""))), dlg
+        )
+        form.addRow(display)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -4544,6 +4586,7 @@ class MainWindow(QMainWindow):
         pr["priority"] = spn_pri.value()
         # keep assignment in sync for this object
         name = pr.get("name")
+        self._store_object_display(name, display.values())
         for a in self.project.assignments:
             if a.object_name == name and a.role != "ignore":
                 a.material = pr["material"]
@@ -4561,6 +4604,7 @@ class MainWindow(QMainWindow):
         for gf in self.project.geometry_files:
             if old in (gf.object_names or []):
                 gf.object_names = [new if n == old else n for n in gf.object_names]
+        self._rename_object_display(old, new)
 
     def _remove_tree_entry(self, kind: str, idx: int) -> None:
         if kind == "prim":
@@ -5128,14 +5172,6 @@ class MainWindow(QMainWindow):
                 win.viewer.set_view_default(key)
             except Exception:  # noqa: BLE001
                 pass
-
-    def _on_mesh_object_style_changed(self, style: dict) -> None:
-        """Persist the Mesh Viewer object colour / transparency."""
-        self.settings.mesh_viewer_objects = dict(style or {})
-        try:
-            self.settings.save()
-        except Exception:  # noqa: BLE001 - never block the viewer on a write error
-            pass
 
     def _on_field_vectors_changed(self, options: dict) -> None:
         """Persist the Field Viewer vector glyphs and mirror them to the pop-out."""

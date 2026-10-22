@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-10-23
+
+### Changed
+
+- **Mesh Viewer: object colour/transparency/visibility now live in the object
+  dialogs** (`app/ui/object_display.py`, `app/ui/geometry_editors.py`,
+  `app/ui/main_window.py`, `app/models/project.py`): the **Objects:** row in the
+  viewer toolbar (drop-down + colour button + transparency slider added in
+  0.5.6/0.5.7) was removed. Instead every geometry object carries its own
+  appearance, edited where the object is edited — the **Box / Cylinder / Sphere
+  / Polygon** dialogs and the **Material assignment** dialog as well as the
+  imported-mesh dialog now end with a **Mesh Viewer display** group: **Colour…**
+  (with **Automatic** = the per-kind colour), **Transparency** (0–100 %, default
+  30 %) and **Visible**. Visibility hides the object in the Mesh Viewer only —
+  it stays part of the simulation. Ports are never affected. The settings are
+  stored per object name in the project (`object_display`) and therefore travel
+  with the `.fcsim.json` file; the viewer maps every drawn CSX primitive back to
+  the object it came from (two properties with the same name are kept apart).
+  The now unused `mesh_viewer_objects` GUI setting was dropped.
+
 ## [0.5.7] - 2026-10-22
 
 ### Added
@@ -1585,4 +1605,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.5]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.5
 [0.5.6]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.6
 [0.5.7]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.7
+[0.5.8]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.8
 [Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.4...HEAD

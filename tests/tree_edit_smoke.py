@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class _FakeBoxDialog:
-    def __init__(self, parent=None, prim=None, coord_system="cartesian"):
+    def __init__(self, parent=None, prim=None, coord_system="cartesian", display=None):
         del coord_system  # accepted for API parity (polar wedge editor)
         self.result = {
             "kind": "box",
@@ -23,12 +23,15 @@ class _FakeBoxDialog:
             "stop": [4, 5, 6],
         }
 
+    def display_values(self):
+        return {"color": [1.0, 0.0, 0.0], "transparency": 40, "visible": False}
+
     def exec(self):
         return True
 
 
 class _FakeCylDialog:
-    def __init__(self, parent=None, prim=None, coord_system="cartesian"):
+    def __init__(self, parent=None, prim=None, coord_system="cartesian", display=None):
         del coord_system  # accepted for API parity
         self.result = {
             "kind": "cylinder",
@@ -40,12 +43,18 @@ class _FakeCylDialog:
             "radius": 0.25,
         }
 
+    def display_values(self):
+        return {"color": None, "transparency": 30, "visible": True}
+
     def exec(self):
         return True
 
 
 class _FakeAssignDialog:
-    def __init__(self, object_names, material_names, parent=None, assignment=None):
+    def __init__(
+        self, object_names, material_names, parent=None, assignment=None,
+        display=None, display_for=None,
+    ):
         from app.models.project import GeomAssignment
 
         self.result = GeomAssignment(
@@ -54,6 +63,9 @@ class _FakeAssignDialog:
             material="fr4",
             priority=5,
         )
+
+    def display_values(self):
+        return {"color": [0.0, 1.0, 0.0], "transparency": 10, "visible": True}
 
     def exec(self):
         return True
@@ -163,12 +175,19 @@ def main() -> int:
         win._edit_tree_entry("prim", 0)
         assert win.primitives[0]["name"] == "box1_edited"
         assert win.primitives[0]["material"] == "gold"
+        # the dialog's display options land in the project
+        assert win.project.object_display.get("box1_edited") == {
+            "color": [1.0, 0.0, 0.0], "transparency": 40, "visible": False,
+        }, win.project.object_display
         # stl mesh_path must survive box-dialog round trip only for box prims
         win._edit_tree_entry("prim", 1)
         assert win.primitives[1]["name"] == "cyl1_edited"
         assert win.primitives[1]["radius"] == 0.25
         win._edit_tree_entry("assign", 0)
         assert win.project.assignments[-1].material == "fr4"
+        assert win.project.object_display.get("patch1") == {
+            "color": [0.0, 1.0, 0.0], "transparency": 10, "visible": True,
+        }, win.project.object_display
         win._edit_tree_entry("mat", 0)
         assert win.project.materials[-1].epsilon == 4.4
         win._edit_tree_entry("port", 0)

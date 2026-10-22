@@ -85,18 +85,17 @@ Navigation
     slice; the % next to it is the current strength. Only active while
     "Mesh grid" is ticked (next to Geometry / Ports / NF2FF, which show or hide
     those overlays in the slice plots).
-  • "Objects:" row — colour and transparency of the geometry objects. Pick an
-    object in the drop-down (or "All objects" for every object) and change its
-    colour/transparency; a per-object override only affects that object, all
-    others keep the default or the "All objects" setting. Ports (lumped
-    elements, excitation, probes) are not listed and keep their port colour.
-    "Object colour…" opens a colour picker, "Reset" restores the selected
-    object (with "All objects" every per-object override and the 30 % default
-    transparency). The "Transparency" slider (0–100 %) makes the object faces
-    see-through so the mesh grid and objects behind them stay visible; the
-    object outlines keep a higher opacity, so shapes remain readable even at
-    high transparency. Both settings apply to the slices, the Overview and the
-    pop-out, and are remembered across sessions (per object name).
+  • Appearance of the objects — colour, transparency and visibility are set
+    **per object** where the object is edited: select a "Prim:" / "Assign:"
+    entry in the Project / Geometry list and press Enter (or double-click),
+    then use the **"Mesh Viewer display"** group in the dialog. "Colour…" picks
+    a fixed colour, "Automatic" returns to the per-kind colour (metal orange,
+    dielectric blue, ...), "Transparency" (0–100 %) makes the object faces
+    see-through so the mesh grid and objects behind them stay visible (the
+    outline keeps a higher opacity), and "Visible" hides the object in the
+    viewer. Everything is stored with the project, applies to the slices, the
+    Overview and the pop-out, and never changes the simulation. Ports are not
+    affected — they keep their own port colour.
 
 Mesh editor (right-hand panel) — manual mesh lines
   • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line.
