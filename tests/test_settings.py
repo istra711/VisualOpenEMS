@@ -41,3 +41,21 @@ def test_field_viewer_vectors_default_and_roundtrip(tmp_path):
     s.field_viewer_vectors = dict(opts)
     s.save(path)
     assert AppSettings.load(path).field_viewer_vectors == opts
+
+
+def test_mesh_viewer_objects_default_and_roundtrip(tmp_path):
+    # empty dict = per-kind colours, the viewer applies its own 30 % default
+    assert AppSettings().mesh_viewer_objects == {}
+    path = tmp_path / "gui_settings.json"
+    style = {"color": [0.1, 0.8, 0.2], "transparency": 75}
+    s = AppSettings()
+    s.mesh_viewer_objects = dict(style)
+    s.save(path)
+    assert AppSettings.load(path).mesh_viewer_objects == style
+    # "kind colours" is stored explicitly as color=None
+    s.mesh_viewer_objects = {"color": None, "transparency": 30}
+    s.save(path)
+    assert AppSettings.load(path).mesh_viewer_objects == {
+        "color": None,
+        "transparency": 30,
+    }

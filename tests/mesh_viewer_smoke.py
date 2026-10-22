@@ -301,6 +301,69 @@ def main() -> int:
         viewer._redraw()
         print("  visibility toggles + zoom preservation: OK")
 
+        # --- object colour / transparency -----------------------------------
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer.spn_plane.setValue(0.7)
+        viewer.chk_geom.setChecked(True)
+        viewer.chk_ports.setChecked(False)
+        viewer._redraw()
+
+        def _obj_patches(ax):
+            """Filled geometry patches (not ports / outlines / highlight)."""
+            return [
+                p for p in ax.patches
+                if p.get_label() not in ("", "_nolegend_", "Ports", "Ports (off)")
+                and p.get_facecolor()[3] > 0.0
+            ]
+
+        assert viewer.object_style() == {"color": None, "transparency": 30}, (
+            viewer.object_style()
+        )
+        base_faces = {
+            tuple(round(c, 3) for c in p.get_facecolor()[:3])
+            for p in _obj_patches(viewer.fig_slice.axes[0])
+        }
+        assert len(base_faces) >= 2, f"per-kind colours missing: {base_faces}"
+
+        seen_styles: list[dict] = []
+        viewer.on_object_style_changed = seen_styles.append
+        viewer.set_object_style(
+            {"color": [0.1, 0.8, 0.2], "transparency": 75}, notify=True
+        )
+        expected = {"color": [0.1, 0.8, 0.2], "transparency": 75}
+        assert seen_styles and seen_styles[-1] == expected, seen_styles
+        patches = _obj_patches(viewer.fig_slice.axes[0])
+        assert patches, "no geometry drawn"
+        for p in patches:
+            face = p.get_facecolor()
+            assert [round(c, 3) for c in face[:3]] == [0.1, 0.8, 0.2], face
+            assert abs(face[3] - 0.25) < 1e-6, f"transparency not applied: {face}"
+            edge = p.get_edgecolor()
+            if tuple(round(c, 3) for c in edge[:3]) == (1.0, 0.0, 0.0):
+                continue  # OUTSIDE DOMAIN marker stays red
+            assert edge[3] >= 0.8, f"outline vanished: {edge}"
+        assert viewer.lbl_obj_alpha.text() == "75 %", viewer.lbl_obj_alpha.text()
+        # the Overview uses the same colour/alpha
+        viewer.cmb_view.setCurrentText("Overview")
+        ov_faces = {
+            tuple(round(c, 3) for c in p.get_facecolor()[:3])
+            for p in viewer.fig_slice.axes[0].patches
+            if abs(p.get_facecolor()[3] - 0.25) < 1e-6
+        }
+        assert ov_faces == {(0.1, 0.8, 0.2)}, ov_faces
+
+        # reset -> per-kind colours again
+        viewer._reset_object_style()
+        assert viewer.object_style() == {"color": None, "transparency": 30}, (
+            viewer.object_style()
+        )
+        assert viewer.lbl_obj_alpha.text() == "30 %", viewer.lbl_obj_alpha.text()
+        viewer.on_object_style_changed = None
+        viewer.chk_ports.setChecked(True)
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer._redraw()
+        print("  object colour / transparency (slice + overview): OK")
+
         # --- ports independent of the structure; legend follows the toggles --
         viewer.cmb_view.setCurrentText("XY slice")
         viewer.spn_plane.setValue(0.7)  # inside the patch feed port z-range
