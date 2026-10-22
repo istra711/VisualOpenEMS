@@ -26,6 +26,24 @@ def test_project_roundtrip():
     assert any(m.name == "copper" for m in q.materials)
 
 
+def test_project_object_display_roundtrip():
+    """Per-object Mesh Viewer appearance travels with the project file."""
+    from app.models.project import Project
+
+    p = Project.new_default("display")
+    p.object_display = {
+        "ground": {"color": [0.1, 0.2, 0.3], "transparency": 75, "visible": False},
+    }
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "proj.fcsim.json"
+        p.save(path)
+        q = Project.load(path)
+    assert q.object_display == p.object_display
+    # old project files without the key fall back to an empty dict
+    assert Project.from_dict({"name": "old"}).object_display == {}
+    assert Project.from_dict({"object_display": "broken"}).object_display == {}
+
+
 def test_num_lines_clamped_for_easymesh():
     """num_lines < 2 breaks easyMesh ("zero-size array to reduction ... min")."""
     from app.models.project import BoundarySpec, MeshSpec

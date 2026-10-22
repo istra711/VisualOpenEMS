@@ -50,9 +50,6 @@ class AppSettings:
     #: vector glyph options (see app.ui.vtk_viewer.DEFAULT_VECTORS):
     #: enabled / size / max_arrows / normalize
     field_viewer_vectors: dict = field(default_factory=dict)
-    #: Mesh Viewer object appearance: {"color": [r, g, b] | None,
-    #: "transparency": 0-100} — None = the per-kind default colours
-    mesh_viewer_objects: dict = field(default_factory=dict)
 
     # --- Port defaults (Settings dialog + FreeCAD import fallbacks) ---
     default_port_type: str = "lumped"  # lumped | msl | rect_waveguide
