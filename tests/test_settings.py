@@ -53,9 +53,14 @@ def test_mesh_viewer_objects_default_and_roundtrip(tmp_path):
     s.save(path)
     assert AppSettings.load(path).mesh_viewer_objects == style
     # "kind colours" is stored explicitly as color=None
-    s.mesh_viewer_objects = {"color": None, "transparency": 30}
+    s.mesh_viewer_objects = {
+        "color": None,
+        "transparency": 30,
+        "objects": {"copper#0": {"color": [0.0, 0.0, 1.0], "transparency": 10}},
+    }
     s.save(path)
     assert AppSettings.load(path).mesh_viewer_objects == {
         "color": None,
         "transparency": 30,
+        "objects": {"copper#0": {"color": [0.0, 0.0, 1.0], "transparency": 10}},
     }

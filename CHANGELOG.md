@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-10-22
+
+### Added
+
+- **Mesh Viewer: colour and transparency per object** (`app/ui/mesh_viewer.py`,
+  `app/ui/tab_help.py`): the **Objects:** row now starts with a drop-down that
+  lists every geometry object (primitives, dielectric boxes, imported CAD).
+  *All objects* keeps the previous behaviour and sets the default for
+  everything; picking one object applies **Object colour…**, **Reset** and the
+  **Transparency** slider only to that object. All other objects keep the
+  default (or the *All objects* setting), so e.g. a substrate can be made
+  almost invisible while the metal stays solid. **Reset** restores one object;
+  with *All objects* it clears every per-object override and the 30 % default.
+  Ports (lumped elements, excitation, probes) are excluded from the list and
+  keep their port colour. Overrides are stored per object name in
+  `mesh_viewer_objects["objects"]`, survive a restart and mirror to the
+  pop-out.
+
 ## [0.5.6] - 2026-10-22
 
 ### Added
@@ -1566,4 +1584,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.4]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.4
 [0.5.5]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.5
 [0.5.6]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.6
+[0.5.7]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.7
 [Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.4...HEAD

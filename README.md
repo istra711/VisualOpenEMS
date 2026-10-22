@@ -58,7 +58,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - Arc detection and **graded mesh refinement at metal interfaces** (fine next
   to PEC, coarsening into the air/dielectric by the max grading ratio)
 - Interactive mesh viewer with 3D scene and per-axis slice inspection
-  (object colour + transparency adjustable, remembered across sessions)
+  (colour + transparency per object or for all, remembered across sessions)
 - **Mesh Editor** — add / edit / delete manual grid lines per axis directly in
   the slice (click to add, click a line to select, Shift+click to add several,
   snap to geometry edges, multi-select with Del, right-click menu). Edits apply
