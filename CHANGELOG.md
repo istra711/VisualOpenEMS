@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-10-22
+
+### Added
+
+- **Mesh Viewer: object colour + transparency** (`app/ui/mesh_viewer.py`,
+  `app/settings.py`, `app/ui/main_window.py`): a new **Objects:** row under the
+  viewer toolbar. **Object colour…** picks one colour for all geometry objects
+  (primitives, dielectric boxes, imported CAD) — handy when the per-kind
+  colours are hard to see or many objects overlap; **Kind colours** restores the
+  defaults (metal orange, dielectric blue, ports red). The new **Transparency**
+  slider (0–100 %, default 30 %) makes the object faces see-through so the mesh
+  grid and objects behind them stay visible, while the object outlines keep a
+  higher opacity so the shapes remain readable. Both settings apply to the
+  slices, the Domain Overview and the pop-out, and are remembered across
+  sessions (`mesh_viewer_objects`).
+
 ## [0.5.5] - 2026-10-22
 
 ### Added
@@ -1549,4 +1565,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.3]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.3
 [0.5.4]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.4
 [0.5.5]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.5
+[0.5.6]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.6
 [Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.4...HEAD

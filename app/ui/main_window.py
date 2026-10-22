@@ -485,6 +485,11 @@ class MainWindow(QMainWindow):
         self.mesh_viewer.port_place_requested.connect(self._on_mesh_port_place)
         self.mesh_viewer.port_mode_changed.connect(self._on_mesh_port_mode_changed)
         self.mesh_viewer.port_type_changed.connect(self._on_mesh_port_type_changed)
+        # object colour/transparency (remembered across sessions)
+        self.mesh_viewer.set_object_style(
+            getattr(self.settings, "mesh_viewer_objects", None)
+        )
+        self.mesh_viewer.on_object_style_changed = self._on_mesh_object_style_changed
         viewer_layout.addWidget(self.mesh_viewer)
         self.mesh_viewer_tab_index = tabs.addTab(viewer_tab, "Mesh Viewer")
 
@@ -5123,6 +5128,14 @@ class MainWindow(QMainWindow):
                 win.viewer.set_view_default(key)
             except Exception:  # noqa: BLE001
                 pass
+
+    def _on_mesh_object_style_changed(self, style: dict) -> None:
+        """Persist the Mesh Viewer object colour / transparency."""
+        self.settings.mesh_viewer_objects = dict(style or {})
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 - never block the viewer on a write error
+            pass
 
     def _on_field_vectors_changed(self, options: dict) -> None:
         """Persist the Field Viewer vector glyphs and mirror them to the pop-out."""

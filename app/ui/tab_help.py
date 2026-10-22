@@ -85,6 +85,16 @@ Navigation
     slice; the % next to it is the current strength. Only active while
     "Mesh grid" is ticked (next to Geometry / Ports / NF2FF, which show or hide
     those overlays in the slice plots).
+  • "Objects:" row — colour and transparency of the geometry objects. "Object
+    colour…" opens a colour picker and draws **all** objects (primitives,
+    imported CAD, dielectric boxes) in that one colour — useful when the default
+    colours are hard to see or when many objects overlap. "Kind colours" goes
+    back to the per-kind defaults (metal orange, dielectric blue, ports red).
+    The "Transparency" slider (0–100 %) makes the object faces see-through so
+    the mesh grid and objects behind them stay visible; the object outlines keep
+    a higher opacity, so shapes remain readable even at high transparency. Both
+    settings apply to the slices, the Overview and the pop-out, and are
+    remembered across sessions.
 
 Mesh editor (right-hand panel) — manual mesh lines
   • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line.

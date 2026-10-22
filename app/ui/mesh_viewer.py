@@ -20,6 +20,7 @@ from PySide6.QtGui import QBrush, QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -274,6 +275,12 @@ class MeshGeometryViewer(QWidget):
         self._port_width_axis = ""
         #: object selected in the Project / Geometry list (boxes + names)
         self._highlight: dict = {"boxes": [], "names": [], "label": ""}
+        #: user colour/transparency of the geometry objects drawn in the plots
+        #: (None = the per-kind default colours of ``default_color_for``)
+        self._obj_rgb: tuple[float, float, float] | None = None
+        self._obj_alpha: float = 0.7  # 30 % transparency
+        #: callback(style: dict) — the main window persists the settings
+        self.on_object_style_changed = None
         #: modifier state at the last slider mouse event (Ctrl = fine/free)
         self._slider_mods = Qt.KeyboardModifier.NoModifier
         #: (slice key "XY"/"XZ"/"YZ", x, y) of the unconfirmed placement
@@ -338,6 +345,33 @@ class MeshGeometryViewer(QWidget):
         self.chk_geom = QCheckBox("Geometry")
         self.chk_geom.setChecked(True)
         self.chk_geom.setToolTip("Draw the geometry (primitives, imported CAD) in the slice plots.")
+        # colour + transparency of the geometry objects (they are hard to see on
+        # dark/light backgrounds or when many of them overlap)
+        self.btn_obj_color = QPushButton("Object colour…")
+        self.btn_obj_color.setToolTip(
+            "Use one colour for all geometry objects (primitives, imported CAD).\n"
+            "Default: one colour per kind (metal orange, dielectric blue, ...)."
+        )
+        self.btn_obj_color.clicked.connect(self._choose_object_color)
+        self.btn_obj_reset = QPushButton("Kind colours")
+        self.btn_obj_reset.setToolTip(
+            "Back to the per-kind default colours.\n"
+            "Transparency goes back to 30 %."
+        )
+        self.btn_obj_reset.clicked.connect(self._reset_object_style)
+        self.slider_obj_alpha = QSlider(Qt.Orientation.Horizontal)
+        self.slider_obj_alpha.setRange(0, 100)
+        self.slider_obj_alpha.setValue(30)
+        self.slider_obj_alpha.setFixedWidth(120)
+        self.slider_obj_alpha.setToolTip(
+            "Transparency of the geometry objects (0 % = solid, 100 % = invisible).\n"
+            "More transparency reveals the mesh grid and overlapping objects\n"
+            "behind them; the outlines stay visible."
+        )
+        self.slider_obj_alpha.valueChanged.connect(self._on_object_transparency)
+        self.lbl_obj_alpha = QLabel("30 %")
+        self.lbl_obj_alpha.setMinimumWidth(42)
+        self.lbl_obj_alpha.setToolTip(self.slider_obj_alpha.toolTip())
         self.chk_ports = QCheckBox("Ports")
         self.chk_ports.setChecked(True)
         self.chk_ports.setToolTip("Draw the ports in the slice plots.")
@@ -384,6 +418,19 @@ class MeshGeometryViewer(QWidget):
         bar2.addStretch(1)
         bar2.addWidget(self.btn_popout)
         root.addLayout(bar2)
+
+        # object appearance (colour / transparency) — own row, the bar above is
+        # already at the window's minimum width
+        bar3 = QHBoxLayout()
+        bar3.addWidget(QLabel("Objects:"))
+        bar3.addWidget(self.btn_obj_color)
+        bar3.addWidget(self.btn_obj_reset)
+        bar3.addSpacing(14)
+        bar3.addWidget(QLabel("Transparency"))
+        bar3.addWidget(self.slider_obj_alpha)
+        bar3.addWidget(self.lbl_obj_alpha)
+        bar3.addStretch(1)
+        root.addLayout(bar3)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         self._split = split
@@ -820,6 +867,117 @@ class MeshGeometryViewer(QWidget):
         self._selected_lines = []
         self._sel_line = None
 
+    # ------------------------------------------------- object colour / alpha
+    def object_style(self) -> dict:
+        """Colour + transparency of the geometry objects (JSON-serialisable)."""
+        rgb = [float(c) for c in self._obj_rgb] if self._obj_rgb is not None else None
+        return {
+            "color": rgb,
+            "transparency": int(round((1.0 - self._obj_alpha) * 100.0)),
+        }
+
+    def set_object_style(self, style: dict | None, *, notify: bool = False) -> None:
+        """Apply colour/transparency (startup, settings dialog, pop-out mirror).
+
+        ``color`` is ``None`` for the per-kind default colours. Values are
+        clamped; a malformed dict falls back to the defaults.
+        """
+        rgb: tuple[float, float, float] | None = None
+        transparency = 30
+        if isinstance(style, dict):
+            raw = style.get("color")
+            if isinstance(raw, (list, tuple)) and len(raw) >= 3:
+                try:
+                    vals = tuple(min(1.0, max(0.0, float(v))) for v in raw[:3])
+                except (TypeError, ValueError):
+                    vals = ()
+                if len(vals) == 3:
+                    rgb = vals  # type: ignore[assignment]
+            try:
+                transparency = min(100, max(0, int(style.get("transparency", 30))))
+            except (TypeError, ValueError):
+                transparency = 30
+        self._obj_rgb = rgb
+        self._obj_alpha = 1.0 - transparency / 100.0
+        self.slider_obj_alpha.blockSignals(True)
+        self.slider_obj_alpha.setValue(transparency)
+        self.slider_obj_alpha.blockSignals(False)
+        self._update_object_widgets()
+        self._redraw()
+        if notify and callable(self.on_object_style_changed):
+            self.on_object_style_changed(self.object_style())
+
+    def _choose_object_color(self) -> None:
+        start = (
+            QColor.fromRgbF(*self._obj_rgb)
+            if self._obj_rgb is not None
+            else QColor.fromRgbF(0.85, 0.55, 0.2)  # metal, the most common object
+        )
+        color = QColorDialog.getColor(start, self, "Colour of the geometry objects")
+        if not color.isValid():
+            return
+        self._obj_rgb = (color.redF(), color.greenF(), color.blueF())
+        self._update_object_widgets()
+        self._redraw()
+        self._emit_object_style()
+
+    def _reset_object_style(self) -> None:
+        """Back to per-kind colours and 30 % transparency."""
+        self._obj_rgb = None
+        self._obj_alpha = 0.7
+        self.slider_obj_alpha.blockSignals(True)
+        self.slider_obj_alpha.setValue(30)
+        self.slider_obj_alpha.blockSignals(False)
+        self._update_object_widgets()
+        self._redraw()
+        self._emit_object_style()
+
+    def _on_object_transparency(self, value: int) -> None:
+        self._obj_alpha = 1.0 - int(value) / 100.0
+        self._update_object_widgets()
+        self._redraw()
+        self._emit_object_style()
+
+    def _emit_object_style(self) -> None:
+        if callable(self.on_object_style_changed):
+            self.on_object_style_changed(self.object_style())
+
+    def _update_object_widgets(self) -> None:
+        pct = int(round((1.0 - self._obj_alpha) * 100.0))
+        self.lbl_obj_alpha.setText(f"{pct} %")
+        if self._obj_rgb is None:
+            self.btn_obj_color.setText("Object colour…")
+            self.btn_obj_color.setStyleSheet("")
+            self.btn_obj_color.setToolTip(
+                "Use one colour for all geometry objects (primitives, imported CAD).\n"
+                "Default: one colour per kind (metal orange, dielectric blue, ...)."
+            )
+        else:
+            r, g, b = (int(round(c * 255)) for c in self._obj_rgb)
+            self.btn_obj_color.setText("Object colour…")
+            self.btn_obj_color.setStyleSheet(
+                "QPushButton {"
+                f" background-color: rgb({r}, {g}, {b});"
+                f" color: {'black' if 0.299 * r + 0.587 * g + 0.114 * b > 150 else 'white'};"
+                " }"
+            )
+            self.btn_obj_color.setToolTip(
+                f"All objects are drawn in rgb({r}, {g}, {b}).\nClick to pick another colour."
+            )
+
+    def _object_color(self, kind: str, name: str) -> tuple[float, float, float, float]:
+        """Face RGBA of an object: user colour/alpha or the per-kind default."""
+        base = default_color_for(kind, name)
+        rgb = self._obj_rgb if self._obj_rgb is not None else base[:3]
+        return (rgb[0], rgb[1], rgb[2], self._obj_alpha)
+
+    @staticmethod
+    def _object_edge(
+        color: tuple[float, float, float, float], min_alpha: float = 0.85
+    ) -> tuple[float, float, float, float]:
+        """Outline colour: same RGB, but never as faint as the fill."""
+        return (color[0], color[1], color[2], max(min_alpha, color[3]))
+
     def refresh_view(self) -> None:
         """Redraw the current view from the current mesh data, same zoom/pan.
 
@@ -988,6 +1146,7 @@ class MeshGeometryViewer(QWidget):
             ports=self._ports,
             nf2ff=self._nf2ff,
         )
+        host.set_object_style(self.object_style())  # same colours in the pop-out
         lay.addWidget(host)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(dlg.reject)
@@ -2295,7 +2454,7 @@ class MeshGeometryViewer(QWidget):
                     continue
                 x0, x1 = info.start[ia], info.stop[ia]
                 y0, y1 = info.start[ib], info.stop[ib]
-                color = default_color_for(info.kind, info.name)
+                color = self._object_color(info.kind, info.name)
                 bad = info.name in outside
                 circle = _circle_in_slice(
                     info.start, info.stop, getattr(info, "radius", 0.0), ia, ib, inorm
@@ -2306,7 +2465,7 @@ class MeshGeometryViewer(QWidget):
                         Circle(
                             (cx, cy), r,
                             facecolor=color,
-                            edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else color[:3] + (0.9,),
+                            edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else self._object_edge(color),
                             linewidth=2.0 if bad else 1.0,
                             label=info.name,
                         )
@@ -2316,7 +2475,7 @@ class MeshGeometryViewer(QWidget):
                     Rectangle(
                         (x0, y0), x1 - x0, y1 - y0,
                         facecolor=color,
-                        edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else color[:3] + (0.9,),
+                        edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else self._object_edge(color),
                         linewidth=2.0 if bad else 1.0,
                         label=info.name,
                     )
@@ -2333,7 +2492,11 @@ class MeshGeometryViewer(QWidget):
                 x0, x1 = st[ia], sp[ia]
                 y0, y1 = st[ib], sp[ib]
                 mat = pr.get("material", "")
-                color = default_color_for("Metal" if "copper" in mat or "ground" in mat else "Material", pr.get("name", mat))
+                color = self._object_color(
+                    "Metal" if "copper" in mat or "ground" in mat else "Material",
+                    pr.get("name", mat),
+                )
+                edge = color[:3] + (max(0.9, color[3]),)
                 circle = None
                 if str(pr.get("kind")) == "cylinder":
                     # dict start/stop are the AXIS endpoints -> build the AABB
@@ -2349,7 +2512,7 @@ class MeshGeometryViewer(QWidget):
                     ax.add_patch(
                         Circle(
                             (cx, cy), r,
-                            fill=False, edgecolor=color[:3] + (1.0,),
+                            fill=False, edgecolor=edge,
                             linewidth=1.5, linestyle=":",
                         )
                     )
@@ -2357,7 +2520,7 @@ class MeshGeometryViewer(QWidget):
                 ax.add_patch(
                     Rectangle(
                         (x0, y0), x1 - x0, y1 - y0,
-                        fill=False, edgecolor=color[:3] + (1.0,),
+                        fill=False, edgecolor=edge,
                         linewidth=1.5, linestyle=":",
                     )
                 )
@@ -2484,7 +2647,7 @@ class MeshGeometryViewer(QWidget):
                     )
                 )
             for info in infos:
-                color = default_color_for(info.kind, info.name)
+                color = self._object_color(info.kind, info.name)
                 bad = info.name in outside
                 circle = _circle_in_slice(
                     info.start, info.stop, getattr(info, "radius", 0.0), ia, ib, inorm
@@ -2495,7 +2658,7 @@ class MeshGeometryViewer(QWidget):
                         Circle(
                             (cx, cy), r,
                             facecolor=color,
-                            edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else color[:3] + (0.8,),
+                            edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else self._object_edge(color, 0.8),
                             linewidth=2.0 if bad else 0.8,
                         )
                     )
@@ -2506,7 +2669,7 @@ class MeshGeometryViewer(QWidget):
                         info.stop[ia] - info.start[ia],
                         info.stop[ib] - info.start[ib],
                         facecolor=color,
-                        edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else color[:3] + (0.8,),
+                        edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else self._object_edge(color, 0.8),
                         linewidth=2.0 if bad else 0.8,
                     )
                 )
