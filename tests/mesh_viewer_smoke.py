@@ -7,6 +7,8 @@ import traceback
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -377,6 +379,26 @@ def main() -> int:
         viewer._redraw()
         substrate = _labelled(viewer.fig_slice.axes[0], "substrate#0")
         assert substrate and abs(substrate[0].get_facecolor()[3] - default_alpha) < 1e-6
+
+        # --- a plane exactly on a face --------------------------------------
+        # CSXCAD can return the bounds float32-rounded (a PCB metal at 0.254 mm
+        # comes back as 0.2540000081 mm). Without a relative tolerance the plane
+        # sitting on that face was "outside" and the traces vanished from the
+        # slice.
+        from app.ui.mesh_viewer import _plane_tol
+
+        face = float(np.float32(0.254))  # 0.2540000081062317
+        tol = _plane_tol(face)
+        assert face - tol <= 0.254 <= face + tol, (face, tol)
+        assert not (face - tol <= 1.0 <= face + tol)  # stays tight
+        # end to end: the patch on the substrate top is drawn at its own plane
+        viewer.spn_plane.setValue(1.524)
+        viewer._redraw()
+        assert _labelled(viewer.fig_slice.axes[0], "copper#0"), (
+            "object on its own slice plane vanished"
+        )
+        assert _labelled(viewer.fig_slice.axes[0], "substrate#0")
+        print("  slice plane on a float32-rounded face: OK")
 
         # --- the object dialogs expose the display options ------------------
         from app.ui.geometry_editors import AssignmentDialog, PrimitiveBoxDialog
