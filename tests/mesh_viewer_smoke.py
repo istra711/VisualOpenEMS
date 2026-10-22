@@ -10,7 +10,8 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QApplication, QColorDialog
 
 
 def main() -> int:
@@ -316,9 +317,9 @@ def main() -> int:
                 and p.get_facecolor()[3] > 0.0
             ]
 
-        assert viewer.object_style() == {"color": None, "transparency": 30}, (
-            viewer.object_style()
-        )
+        assert viewer.object_style() == {
+            "color": None, "transparency": 30, "objects": {},
+        }, viewer.object_style()
         base_faces = {
             tuple(round(c, 3) for c in p.get_facecolor()[:3])
             for p in _obj_patches(viewer.fig_slice.axes[0])
@@ -330,7 +331,9 @@ def main() -> int:
         viewer.set_object_style(
             {"color": [0.1, 0.8, 0.2], "transparency": 75}, notify=True
         )
-        expected = {"color": [0.1, 0.8, 0.2], "transparency": 75}
+        expected = {
+            "color": [0.1, 0.8, 0.2], "transparency": 75, "objects": {},
+        }
         assert seen_styles and seen_styles[-1] == expected, seen_styles
         patches = _obj_patches(viewer.fig_slice.axes[0])
         assert patches, "no geometry drawn"
@@ -352,17 +355,103 @@ def main() -> int:
         }
         assert ov_faces == {(0.1, 0.8, 0.2)}, ov_faces
 
-        # reset -> per-kind colours again
+        # reset (with "All objects" selected) -> per-kind colours again
+        viewer.cmb_object.setCurrentIndex(0)
         viewer._reset_object_style()
-        assert viewer.object_style() == {"color": None, "transparency": 30}, (
-            viewer.object_style()
-        )
+        assert viewer.object_style() == {
+            "color": None, "transparency": 30, "objects": {},
+        }, viewer.object_style()
         assert viewer.lbl_obj_alpha.text() == "30 %", viewer.lbl_obj_alpha.text()
+
+        # --- per-object colour / transparency (ports excluded) --------------
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer.spn_plane.setValue(0.0)  # ground copper + substrate are visible
+        viewer._redraw()
+        items = [
+            viewer.cmb_object.itemData(i)
+            for i in range(viewer.cmb_object.count())
+        ]
+        assert items[0] == "", items
+        assert "substrate#0" in items and "copper#0" in items, items
+        assert not any(str(n).startswith("port_") for n in items), items
+
+        def _labelled(ax, label):
+            return [p for p in ax.patches if p.get_label() == label]
+
+        def _room_for(substrate, copper):
+            assert substrate, "substrate not drawn at z = 0"
+            assert copper, "copper not drawn at z = 0"
+
+        substrate = _labelled(viewer.fig_slice.axes[0], "substrate#0")
+        copper = _labelled(viewer.fig_slice.axes[0], "copper#0")
+        _room_for(substrate, copper)
+        default_alpha = substrate[0].get_facecolor()[3]
+        copper_default = [round(c, 3) for c in copper[0].get_facecolor()[:3]]
+        assert abs(default_alpha - 0.7) < 1e-6, default_alpha
+
+        viewer.cmb_object.setCurrentIndex(viewer.cmb_object.findData("substrate#0"))
+        assert viewer.lbl_obj_alpha.text() == "30 %", viewer.lbl_obj_alpha.text()
+        magenta = QColor(220, 20, 140)
+        with patch.object(QColorDialog, "getColor", return_value=magenta):
+            viewer._choose_object_color()
+        viewer.slider_obj_alpha.setValue(0)  # opaque, only for the substrate
+        assert seen_styles, "per-object change not persisted"
+        entry = seen_styles[-1].get("objects", {}).get("substrate#0")
+        assert entry is not None, seen_styles[-1]
+        assert [round(c, 3) for c in entry["color"]] == [0.863, 0.078, 0.549], entry
+        assert entry["transparency"] == 0, entry
+        assert seen_styles[-1]["color"] is None, seen_styles[-1]
+        assert seen_styles[-1]["transparency"] == 30, seen_styles[-1]
+
+        substrate = _labelled(viewer.fig_slice.axes[0], "substrate#0")
+        copper = _labelled(viewer.fig_slice.axes[0], "copper#0")
+        _room_for(substrate, copper)
+        for p in substrate:
+            face = p.get_facecolor()
+            assert [round(c, 3) for c in face[:3]] == [0.863, 0.078, 0.549], face
+            assert abs(face[3] - 1.0) < 1e-6, f"object transparency not applied: {face}"
+        for p in copper:  # untouched object keeps the global default
+            face = p.get_facecolor()
+            assert [round(c, 3) for c in face[:3]] == copper_default, face
+            assert abs(face[3] - default_alpha) < 1e-6, face
+
+        # selecting another scope shows its own values
+        viewer.cmb_object.setCurrentIndex(0)
+        assert viewer.lbl_obj_alpha.text() == "30 %", viewer.lbl_obj_alpha.text()
+        viewer.cmb_object.setCurrentIndex(viewer.cmb_object.findData("substrate#0"))
+        assert viewer.lbl_obj_alpha.text() == "0 %", viewer.lbl_obj_alpha.text()
+
+        # round-trip through the persisted style
+        state = viewer.object_style()
+        viewer.set_object_style(
+            {
+                "color": None,
+                "transparency": 30,
+                "objects": {"copper#0": {"color": [0.0, 0.0, 1.0], "transparency": 10}},
+            }
+        )
+        assert viewer.object_style() == {
+            "color": None,
+            "transparency": 30,
+            "objects": {"copper#0": {"color": [0.0, 0.0, 1.0], "transparency": 10}},
+        }, viewer.object_style()
+        viewer.set_object_style(state)
+
+        # "Reset" with a single object selected -> only that override is gone
+        viewer.cmb_object.setCurrentIndex(viewer.cmb_object.findData("substrate#0"))
+        viewer._reset_object_style()
+        assert viewer.object_style()["objects"] == {}, viewer.object_style()
+        substrate = _labelled(viewer.fig_slice.axes[0], "substrate#0")
+        _room_for(substrate, copper)
+        for p in substrate:
+            assert abs(p.get_facecolor()[3] - default_alpha) < 1e-6, p.get_facecolor()
+
         viewer.on_object_style_changed = None
         viewer.chk_ports.setChecked(True)
         viewer.cmb_view.setCurrentText("XY slice")
         viewer._redraw()
         print("  object colour / transparency (slice + overview): OK")
+        print("  per-object colour / transparency (ports excluded): OK")
 
         # --- ports independent of the structure; legend follows the toggles --
         viewer.cmb_view.setCurrentText("XY slice")
