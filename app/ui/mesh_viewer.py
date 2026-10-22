@@ -93,6 +93,24 @@ def _close(a, b, rel: float = 1e-6) -> bool:
     return abs(fa - fb) <= rel * max(1.0, abs(fa), abs(fb))
 
 
+def _plane_tol(*values) -> float:
+    """Tolerance for slice-plane / extent tests (see :func:`_close`).
+
+    CSXCAD returns float32 bounds, so the top face of a box at 0.254 mm comes
+    back as 0.2540000081 mm: a plane sitting exactly on that face (0.254) would
+    be "outside" with a 1e-9 epsilon and the object would vanish from the
+    slice. The tolerance is an absolute floor plus a relative part for the
+    coordinate magnitude.
+    """
+    mag = 0.0
+    for v in values:
+        try:
+            mag = max(mag, abs(float(v)))
+        except (TypeError, ValueError):
+            continue
+    return 1e-9 + 1e-6 * max(1.0, mag)
+
+
 #: Plane slider travel (internal steps): base resolution = /SLIDER_BASE_STEP
 #: (= 2000 steps, twice the old 0..1000) and Ctrl gives the full 0..20000
 #: (10x finer than the base resolution).
@@ -2384,7 +2402,8 @@ class MeshGeometryViewer(QWidget):
                 if self._info_hidden(info):
                     continue  # object switched invisible in the Geometry dialog
                 lo_n, hi_n = info.start[inorm], info.stop[inorm]
-                if plane < lo_n - eps or plane > hi_n + eps:
+                tol = _plane_tol(lo_n, hi_n)
+                if plane < lo_n - tol or plane > hi_n + tol:
                     continue
                 x0, x1 = info.start[ia], info.stop[ia]
                 y0, y1 = info.start[ib], info.stop[ib]
@@ -2424,7 +2443,8 @@ class MeshGeometryViewer(QWidget):
                     continue  # object switched invisible in the Geometry dialog
                 st = pr.get("start", [0, 0, 0])
                 sp = pr.get("stop", [0, 0, 0])
-                if plane < st[inorm] - eps or plane > sp[inorm] + eps:
+                tol = _plane_tol(st[inorm], sp[inorm])
+                if plane < st[inorm] - tol or plane > sp[inorm] + tol:
                     continue
                 x0, x1 = st[ia], sp[ia]
                 y0, y1 = st[ib], sp[ib]

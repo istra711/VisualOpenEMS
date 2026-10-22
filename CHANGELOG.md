@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-10-23
+
+### Fixed
+
+- **Mesh Viewer: objects vanished from a slice sitting exactly on their face**
+  (`app/ui/mesh_viewer.py`, `tests/mesh_viewer_smoke.py`): CSXCAD returns the
+  primitive bounds float32-rounded, so the top face of a PCB metal at 0.254 mm
+  came back as 0.2540000081 mm. The slice plane at 0.254 mm therefore counted
+  as "outside" that object and the traces were drawn only as the dotted project
+  outlines — clicking them in the Geometry window highlighted them, but the
+  copper itself stayed invisible. The plane test now uses an absolute plus
+  relative tolerance (same idea as the existing `_close` helper), so a plane on
+  a face still draws the object.
+
 ## [0.5.8] - 2026-10-23
 
 ### Changed
@@ -1606,4 +1620,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.6]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.6
 [0.5.7]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.7
 [0.5.8]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.8
+[0.5.9]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.9
 [Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.4...HEAD
