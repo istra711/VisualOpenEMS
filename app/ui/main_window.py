@@ -686,6 +686,11 @@ class MainWindow(QMainWindow):
             str(getattr(self.settings, "field_viewer_view", "keep") or "keep")
         )
         self.vtk_viewer.on_view_changed = self._on_field_view_changed
+        # vector glyphs (ParaView-style arrows; remembered across sessions)
+        self.vtk_viewer.set_vector_options(
+            getattr(self.settings, "field_viewer_vectors", None)
+        )
+        self.vtk_viewer.on_vectors_changed = self._on_field_vectors_changed
         tabs.addTab(self.vtk_viewer, "Field Viewer")
         self.vtk_tab_index = tabs.indexOf(self.vtk_viewer)
 
@@ -5119,6 +5124,20 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _on_field_vectors_changed(self, options: dict) -> None:
+        """Persist the Field Viewer vector glyphs and mirror them to the pop-out."""
+        self.settings.field_viewer_vectors = dict(options or {})
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 - never block the viewer on a write error
+            pass
+        win = getattr(getattr(self, "vtk_viewer", None), "_popout_win", None)
+        if win is not None and getattr(win, "viewer", None) is not None:
+            try:
+                win.viewer.set_vector_options(options)
+            except Exception:  # noqa: BLE001
+                pass
+
     def _on_settings(self) -> None:
         # Settings dialog: paths + port defaults
         from PySide6.QtWidgets import (
@@ -5223,6 +5242,21 @@ class MainWindow(QMainWindow):
             "changes the same setting."
         )
         fvform.addRow("Default view", cmb_view)
+        chk_vectors = QCheckBox("Show field vectors (glyph arrows) after loading")
+        chk_vectors.setChecked(
+            bool(
+                (getattr(self.settings, "field_viewer_vectors", None) or {}).get(
+                    "enabled", False
+                )
+            )
+        )
+        chk_vectors.setToolTip(
+            "Default state of the Field Viewer 'Vectors' checkbox.\n"
+            "The arrows show the field direction (ParaView Glyph) — slice\n"
+            "them onto the cut plane to watch the field move during playback.\n"
+            "Changing it in the viewer is remembered as well."
+        )
+        fvform.addRow("", chk_vectors)
         root.addWidget(grp_fv)
 
         bb = QDialogButtonBox(
@@ -5246,6 +5280,9 @@ class MainWindow(QMainWindow):
         self.settings.default_port_direction = cmb_dir.currentText()
         self.settings.field_viewer_autoplay = bool(chk_autoplay.isChecked())
         self.settings.field_viewer_view = str(cmb_view.currentData() or "keep")
+        vec_opts = dict(getattr(self.settings, "field_viewer_vectors", None) or {})
+        vec_opts["enabled"] = bool(chk_vectors.isChecked())
+        self.settings.field_viewer_vectors = vec_opts
         self.settings.save()
         try:
             self.vtk_viewer.set_autoplay_default(self.settings.field_viewer_autoplay)
@@ -5253,6 +5290,10 @@ class MainWindow(QMainWindow):
             pass
         try:
             self.vtk_viewer.set_view_default(self.settings.field_viewer_view)
+        except Exception:  # noqa: BLE001 — viewer may not exist in early tests
+            pass
+        try:
+            self.vtk_viewer.set_vector_options(self.settings.field_viewer_vectors)
         except Exception:  # noqa: BLE001 — viewer may not exist in early tests
             pass
         try:

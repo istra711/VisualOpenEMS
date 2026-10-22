@@ -663,6 +663,24 @@ Buttons / controls
   • "Show" (representation): Surface (default, like ParaView), Wireframe, Slice
     (a cutting plane, axis + position — good for 3D boxes) or Iso-surface
     (a contour of the selected array; Iso-level slider).
+  • "Vectors" (ParaView "Glyph"): draws small arrows for the vector field
+    (the exporter writes the real part of the dump as the 3-component point
+    array "field"; a loaded VTK file may also bring its own vector array).
+    The arrows follow the current representation: Slice → arrows in the cut
+    plane, Surface/Wireframe → on the outside of the volume, Iso-surface → on
+    the contour. During playback the arrows move with the field, so rotating or
+    travelling fields become visible (much clearer than colour alone).
+    "size" scales the arrow length (0.1–8 relative to the arrow spacing),
+    "arrows" caps how many are drawn (uniform, deterministic decimation —
+    every N-th point, so the pattern does not flicker between frames; default
+    2000). "same length" (default ON) gives every arrow the same length, i.e.
+    only the direction is shown — best for watching a field rotate. Untick it
+    to scale the length with |E| (the 99 % value maps to the "size" length, so
+    a single hot spot does not shrink all other arrows). The arrows are
+    coloured by the selected array with the same colour range. A dump without
+    a 3-component field array disables the checkbox. All vector settings are
+    remembered across sessions (also mirrored to the pop-out and to the
+    default in Settings → Field Viewer).
   • "View" (top row, right): standard view of the 3D pane — Isometric, From
     ±X / ±Y / ±Z, or "Fit (keep direction)" (only fits the camera, like the old
     Reset view). Picking one applies it immediately **and is remembered**: every

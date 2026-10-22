@@ -93,6 +93,7 @@ def test_menu_structure_and_shortcuts() -> None:
         "Preset: Patch Antenna\u2026",
         "Preset: Yagi Antenna\u2026",
         "Preset: PCB Filter\u2026",
+        "Preset: PCB Bandpass (5.6 GHz)\u2026",
     ], presets
     tabs = [_strip(a.text()) for a in _menu("View").actions()]
     for name in ("Geometry", "Mesh Viewer", "S-Params"):

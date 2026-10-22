@@ -30,3 +30,14 @@ def test_field_viewer_view_default_and_roundtrip(tmp_path):
     legacy = tmp_path / "legacy.json"
     legacy.write_text('{"work_dir": "x"}', encoding="utf-8")
     assert AppSettings.load(legacy).field_viewer_view == "keep"
+
+
+def test_field_viewer_vectors_default_and_roundtrip(tmp_path):
+    # vector glyphs are opt-in; the viewer fills in its own defaults
+    assert AppSettings().field_viewer_vectors == {}
+    path = tmp_path / "gui_settings.json"
+    opts = {"enabled": True, "size": 2.0, "max_arrows": 500, "normalize": False}
+    s = AppSettings()
+    s.field_viewer_vectors = dict(opts)
+    s.save(path)
+    assert AppSettings.load(path).field_viewer_vectors == opts

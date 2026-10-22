@@ -218,6 +218,70 @@ def main() -> int:
     v._renderer = None
     print("  coordinate ruler OK")
 
+    # --- vector glyphs (ParaView "Glyph"): small arrows along the field -----
+    import numpy as np
+    from vtk.util import numpy_support as ns
+
+    from app.ui.vtk_viewer import DEFAULT_VECTORS
+
+    assert v.vector_options() == dict(DEFAULT_VECTORS), v.vector_options()
+    assert v._vector_array_name() == "field", v._vector_array_name()
+    assert v.chk_vectors.isEnabled(), "vectors must be offered for the Et-E dump"
+    seen_vec: list[dict] = []
+    v.on_vectors_changed = seen_vec.append  # the main window persists this
+    v.chk_vectors.setChecked(True)
+    assert v.spn_vec_size.isEnabled() and v.spn_vec_count.isEnabled()
+    assert v.chk_vec_norm.isEnabled()
+    assert seen_vec and seen_vec[-1]["enabled"] is True, seen_vec
+    lut = v._lookup_table()
+    for rep in ("Surface", "Wireframe", "Slice", "Iso-surface"):
+        v.cmb_rep.setCurrentText(rep)
+        mapper, data = v._make_mapper(vtk, lut, *v._array())
+        assert mapper is not None, rep
+        actor = v._make_vector_actor(vtk, data, rep, lut)
+        assert actor is not None, f"no arrows for {rep}"
+        assert actor.GetMapper().GetInput().GetNumberOfCells() > 0, rep
+    print("  vector glyphs for all representations OK")
+
+    # arrows are oriented along the field: synthetic grid, every E points +X
+    g = vtk.vtkImageData()
+    g.SetDimensions(5, 5, 2)
+    g.SetOrigin(0.0, 0.0, 0.0)
+    g.SetSpacing(0.01, 0.01, 0.001)
+    npts = g.GetNumberOfPoints()
+    vec = np.zeros((npts, 3), dtype=float)
+    vec[:, 0] = 1.0
+    va = ns.numpy_to_vtk(vec, deep=True)
+    va.SetName("field")
+    g.GetPointData().AddArray(va)
+    ones = ns.numpy_to_vtk(np.ones(npts), deep=True)
+    ones.SetName("magnitude")
+    g.GetPointData().AddArray(ones)
+    saved_grid, saved_scalar = v._grid, v._scalar_name
+    v._grid, v._scalar_name = g, "magnitude"
+    actor = v._make_vector_actor(vtk, g, "Surface", v._lookup_table())
+    b = actor.GetMapper().GetInput().GetBounds()
+    gb = g.GetBounds()
+    grow = (
+        b[1] - gb[1],
+        max(b[2] - gb[2], 0.0),
+        max(b[3] - gb[3], 0.0),
+        max(b[4] - gb[4], 0.0),
+        max(b[5] - gb[5], 0.0),
+    )
+    assert grow[0] > 3.0 * max(grow[1:]), (grow, b, gb)  # +X only, no +Y/+Z
+    v._grid, v._scalar_name = saved_grid, saved_scalar
+    # option round-trip (clamping + widget state)
+    v.set_vector_options({"enabled": True, "size": 2.5, "max_arrows": 500,
+                          "normalize": False})
+    assert v.vector_options() == {"enabled": True, "size": 2.5,
+                                  "max_arrows": 500, "normalize": False}
+    v.set_vector_options({"size": 999.0, "max_arrows": 1})
+    assert v.vector_options()["size"] == 8.0 and v.vector_options()["max_arrows"] == 50
+    v.set_vector_options(dict(DEFAULT_VECTORS))
+    v.on_vectors_changed = None
+    print("  vector glyph orientation + option clamping OK")
+
     # the reader is format-agnostic: a .vtu (ParaView-style) also loads
     import numpy as np
     import vtk
@@ -245,6 +309,10 @@ def main() -> int:
     v.load(vtu)
     assert v._grid.GetNumberOfPoints() == 4
     assert v._scalar_name == "temperature", v._scalar_name
+    # a scalar-only grid offers no arrows (checkbox disabled, no crash)
+    assert v._vector_array_name() is None
+    assert not v.chk_vectors.isEnabled(), "vectors enabled without a vector array"
+    assert v._make_vector_actor(vtk, v._grid, "Surface", v._lookup_table()) is None
     print("  .vtu (non-.vtr) loaded, scalar:", v._scalar_name)
 
     # --- field info label + standard view presets ---------------------------
@@ -479,8 +547,14 @@ def main() -> int:
     assert win.viewer._current_path == v._current_path
     assert win.viewer.cmb_rep.currentText() == v.cmb_rep.currentText()
     assert win.viewer.axes_options() == v.axes_options(), "axes options not mirrored"
+    assert win.viewer.vector_options() == v.vector_options(), "vectors not mirrored"
     win.viewer.set_axes_option("labels", True)  # pop-out changes mirror back
     assert v.axes_options()["labels"] is True
+    win.viewer.spn_vec_size.setValue(2.5)  # ... vector settings as well
+    assert v.vector_options()["size"] == 2.5, v.vector_options()
+    win.viewer.chk_vectors.setChecked(True)
+    assert v.vector_options()["enabled"] is True
+    win.viewer.chk_vectors.setChecked(False)
     # closing the window leaves the tab exactly as it was
     win.close()
     assert v._popout_win is None, "close did not reset the pop-out state"
