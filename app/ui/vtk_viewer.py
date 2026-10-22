@@ -91,6 +91,18 @@ DEFAULT_AXES: dict = {
     "ruler": False,  # numeric coordinate ticks around the dataset bounds
 }
 
+#: Defaults for the vector glyph display (ParaView "Glyph"; persisted in
+#: AppSettings). ``size`` = arrow length in units of the arrow sampling distance,
+#: ``max_arrows`` caps how many arrows are drawn (deterministic decimation, so a
+#: time series does not flicker), ``normalize`` draws all arrows the same length
+#: (direction only) instead of scaling them by |E|.
+DEFAULT_VECTORS: dict = {
+    "enabled": False,
+    "size": 1.0,
+    "max_arrows": 2000,
+    "normalize": True,
+}
+
 #: Standard views of the 3D pane (key -> label). "keep" only fits the camera and
 #: keeps the direction it has (the old "Reset view" behaviour).
 VIEW_PRESETS: tuple[tuple[str, str], ...] = (
@@ -295,6 +307,7 @@ class FieldViewerWindow(QMainWindow):
         self.viewer.btn_popout.setVisible(False)  # no nested pop-outs
         self.viewer.on_axes_changed = self._on_viewer_axes_changed
         self.viewer.on_view_changed = self._on_viewer_view_changed
+        self.viewer.on_vectors_changed = self._on_viewer_vectors_changed
         self.setWindowTitle("Field Viewer - pop-out")
         self.resize(1000, 780)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -312,6 +325,15 @@ class FieldViewerWindow(QMainWindow):
         if src is not None and src is not self.viewer:
             try:
                 src.set_axes_options(options, notify=True)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_viewer_vectors_changed(self, options: dict) -> None:
+        """Vector glyphs changed in the pop-out: mirror to the tab view + persist."""
+        src = self.source
+        if src is not None and src is not self.viewer:
+            try:
+                src.set_vector_options(options, notify=True)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -371,6 +393,10 @@ class VtkFieldViewer(QWidget):
         self.on_axes_changed = None  # callback(options: dict) for persistence
         #: standard view key (VIEW_PRESETS), persisted as the Field Viewer default
         self.on_view_changed = None  # callback(key: str) for persistence
+        #: vector glyph settings (DEFAULT_VECTORS); the widgets mirror them
+        self._vectors = dict(DEFAULT_VECTORS)
+        self.on_vectors_changed = None  # callback(options: dict) for persistence
+        self._has_vectors = False  # loaded grid carries a 3-component field array
         self._marker = None  # vtkOrientationMarkerWidget (corner axes)
         self._marker_axes = None  # its vtkAxesActor
         self._build_ui()
@@ -587,6 +613,61 @@ class VtkFieldViewer(QWidget):
         row3.addWidget(self.btn_rescale)
         row3.addStretch(1)
         root.addLayout(row3)
+
+        # vector glyphs (ParaView "Glyph"): small arrows show the field
+        # direction, so a time series visibly "moves" (rotating E field etc.)
+        row_vec = QHBoxLayout()
+        self.chk_vectors = QCheckBox("Vectors")
+        self.chk_vectors.setToolTip(
+            "Draw small arrows (glyphs) for the vector field — ParaView's\n"
+            "Glyph filter. The arrows show the direction and (optionally)\n"
+            "the strength of the field in the current representation:\n"
+            "Slice → arrows in the cut plane, Surface → on the surface,\n"
+            "Iso-surface → on the iso-surface.\n"
+            "During playback the arrows follow the field, so rotating /\n"
+            "travelling fields become visible."
+        )
+        self.chk_vectors.toggled.connect(self._on_vectors_toggled)
+        self._vec_tip = self.chk_vectors.toolTip()
+        self.spn_vec_size = QDoubleSpinBox()
+        self.spn_vec_size.setRange(0.1, 8.0)
+        self.spn_vec_size.setSingleStep(0.1)
+        self.spn_vec_size.setDecimals(2)
+        self.spn_vec_size.setValue(DEFAULT_VECTORS["size"])
+        self.spn_vec_size.setPrefix("size ")
+        self.spn_vec_size.setFixedWidth(105)
+        self.spn_vec_size.setToolTip(
+            "Arrow length relative to the arrow spacing (1.0 = arrows just\n"
+            "about touch). Increase for long arrows, decrease for small ticks."
+        )
+        self.spn_vec_size.valueChanged.connect(self._on_vector_option_changed)
+        self.spn_vec_count = QSpinBox()
+        self.spn_vec_count.setRange(50, 50000)
+        self.spn_vec_count.setSingleStep(250)
+        self.spn_vec_count.setValue(DEFAULT_VECTORS["max_arrows"])
+        self.spn_vec_count.setPrefix("arrows ")
+        self.spn_vec_count.setFixedWidth(120)
+        self.spn_vec_count.setToolTip(
+            "Maximum number of arrows. The points are decimated uniformly and\n"
+            "deterministically (every N-th point), so the arrows stay put from\n"
+            "frame to frame instead of flickering."
+        )
+        self.spn_vec_count.valueChanged.connect(self._on_vector_option_changed)
+        self.chk_vec_norm = QCheckBox("same length")
+        self.chk_vec_norm.setChecked(DEFAULT_VECTORS["normalize"])
+        self.chk_vec_norm.setToolTip(
+            "All arrows the same length: purely the direction is visible\n"
+            "(best for watching the field rotate).\n"
+            "Untick to scale the length with the field strength (99 % of the\n"
+            "values map to the 'size' length; weak spots get short arrows)."
+        )
+        self.chk_vec_norm.toggled.connect(self._on_vector_option_changed)
+        row_vec.addWidget(self.chk_vectors)
+        row_vec.addWidget(self.spn_vec_size)
+        row_vec.addWidget(self.spn_vec_count)
+        row_vec.addWidget(self.chk_vec_norm)
+        row_vec.addStretch(1)
+        root.addLayout(row_vec)
 
         # time series (animation)
         row4 = QHBoxLayout()
@@ -905,6 +986,7 @@ class VtkFieldViewer(QWidget):
         self._data_range = (0.0, 1.0)
         self._scalar_range = (0.0, 1.0)
         self._robust_min = None
+        self._has_vectors = False
         self.lbl_level.setText("")
         self.lbl_time_info.setText("")
         self.lbl_sim_time.setText("")
@@ -915,6 +997,7 @@ class VtkFieldViewer(QWidget):
         self.cmb_array.blockSignals(True)
         self.cmb_array.clear()
         self.cmb_array.blockSignals(False)
+        self._update_vector_controls()
         if self._renderer is not None:
             try:
                 self._renderer.RemoveAllViewProps()
@@ -1003,6 +1086,7 @@ class VtkFieldViewer(QWidget):
             lambda: self.chk_loop.setChecked(other.chk_loop.isChecked()),
             lambda: self.chk_autoplay.setChecked(other.chk_autoplay.isChecked()),
             lambda: self.set_axes_options(other.axes_options()),
+            lambda: self.set_vector_options(other.vector_options()),
             lambda: self.set_view_default(other.view_preset()),
         ):
             try:
@@ -1206,6 +1290,8 @@ class VtkFieldViewer(QWidget):
                     break
             self.cmb_array.setCurrentIndex(idx if self.cmb_array.count() else -1)
         self.cmb_array.blockSignals(False)
+        self._has_vectors = bool(self._vector_array_name())
+        self._update_vector_controls()
         self._on_array_changed()
 
     def _array(self):
@@ -1436,6 +1522,200 @@ class VtkFieldViewer(QWidget):
             return (0.0, pos, 0.0)
         return (0.0, 0.0, pos)
 
+    # ---------------------------------------------------------- vector glyphs
+    def vector_options(self) -> dict:
+        """Current vector glyph settings (JSON-serialisable)."""
+        return {
+            "enabled": bool(self.chk_vectors.isChecked()),
+            "size": float(self.spn_vec_size.value()),
+            "max_arrows": int(self.spn_vec_count.value()),
+            "normalize": bool(self.chk_vec_norm.isChecked()),
+        }
+
+    def set_vector_options(self, options: dict | None, *, notify: bool = False) -> None:
+        """Apply vector glyph settings (startup / pop-out mirroring).
+
+        Unknown keys are ignored and values are clamped; a dump without a
+        3-component field array keeps the choice but does not draw anything.
+        """
+        opts = dict(DEFAULT_VECTORS)
+        if isinstance(options, dict):
+            for key in DEFAULT_VECTORS:
+                if key in options:
+                    opts[key] = options[key]
+        try:
+            opts["enabled"] = bool(opts["enabled"])
+            opts["normalize"] = bool(opts["normalize"])
+            opts["size"] = min(8.0, max(0.1, float(opts["size"])))
+            opts["max_arrows"] = min(50000, max(50, int(opts["max_arrows"])))
+        except (TypeError, ValueError):
+            opts = dict(DEFAULT_VECTORS)
+        for widget, value in (
+            (self.chk_vectors, opts["enabled"]),
+            (self.spn_vec_size, opts["size"]),
+            (self.spn_vec_count, opts["max_arrows"]),
+            (self.chk_vec_norm, opts["normalize"]),
+        ):
+            widget.blockSignals(True)
+            if isinstance(widget, QCheckBox):
+                widget.setChecked(value)
+            else:
+                widget.setValue(value)
+            widget.blockSignals(False)
+        self._vectors = dict(opts)
+        self._update_vector_controls()
+        self._refresh_display()
+        if notify and callable(self.on_vectors_changed):
+            self.on_vectors_changed(self.vector_options())
+
+    def _on_vectors_toggled(self, _on: bool) -> None:
+        self._vectors["enabled"] = bool(self.chk_vectors.isChecked())
+        self._update_vector_controls()
+        self._refresh_display()
+        if callable(self.on_vectors_changed):
+            self.on_vectors_changed(self.vector_options())
+
+    def _on_vector_option_changed(self, *_a) -> None:
+        self._vectors.update(self.vector_options())
+        self._refresh_display()
+        if callable(self.on_vectors_changed):
+            self.on_vectors_changed(self.vector_options())
+
+    def _update_vector_controls(self) -> None:
+        """Enable the vector widgets only when the dump has a vector array."""
+        has = bool(self._has_vectors and self._grid is not None)
+        on = bool(self.chk_vectors.isChecked()) and has
+        self.chk_vectors.setEnabled(has)
+        for widget in (self.spn_vec_size, self.spn_vec_count, self.chk_vec_norm):
+            widget.setEnabled(on)
+        self.chk_vectors.setToolTip(
+            getattr(self, "_vec_tip", "")
+            + ("" if has else "\n\n(this dump has no 3-component field array)")
+        )
+
+    def _vector_array_name(self) -> str | None:
+        """Name of the 3-component point array used for the arrows."""
+        if self._grid is None:
+            return None
+        pd = self._grid.GetPointData()
+        names = [pd.GetArrayName(i) for i in range(pd.GetNumberOfArrays())]
+        for candidate in ("field",):  # our exporter writes real(E) as "field"
+            arr = pd.GetArray(candidate) if candidate in names else None
+            if arr is not None and arr.GetNumberOfComponents() == 3:
+                return candidate
+        active = pd.GetVectors()
+        if active is not None and active.GetNumberOfComponents() == 3:
+            return active.GetName()
+        for name in names:
+            arr = pd.GetArray(name)
+            if arr is not None and arr.GetNumberOfComponents() == 3:
+                return name
+        return None
+
+    def _characteristic_spacing(self) -> float:
+        """Smallest cell size of the loaded grid (metres) — arrow scale base."""
+        if self._grid is None:
+            return 1.0
+        b = self._grid.GetBounds()
+        dims = self._grid.GetDimensions()
+        spans = (b[1] - b[0], b[3] - b[2], b[5] - b[4])
+        cells = (dims[0] - 1, dims[1] - 1, dims[2] - 1)
+        steps = [s / c for s, c in zip(spans, cells) if c > 0 and s > 0]
+        return min(steps) if steps else 1.0
+
+    @staticmethod
+    def _vector_input(vtk, data, rep: str):
+        """Geometry the arrows sit on (same shape as the visible representation).
+
+        Surface/Wireframe glyph the outside of the volume (arrows inside an
+        opaque surface would be invisible), Slice/Iso-surface glyph the cut /
+        contour polydata that is already on screen.
+        """
+        if data is None:
+            return None
+        if rep in ("Surface", "Wireframe") and not isinstance(data, vtk.vtkPolyData):
+            surface = vtk.vtkDataSetSurfaceFilter()
+            surface.SetInputData(data)
+            surface.Update()
+            return surface.GetOutput()
+        return data
+
+    def _make_vector_actor(self, vtk, data, rep: str, lut):
+        """Arrow glyphs for the current representation (ParaView "Glyph")."""
+        import numpy as np
+        from vtk.util import numpy_support as ns
+
+        name = self._vector_array_name()
+        poly = self._vector_input(vtk, data, rep)
+        if not name or poly is None or poly.GetNumberOfPoints() < 2:
+            return None
+
+        npts = poly.GetNumberOfPoints()
+        max_arrows = max(1, int(self.spn_vec_count.value()))
+        ratio = max(1, int(round(npts / max_arrows)))
+        mask = vtk.vtkMaskPoints()
+        mask.SetInputData(poly)
+        mask.SetOnRatio(ratio)
+        mask.SetRandomMode(0)  # deterministic: arrows must not jump per frame
+        mask.GenerateVerticesOff()
+        mask.Update()
+        sampled = mask.GetOutput()
+        arr = sampled.GetPointData().GetArray(name)
+        if arr is None or arr.GetNumberOfTuples() == 0:
+            return None
+
+        # 99th percentile instead of the maximum: one hot spot must not shrink
+        # every other arrow to nothing.
+        vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
+        mags = np.linalg.norm(vals, axis=1) if vals.ndim == 2 else np.abs(vals)
+        mags = mags[np.isfinite(mags)]
+        vref = float(np.percentile(mags, 99.0)) if mags.size else 0.0
+
+        spacing = self._characteristic_spacing()
+        # mean distance of the sampled points: cell size scaled by the decimation
+        base = spacing * math.sqrt(ratio)
+        target = base * float(self.spn_vec_size.value()) * 0.6
+
+        arrow = vtk.vtkArrowSource()
+        arrow.SetTipLength(0.35)
+        arrow.SetTipRadius(0.12)
+        arrow.SetShaftRadius(0.045)
+
+        glyph = vtk.vtkGlyph3D()
+        glyph.SetInputConnection(mask.GetOutputPort())
+        glyph.SetSourceConnection(arrow.GetOutputPort())
+        glyph.SetInputArrayToProcess(
+            0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, name
+        )
+        glyph.SetVectorModeToUseVector()
+        glyph.OrientOn()
+        if self.chk_vec_norm.isChecked() or vref <= 0.0:
+            # same length for every arrow: pure direction (good for animation)
+            glyph.SetScaleModeToDataScalingOff()
+            glyph.SetScaleFactor(target)
+        else:
+            # length follows |E|; the 99 % value maps to the "size" length
+            glyph.SetScaleModeToScaleByVector()
+            glyph.SetScaleFactor(target / vref)
+        glyph.Update()
+
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(glyph.GetOutputPort())
+        scalar = self._scalar_name
+        out_pd = glyph.GetOutput().GetPointData()
+        if scalar and out_pd.GetArray(scalar) is not None:
+            mapper.SetLookupTable(lut)
+            mapper.SetScalarModeToUsePointFieldData()
+            mapper.SelectColorArray(scalar)
+            mapper.SetScalarRange(*self._effective_range())
+            mapper.ScalarVisibilityOn()
+        else:
+            mapper.ScalarVisibilityOff()
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(1.0, 0.86, 0.25)  # only seen without scalars
+        return actor
+
     # ------------------------------------------------------------- rendering
     @staticmethod
     def _make_scalar_bar(vtk, lut, name: str, unit: str = ""):
@@ -1466,9 +1746,14 @@ class VtkFieldViewer(QWidget):
         return bar
 
     def _make_mapper(self, vtk, lut, loc, name):
-        """Return (mapper, lut) for the current representation (None if none)."""
+        """Return ``(mapper, data)`` for the current representation.
+
+        ``data`` is the dataset the mapper consumes (grid, slice or contour) —
+        the vector glyphs sit on exactly the same geometry. ``(None, None)``
+        when nothing can be shown.
+        """
         if self._grid is None:
-            return None
+            return None, None
         rep = self.cmb_rep.currentText()
         if rep == "Iso-surface" and name:
             flt = vtk.vtkContourFilter()
@@ -1478,6 +1763,7 @@ class VtkFieldViewer(QWidget):
             flt.Update()
             mapper = vtk.vtkPolyDataMapper()
             mapper.SetInputConnection(flt.GetOutputPort())
+            data = flt.GetOutput()
         elif rep == "Slice":
             nx, ny, nz = _AXIS_NORMAL[self.cmb_slice_axis.currentText()]
             plane = vtk.vtkPlane()
@@ -1489,11 +1775,11 @@ class VtkFieldViewer(QWidget):
             cutter.Update()
             mapper = vtk.vtkPolyDataMapper()
             mapper.SetInputConnection(cutter.GetOutputPort())
+            data = cutter.GetOutput()
         else:
             mapper = vtk.vtkDataSetMapper()
             mapper.SetInputData(self._grid)
-            if rep == "Wireframe":
-                mapper.SetRepresentationToWireframe()
+            data = self._grid
         if name:
             mapper.SetLookupTable(lut)
             mapper.SetScalarModeToUsePointFieldData() if loc == "point" else mapper.SetScalarModeToUseCellFieldData()
@@ -1502,7 +1788,7 @@ class VtkFieldViewer(QWidget):
             mapper.ScalarVisibilityOn()
         else:
             mapper.ScalarVisibilityOff()
-        return mapper
+        return mapper, data
 
     def _refresh_display(self, *_args) -> None:
         if self._renderer is None or self._grid is None:
@@ -1519,10 +1805,13 @@ class VtkFieldViewer(QWidget):
         self._sync_slice_readout()
 
         lut = self._lookup_table()
-        mapper = self._make_mapper(vtk, lut, loc, name)
+        mapper, base_data = self._make_mapper(vtk, lut, loc, name)
         if mapper is not None:
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
+            if rep == "Wireframe":
+                # representation lives on the property, not on the mapper
+                actor.GetProperty().SetRepresentationToWireframe()
             if name:
                 actor.GetMapper().SetLookupTable(lut)
             self._renderer.AddActor(actor)
@@ -1530,6 +1819,13 @@ class VtkFieldViewer(QWidget):
                 self._renderer.AddActor2D(
                     self._make_scalar_bar(vtk, lut, name, self._field_unit)
                 )
+
+        # vector glyphs (ParaView "Glyph") on top of the current representation
+        self._update_vector_controls()
+        if self.chk_vectors.isChecked() and self._has_vectors:
+            vec_actor = self._make_vector_actor(vtk, base_data, rep, lut)
+            if vec_actor is not None:
+                self._renderer.AddActor(vec_actor)
 
         if self.chk_outline.isChecked():
             outline = vtk.vtkOutlineFilter()

@@ -47,6 +47,9 @@ class AppSettings:
     #: standard view of the 3D pane (see app.ui.vtk_viewer.VIEW_PRESETS);
     #: "keep" only fits the camera and keeps the current direction
     field_viewer_view: str = "keep"
+    #: vector glyph options (see app.ui.vtk_viewer.DEFAULT_VECTORS):
+    #: enabled / size / max_arrows / normalize
+    field_viewer_vectors: dict = field(default_factory=dict)
 
     # --- Port defaults (Settings dialog + FreeCAD import fallbacks) ---
     default_port_type: str = "lumped"  # lumped | msl | rect_waveguide

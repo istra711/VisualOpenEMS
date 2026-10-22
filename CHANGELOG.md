@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-10-22
+
+### Added
+
+- **Field Viewer: vector glyphs (ParaView-style arrows)**
+  (`app/ui/vtk_viewer.py`, `app/ui/main_window.py`, `app/settings.py`):
+  new **Vectors** checkbox plus *size*, *arrows* and *same length* controls.
+  Arrows are drawn for the vector field (the exporter's 3-component point
+  array `field`, i.e. real(E/H); loaded VTK files may bring their own vector
+  array) and follow the current representation: **Slice** → arrows in the cut
+  plane, **Surface / Wireframe** → on the outside of the volume,
+  **Iso-surface** → on the contour. During playback the arrows move with the
+  field, so rotating or travelling fields become visible instead of only a
+  changing colour. The points are decimated **deterministically**
+  (`vtkMaskPoints`, every N-th point, `max_arrows` default 2000) so the
+  pattern does not flicker between frames. **same length** (default) shows
+  the direction only; unticked, the length follows |E| with the 99th
+  percentile mapped to the *size* length (one hot spot cannot shrink all
+  other arrows). Arrows are coloured by the selected array. Settings persist
+  across sessions (`field_viewer_vectors`), mirror to the pop-out, and have a
+  default in Settings → Field Viewer.
+
+### Fixed
+
+- **Field Viewer: "Wireframe" representation crashed**
+  (`app/ui/vtk_viewer.py`): `vtkDataSetMapper` has no
+  `SetRepresentationToWireframe()`; the representation is now set on the
+  actor property, so Wireframe actually renders.
+
 ## [0.5.4] - 2026-10-22
 
 ### Added
@@ -1519,4 +1548,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.2]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.2
 [0.5.3]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.3
 [0.5.4]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.4
+[0.5.5]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.5
 [Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.4...HEAD
