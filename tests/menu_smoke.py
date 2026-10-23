@@ -94,6 +94,7 @@ def test_menu_structure_and_shortcuts() -> None:
         "Preset: Yagi Antenna\u2026",
         "Preset: PCB Filter\u2026",
         "Preset: PCB Bandpass (5.6 GHz)\u2026",
+        "Preset: PCB Hairpin Bandpass (2.4 GHz)\u2026",
     ], presets
     tabs = [_strip(a.text()) for a in _menu("View").actions()]
     for name in ("Geometry", "Mesh Viewer", "S-Params"):
@@ -327,6 +328,33 @@ def test_project_panel_toggle() -> None:
     print("PROJECT PANEL TOGGLE OK")
 
 
+def test_pcb_hairpin_preset() -> None:
+    """Presets → PCB Hairpin Bandpass loads the 2.4 GHz RT/duroid project."""
+    from PySide6.QtCore import Qt
+
+    w = _win()
+    w._on_load_pcb_hairpin()
+    assert w.project.name == "pcb_hairpin"
+    assert len(w.project.ports) == 2
+    mats = {m.name for m in w.project.materials}
+    assert {"copper", "rtduroid"} <= mats, mats
+    names = [str(p.get("name")) for p in w.primitives]
+    assert names.count("ground") == 1 and names.count("substrate") == 1
+    assert len([n for n in names if n.startswith("res")]) == 15
+    assert "feed_in" in names and "feed_out" in names
+    # the tree lists the objects and the project file was written
+    kinds = {
+        str(w.tree.item(i).data(int(Qt.UserRole)))
+        for i in range(w.tree.count())
+    }
+    assert {"prim", "mat", "port", "dump"} <= kinds, kinds
+    from app.settings import AppSettings
+
+    saved = AppSettings.load().work_path() / "pcb_hairpin" / "pcb_hairpin.fcsim.json"
+    assert saved.exists(), saved
+    print("PCB HAIRPIN PRESET OK")
+
+
 def main() -> int:
     failed = 0
     for t in (
@@ -339,6 +367,7 @@ def main() -> int:
         test_mesh_params_dialog,
         test_log_mesh_report_tab,
         test_mesh_viewer_scene_info_tab,
+        test_pcb_hairpin_preset,
     ):
         try:
             t()

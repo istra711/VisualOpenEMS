@@ -229,6 +229,8 @@ python app\main.py
 | **Presets → Patch Antenna…** | 2.45 GHz microstrip patch on FR4 | 2-port S-parameter sweep |
 | **Presets → Dipole…** | Half-wave dipole | Basic antenna validation |
 | **Presets → PCB Filter…** | Microstrip notch filter | 2-port, dual-excitation |
+| **Presets → PCB Bandpass (5.6 GHz)…** | 5-pole Chebyshev stub band-pass on PTFE | 2-port, no vias |
+| **Presets → PCB Hairpin Bandpass (2.4 GHz)…** | Compact 5-pole hairpin band-pass on RT/duroid 6010 | 2-port, no vias |
 | **Presets → Yagi Antenna…** | 3-element Yagi | Directional antenna |
 
 ### Import your own geometry
@@ -430,6 +432,8 @@ All examples are in `examples/` and runnable standalone:
 | `freecad_export_for_openems.py` | FreeCAD → openEMS export utility |
 | `run_patch_example.py` | Patch antenna end-to-end |
 | `run_pcb_filter_example.py` | PCB filter with dual excitation |
+| `run_pcb_bandpass_example.py` | 5.6 GHz stub band-pass (PTFE) |
+| `run_pcb_hairpin_example.py` | 2.4 GHz hairpin band-pass (RT/duroid 6010) |
 | `run_stl_import_example.py` | Headless STL import |
 | `run_yagi_example.py` | Yagi antenna simulation |
 
