@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-10-23
+
+### Added
+
+- **Hairpin band-pass preset for 2.4 GHz on RT/duroid 6010LM**
+  (`app/csxcad_builder/hairpin.py`, GUI menu *Preset → PCB Hairpin Bandpass
+  (2.4 GHz)…*, `examples/run_pcb_hairpin_example.py`): a compact 5-pole
+  Chebyshev band-pass (0.1 dB ripple, 10 % bandwidth = 2.28–2.52 GHz) built
+  from five folded lambda/2 resonators. Copper area 25.1 x 14.3 mm, no vias,
+  no stubs. The synthesis drives the arms in the *odd* mode of the arm pair
+  (eps_eff = 5.946) and derives the six coupling gaps (0.316 … 1.753 mm) from
+  the Hammerstad-Jensen even/odd model via the J-inverters of the Chebyshev
+  prototype; strip width is uniform at 1.186 mm (50 ohm). Design table,
+  synthesis notes and validation status are documented in
+  `docs/ANLEITUNG_DE.md` / `docs/ANLEITUNG_EN.md` section 4.
+
+### Fixed
+
+- **Hairpin preset could never converge**: `pcb_hairpin_primitives` shipped
+  `end_criteria=1e-5` with `max_timesteps=120_000`. With tan_d = 0.0023
+  (Q0 ~ 435) the stop-band ring-down needs millions of steps, so the run always
+  hit the cap while the energy was still high and wrote truncated, meaningless
+  S-parameters. The budget is now `end_criteria=1e-4` / `max_timesteps=600_000`
+  and the reason is documented next to the setting.
+- **Manual mesh lines were appended unsorted** (`app/meshing/manual_mesh.py`):
+  the in-memory CSXCAD grid could end up out of order, which corrupts the FDTD
+  cell sizes. The grid is now sorted after every edit.
+- **Near-duplicate grid lines collapsed to zero-size cells**
+  (`app/simulation/script_gen.py`): `dedupe_grid_lines` now merges lines within
+  a fraction of the local cell size instead of only exact duplicates.
+
 ## [0.5.9] - 2026-10-23
 
 ### Fixed

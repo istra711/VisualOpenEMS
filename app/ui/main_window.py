@@ -241,6 +241,11 @@ class MainWindow(QMainWindow):
             "5.6 GHz 5-pole Chebyshev band-pass, five open stubs on PTFE "
             "(2 ports) under work/pcb_bandpass"
         )
+        self.btn_pcb_hairpin = QPushButton("Preset: PCB Hairpin…")
+        self.btn_pcb_hairpin.setToolTip(
+            "2.4 GHz compact 5-pole hairpin band-pass on RT/duroid 6010, "
+            "10 % bandwidth, no vias (2 ports) under work/pcb_hairpin"
+        )
         self.btn_run = QPushButton("Run Simulation")
         self.btn_abort = QPushButton("Abort")
         self.btn_script = QPushButton("Script…")
@@ -277,6 +282,7 @@ class MainWindow(QMainWindow):
             self.btn_yagi,
             self.btn_pcb,
             self.btn_pcb_bp,
+            self.btn_pcb_hairpin,
             self.btn_run,
             self.btn_abort,
             self.btn_script,
@@ -791,6 +797,7 @@ class MainWindow(QMainWindow):
         self.btn_yagi.clicked.connect(self._on_load_yagi)
         self.btn_pcb.clicked.connect(self._on_load_pcb)
         self.btn_pcb_bp.clicked.connect(self._on_load_pcb_bandpass)
+        self.btn_pcb_hairpin.clicked.connect(self._on_load_pcb_hairpin)
         self.btn_build_mesh.clicked.connect(self._on_build_mesh)
         self.btn_run.clicked.connect(self._on_run)
         self.btn_abort.clicked.connect(self._on_abort)
@@ -883,6 +890,11 @@ class MainWindow(QMainWindow):
         add_action(pmenu, "Preset: Yagi Antenna\u2026", btn=self.btn_yagi)
         add_action(pmenu, "Preset: PCB Filter\u2026", btn=self.btn_pcb)
         add_action(pmenu, "Preset: PCB Bandpass (5.6 GHz)\u2026", btn=self.btn_pcb_bp)
+        add_action(
+            pmenu,
+            "Preset: PCB Hairpin Bandpass (2.4 GHz)\u2026",
+            btn=self.btn_pcb_hairpin,
+        )
 
         gmenu = bar.addMenu("&Geometry")
         add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
@@ -3603,6 +3615,56 @@ class MainWindow(QMainWindow):
         self.geom_info.setPlainText("\n".join(lines))
         self._update_window_title()
         self._log("PCB band-pass preset loaded")
+        for ln in lines:
+            self._log(ln)
+        self._log_computed_summary()
+
+    def _on_load_pcb_hairpin(self) -> None:
+        """Load the compact 2.4 GHz 5-pole hairpin band-pass preset (RT/duroid)."""
+        from app.csxcad_builder.hairpin import (
+            HAIRPIN_BANDPASS_DESIGN,
+            hairpin_bandpass_design,
+            pcb_hairpin_primitives,
+        )
+
+        self._current_file_path = None
+        work = self.settings.work_path() / "pcb_hairpin"
+        work.mkdir(parents=True, exist_ok=True)
+
+        project, prims = pcb_hairpin_primitives()
+        project.ports[0].excite_port = True
+        project.ports[1].excite_port = False
+        self.project = project
+        self.primitives = prims
+        self.project.primitives = list(prims)
+        if hasattr(self.sim_params, "set_patch_group_visible"):
+            self.sim_params.set_patch_group_visible(False)
+        self._sync_form_from_project()
+        self._refresh_tree()
+        self._refresh_ports()
+        self._refresh_materials()
+
+        saved = project.save(work / "pcb_hairpin.fcsim.json")
+        des = hairpin_bandpass_design()
+        mat = HAIRPIN_BANDPASS_DESIGN
+        lines = [
+            "PCB hairpin band-pass PRESET loaded: 5-pole Chebyshev, 0.1 dB ripple, "
+            "f0 = 2.4 GHz.",
+            f"RT/duroid 6010LM: eps_r {mat['eps_r']}, tan_d {mat['tand']}, "
+            f"{mat['h']} mm, 35 um copper — five folded half-wave resonators, no vias.",
+            f"50 ohm line {des['w50']:.2f} mm, resonator arm {des['arm']:.2f} mm, "
+            f"coupling gaps "
+            + ", ".join(f"{g:.3f}" for g in des["gaps"])
+            + " mm.",
+            f"~{mat['fbw'] * 100:.0f} % bandwidth around 2.4 GHz; the layout is only "
+            f"{des['span']:.1f} mm long (folded resonators).",
+            "Two lumped edge ports: one run measures one S-matrix column — "
+            "examples/run_pcb_hairpin_example.py runs both and merges to S2P.",
+            f"Project: {saved}",
+        ]
+        self.geom_info.setPlainText("\n".join(lines))
+        self._update_window_title()
+        self._log("PCB hairpin band-pass preset loaded")
         for ln in lines:
             self._log(ln)
         self._log_computed_summary()

@@ -94,6 +94,10 @@ def apply_lines_axis(
             continue
         lines = np.append(lines, c)
         added += 1
+    # The CSXCAD grid must be sorted ascending: appending manual lines to a
+    # sorted auto grid would otherwise leave the in-memory grid unsorted (the
+    # FDTD operator derives its cell sizes from it).
+    lines = np.sort(lines)
     return lines, {
         "added": added,
         "removed": removed,

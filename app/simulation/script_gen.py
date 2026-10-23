@@ -373,13 +373,18 @@ def get_domain_box(CSX):
     return [float(v) for v in area[0]], [float(v) for v in area[1]]
 
 
-def dedupe_grid_lines(CSX, tol: float = 1e-12) -> None:
-    """Remove exact-duplicate grid lines that create zero-size FDTD cells.
+def dedupe_grid_lines(CSX, tol: float = 1e-12, frac: float = 0.1) -> None:
+    """Remove duplicate / near-duplicate grid lines that create tiny FDTD cells.
 
-    Port ``edges2grid`` inserts the arm-axis line (x=0 / y=0) which collides with
-    the mesh line already on that coordinate, leaving a zero-width cell that
-    collapses the Courant timestep. Domain-boundary lines are never touched —
-    they define the FDTD box edges.
+    ``tol`` catches exact duplicates: port ``edges2grid`` inserts the arm-axis
+    line (x=0 / y=0) which collides with the mesh line already on that
+    coordinate, leaving a zero-width cell that collapses the Courant timestep.
+
+    ``frac`` additionally merges lines that sit closer than ``frac`` times the
+    following cell: easyMesh's own edge refinement can place a line a few
+    microns next to a geometry/manual line (e.g. a float32-rounded metal edge
+    next to the exact manual line), which again collapses the timestep.
+    Domain-boundary lines are never touched — they define the FDTD box edges.
     """
     import numpy as np
 
@@ -390,7 +395,7 @@ def dedupe_grid_lines(CSX, tol: float = 1e-12) -> None:
         raw = grid.GetLines(axis)
         if raw is None:
             continue
-        vals = np.array(raw, dtype=float)
+        vals = np.sort(np.array(raw, dtype=float))
         if vals.size < 2:
             continue
         keep: list[float] = []
@@ -398,14 +403,19 @@ def dedupe_grid_lines(CSX, tol: float = 1e-12) -> None:
         # domain edges are structural: never drop them
         dom_lo = dom[0][axis] if dom is not None else None
         dom_hi = dom[1][axis] if dom is not None else None
-        for v in vals:
+        for i, v in enumerate(vals):
             if dom_lo is not None and (abs(v - dom_lo) < tol or abs(v - dom_hi) < tol):
                 keep.append(float(v))
                 continue
-            if any(abs(v - k) < tol for k in keep):
-                removed += 1
-            else:
-                keep.append(float(v))
+            if keep:
+                gap = abs(float(v) - keep[-1])
+                nxt = float(vals[i + 1]) - float(v) if i + 1 < vals.size else gap
+                if gap < max(tol, frac * max(nxt, 0.0)):
+                    removed += 1
+                    continue
+            keep.append(float(v))
+        if len(keep) < 2:
+            continue
         if removed:
             grid.SetLines(axis, np.array(keep, dtype=float))
             removed_total += removed

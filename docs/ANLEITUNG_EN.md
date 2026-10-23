@@ -204,6 +204,54 @@ Notes:
 - Stub band-passes are inherently wideband; the spurious pass-band near 2*f0 is
   a property of the topology, not a meshing artefact.
 
+#### PCB hairpin band-pass 2.4 GHz (five folded resonators, RT/duroid)
+
+**Preset: PCB Hairpin Bandpass (2.4 GHz)…** loads a 5-pole Chebyshev band-pass
+(0.1 dB ripple, 10 % bandwidth → 2.28–2.52 GHz) on **RT/duroid 6010LM**
+(1.27 mm, eps_r 10.2, tan_d 0.0023, 35 µm copper). Five **folded lambda/2
+resonators** (hairpins) couple side by side along their arms — no vias, no
+stubs, copper area only 25.1 x 14.3 mm.
+
+| Item | Value |
+|---|---|
+| Centre frequency f0 / bandwidth | 2.40 GHz / 10 % |
+| lambda_g in the odd mode | 51.23 mm (eps_eff = 5.946) |
+| Strip width (all arms) | 1.186 mm (50 ohm) |
+| Arm length | 11.814 mm |
+| Inner gap between the U arms | 0.80 mm |
+| Fold outer / electrical | 3.172 / 1.986 mm |
+| Coupling gaps s0…s5 | 0.316 / 1.387 / 1.753 / 1.753 / 1.387 / 0.316 mm |
+| J-inverters (normalised) | 0.370 / 0.125 / 0.096 / 0.096 / 0.125 / 0.370 |
+| Z0e / Z0o | 75.4/38.3 · 57.1/44.5 · 55.2/45.7 ohm |
+
+Synthesis: the two arms of one hairpin carry opposite currents, so the
+resonator runs in the **odd mode** of the arm pair. The arm length therefore
+uses eps_eff,odd = 5.946 (not the single-line eps_eff — that makes the arms
+~15 % too short). The gaps come from the Hammerstad-Jensen even/odd model via
+the J-inverters of the Chebyshev prototype; the strip width stays uniform and
+only the gap sets the coupling.
+
+```powershell
+c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe examples\run_pcb_hairpin_example.py
+```
+
+What is verified is the **single resonator**: one hairpin (arm 11.814 mm, feed
+coupling 0.316 mm) resonates at **2.365 GHz** with **S21 = -0.16 dB** and
+**S11 = -47.6 dB**; the skirt width gives Qe ~ 12.5 (synthesis: 13.1).
+
+Notes:
+
+- **Runtime:** the DFT resolution is 1/T_sim. A 240 MHz pass-band with ~50 MHz
+  mode spacing needs T_sim >~ 60 ns (>~ 1.2 M steps). With tan_d = 0.0023
+  (Q0 ~ 435) the stop-band decays very slowly. The preset therefore stops at
+  `end_criteria = 1e-4` (-40 dB) and `max_timesteps = 600_000`.
+- **Validation status:** single resonator and single coupling are verified in
+  FDTD. Short runs (< 200 k steps) do not resolve the filter's mode spacing and
+  then show no clean pass-band — extend the run as described above for the full
+  5-pole curve.
+- Mesh: `min_cellsize = min(s)/3 = 0.105 mm`, the 1.387 mm gap is resolved by
+  four cells, strip edges sit on grid lines (`edges2grid = "xy"`).
+
 ---
 
 ## 5. Configure the project
@@ -412,6 +460,10 @@ warning) — the mesh viewer outlines such primitives in red and writes
 - **2-port example (5.6 GHz band-pass):** `Preset: PCB Bandpass (5.6 GHz)…` or
   `examples\run_pcb_bandpass_example.py` - five open lambda/2 stubs on Teflon,
   |S11| < -10 dB from 4.90-6.45 GHz, ready `sparams.s2p`.
+- **2-port example (2.4 GHz hairpin band-pass):** `Preset: PCB Hairpin Bandpass
+  (2.4 GHz)…` or `examples\run_pcb_hairpin_example.py` - five folded lambda/2
+  resonators on RT/duroid 6010 (eps_r 10.2, 1.27 mm), compact (~25 mm long),
+  no vias, ready `sparams.s2p`.
 
 ---
 

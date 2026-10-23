@@ -204,6 +204,55 @@ Hinweise:
 - Die Sperrdämpfung ist bei Stub-Bandpässen prinzipbedingt nur im Bereich um f0
   gut; bei 2·f0 entsteht ein weiterer Durchlass (Spurious-Passband).
 
+#### PCB-Hairpin-Bandpass 2,4 GHz (fünf gefaltete Resonatoren, RT/duroid)
+
+**Preset: PCB Hairpin Bandpass (2.4 GHz)…** lädt einen 5-poligen
+Chebyshev-Bandpass (0,1 dB Welligkeit, 10 % Bandbreite → 2,28–2,52 GHz) auf
+**RT/duroid 6010LM** (1,27 mm, εr = 10,2, tanδ = 0,0023, 35 µm Kupfer). Fünf
+**gefaltete λ/2-Resonatoren** (Hairpins) sind nebeneinander über ihre Armlänge
+gekoppelt — ohne Vias, ohne Stichleitungen, Leiterbild nur 25,1 × 14,3 mm.
+
+| Größe | Wert |
+|---|---|
+| Mittenfrequenz f0 / Bandbreite | 2,40 GHz / 10 % |
+| λg im ungeradzahligen Modus | 51,23 mm (εeff = 5,946) |
+| Streifenbreite (alle Arme) | 1,186 mm (50 Ω) |
+| Armlänge | 11,814 mm |
+| Innenabstand der U-Arme | 0,80 mm |
+| Faltung außen / elektrisch | 3,172 / 1,986 mm |
+| Koppelspalte s0…s5 | 0,316 / 1,387 / 1,753 / 1,753 / 1,387 / 0,316 mm |
+| J-Inverter (normiert) | 0,370 / 0,125 / 0,096 / 0,096 / 0,125 / 0,370 |
+| Z0e / Z0o | 75,4/38,3 · 57,1/44,5 · 55,2/45,7 Ω |
+
+Synthese: Die beiden Arme eines Hairpins tragen Gegenströme, der Resonator
+schwingt also im **ungeradzahligen Modus** des Arm-Paares. Die Armlänge folgt
+deshalb εeff,odd = 5,946 (nicht dem Einzelleiter-εeff — damit wären die Arme
+~15 % zu kurz). Die Spalte liefert das Hammerstad-Jensen-Modell (even/odd) über
+die J-Inverter der Chebyshev-Prototypparameter; die Streifenbreite bleibt
+einheitlich, allein der Spalt stellt die Kopplung ein.
+
+```powershell
+c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe examples\run_pcb_hairpin_example.py
+```
+
+Verifiziert ist der **Einzelresonator**: ein Hairpin (Arm 11,814 mm, gespeiste
+Kopplung 0,316 mm) resoniert bei **2,365 GHz** mit **S21 = −0,16 dB** und
+**S11 = −47,6 dB**; die Flankenbreite entspricht Qe ≈ 12,5 (Synthese 13,1).
+
+Hinweise:
+
+- **Simulationsdauer:** Die DFT-Auflösung ist 1/T_sim. Für 240 MHz Durchlass
+  mit ~50 MHz Modenabstand braucht es T_sim ≳ 60 ns (≳ 1,2 Mio. Schritte).
+  Wegen tanδ = 0,0023 (Q0 ≈ 435) klingt das Sperrband sehr langsam ab. Das
+  Preset stoppt deshalb bei `end_criteria = 1e-4` (−40 dB) und
+  `max_timesteps = 600_000`.
+- **Validierungsstand:** Einzelresonator und Einzelkopplung sind im FDTD
+  verifiziert. Kurze Läufe (< 200 k Schritte) lösen den Modenabstand des
+  Filters nicht auf und zeigen dann keinen sauberen Durchlass — für die volle
+  5-Pol-Kurve den Lauf wie oben verlängern.
+- Gitter: `min_cellsize = min(s)/3 = 0,105 mm`, die 1,387-mm-Spalte liegt in
+  vier Zellen, Streifenkanten auf Gitterlinien (`edges2grid = "xy"`).
+
 ---
 
 ## 5. Projekt konfigurieren
@@ -413,6 +462,10 @@ Warning) — der Mesh Viewer umrahmt solche Primitive rot und schreibt
 - **2-Port-Beispiel (Bandpass 5,6 GHz):** `Preset: PCB Bandpass (5.6 GHz)…` oder
   `examples\run_pcb_bandpass_example.py` — 5 offene λ/2-Stubs auf Teflon,
   |S11| < −10 dB von 4,90–6,45 GHz, fertiges `sparams.s2p`.
+- **2-Port-Beispiel (Hairpin-Bandpass 2,4 GHz):** `Preset: PCB Hairpin Bandpass
+  (2.4 GHz)…` oder `examples\run_pcb_hairpin_example.py` — 5 gefaltete
+  λ/2-Resonatoren auf RT/duroid 6010 (εr 10,2, 1,27 mm), kompakt (~25 mm lang),
+  ohne Vias, fertiges `sparams.s2p`.
 
 ---
 
