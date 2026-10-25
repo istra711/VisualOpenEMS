@@ -436,6 +436,11 @@ close the loop without making the diagnosis dishonest:
   (overlay toggle, repair/remove/snap/accept/explain, enforcement switch).
   Without a cursor the target is the worst open finding; the enablement is the
   same helper the right-click menu uses, so the two menus cannot disagree.
+
+**Help:** F1 → *Mesh Repair* (also the Help button in the repair preview and
+Help → *Mesh repair (critical cells)…*) documents the causes, the five actions,
+the preview, the protection rules, the global floor, the stored fields and the
+limits; the *Mesh Viewer* and *Mesh Parameters* topics link to it.
 * **V4 — honest diagnostics.** `cell_below_min` compares against the
   **user-set** minimum only (`requested_min_cellsize`); the derived fallbacks
   (`refined_cellsize`, `target_cell_units`) previously flagged 162 ordinary

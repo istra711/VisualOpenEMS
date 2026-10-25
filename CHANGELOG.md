@@ -119,6 +119,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mirrors the Mesh Parameters checkbox). Without a cursor the target is the
   worst open finding; the enablement comes from the same viewer helper as the
   right-click menu, so the two can never disagree.
+- **Help: new topic "Mesh Repair"** (`app/ui/tab_help.py`): documents the cause
+  codes, the five per-mark actions, the preview, the protection rules, the
+  global floor, the storage fields and the limits. Reachable from F1 (topic
+  list), the repair preview's Help button, Help → *Mesh repair (critical
+  cells)…* and the Mesh Viewer / Mesh Parameters help, which link to it.
 - Tests: `tests/test_mesh_repair.py` (34 checks: merge/relax/split, protection
   incl. float32 vs. float64, preview, cause/penalty/accepted, per-axis floors,
   the easyMesh decoupling), `tests/repair_actions_smoke.py` (menu enablement,

@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.ui.tab_help import show_tab_help
+
 
 class RepairDialog(QDialog):
     """Show a repair preview and let the user pick the minimum cell size.
@@ -72,9 +74,13 @@ class RepairDialog(QDialog):
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.Help
         )
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
+        self.buttons.helpRequested.connect(
+            lambda: show_tab_help(self, "Mesh Repair")
+        )
         root.addWidget(self.buttons)
         self.spn_floor.valueChanged.connect(self._refresh)
         self._refresh()

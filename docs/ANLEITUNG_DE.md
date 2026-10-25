@@ -357,6 +357,9 @@ Schalter, Repair/Remove/Snap/Accept/Explain für den schlimmsten offenen Befund
 und der Enforce-Schalter. Die Aktionen sind dort nur aktiv, wo sie auch im
 Rechtsklick-Menü aktiv wären.
 
+Ausführliche Beschreibung: **F1 → „Mesh Repair"** (auch Help-Knopf im
+Reparatur-Dialog und Help → „Mesh repair (critical cells)…").
+
 ### 5.2 Material / Assignment
 
 1. **Add Material…** — z. B. `substrate` (εr=4,4, tanδ=0,02), `copper`

@@ -1156,6 +1156,11 @@ class MainWindow(QMainWindow):
             "Cylindrical (polar) mesh…",
             slot=lambda: show_tab_help(self, "Cylindrical Mesh"),
         )
+        add_action(
+            hmenu,
+            "Mesh repair (critical cells)…",
+            slot=lambda: show_tab_help(self, "Mesh Repair"),
+        )
         hmenu.addSeparator()
         add_action(hmenu, "Open ANLEITUNG_DE.md", slot=lambda: self._open_doc("docs/ANLEITUNG_DE.md"))
         add_action(hmenu, "Open FreeCAD Workflow (Geometry → Import)", slot=lambda: self._open_doc("docs/FREECAD_WORKFLOW_DE.md"))

@@ -131,6 +131,22 @@ def main() -> int:
         assert mark2 not in viewer._critical
         print("  repair stores MeshSpec.mesh_repairs + re-spaces the grid: OK")
 
+        # --- the preview dialog offers the detailed help ---------------------
+        from PySide6.QtWidgets import QDialogButtonBox
+
+        from app.ui.tab_help import help_for
+
+        assert "MESH REPAIR" in help_for("Mesh Repair"), "help topic missing"
+        probe = RepairDialog(
+            parent=None,
+            floor=0.03,
+            floor_min=0.01,
+            floor_max=1.0,
+            preview_fn=lambda _f: ("preview", True),
+        )
+        assert probe.buttons.button(QDialogButtonBox.StandardButton.Help) is not None
+        print("  repair dialog: Help button + topic present: OK")
+
         # --- explain does not crash ------------------------------------------
         with patch.object(QMessageBox, "exec", return_value=0):
             viewer._critical_explain(mark2)

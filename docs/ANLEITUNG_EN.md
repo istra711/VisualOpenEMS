@@ -351,6 +351,9 @@ toggle, repair/remove/snap/accept/explain for the worst open finding and the
 enforcement switch. The actions are only enabled where the right-click menu
 would enable them too.
 
+Full description: **F1 → "Mesh Repair"** (also the Help button in the repair
+preview and Help → "Mesh repair (critical cells)…").
+
 ### 5.2 Material / assignment
 
 1. **Add Material…** — e.g. `substrate` (εr=4.4, tanδ=0.02), `copper`

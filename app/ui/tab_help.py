@@ -82,7 +82,12 @@ Views (tabs inside the plot area)
     whether there is anything to see). The count also goes to the log
     ("Critical cells: …") and into the mesh report. The
     mark also names the geometry that forced it (e.g. `box:feed + manual`) while
-    *Mesh Parameters → Attribute fine cells to their source* is on.
+    *Mesh Parameters → Attribute fine cells to their source* is on. Each mark
+    states its cause (`geometrie` = both faces authored, not repairable;
+    `wunschwert` = below the requested minimum; `artefakt` = easyMesh-made;
+    `engine` = reported by the solver), its penalty (axis median / cell) and
+    whether it is accepted. See Help → "Mesh Repair" for the preview, the
+    protection rules and the global floor.
     Right-click a mark → "Critical cells (N open)": Repair this x/y/z region…
     (preview with the lines removed, the new smallest cell and dt before/after;
     OK stores the rule in MeshSpec.mesh_repairs and rebuilds), Remove the
@@ -422,6 +427,115 @@ Notes
     than that used to abort the run with "cell_too_large"; they are now split
     automatically, so any preset builds a valid grid (the preset still sets the
     characteristic air cellsize).
+  • Min-cell enforcement — the mesh report prints "Min cell enforcement …
+    requested x/y/z …" and one "achieved" line per axis, with the reason when a
+    genuine gap keeps a smaller cell ("not reached: the remaining cells are
+    bounded by authored coordinates"). Cylindrical meshes are not repaired (the
+    build log says so). See Help → "Mesh Repair" for the full rules.
+""",
+    "Mesh Repair": """MESH REPAIR — fix the cells that cost runtime (opt-in)
+
+What it is
+  The mesh report and the Mesh Viewer mark the cells that set the FDTD
+  timestep ("critical cells"). Mesh Repair is the opt-in way to remove the
+  ones the geometry does not need. It is a mesh post-process: no solver run,
+  no random numbers, and the result is stored in the project, so the preview,
+  the next Build Mesh and the generated solver script produce the same grid.
+
+  Everything is off by default; presets and old projects reproduce their meshes
+  unchanged until you tick a switch or apply a rule.
+
+Where to find it
+  • Mesh Viewer, right-click a mark → Critical cells (N open)
+  • Mesh menu → Critical cells (N open) — the same actions; without a cursor
+    the target is the worst open finding
+  • Mesh menu / Mesh Parameters → "Enforce min cell size (repair)"
+
+What a mark tells you
+  label       axis, cell size, number of cells, smallest cell, penalty
+  cause       geometrie   both faces are authored coordinates — the geometry
+                          needs this cell; NOT repairable
+              wunschwert  the cell is below the Min cell size you asked for
+              artefakt    easyMesh made it (arc/circle detection, grading,
+                          PML transition); repairable
+              engine      the solver reported this cell as the smallest
+                          timestep (only after a run)
+  penalty     axis median / cell: how much slower this cell makes the run
+  accepted    the region is marked "do not repair"; it stays visible (grey)
+              but is no longer an open finding
+  source      the geometry at the faces (e.g. box:feed + manual) while
+              Mesh Parameters → Attribute fine cells to their source is on
+
+The five actions (per mark, and in the Mesh menu)
+  Repair this x/y/z region… (Mesh menu: "Repair the worst open region…")
+      Opens a PREVIEW before anything changes:
+        - the floor (minimum cell) it will keep — raise it to coarsen further,
+        - lines removed / moved and the new smallest cell,
+        - the CFL timestep before/after and the expected cell count,
+        - "Apply repair" is disabled while nothing would change.
+      Apply stores a rule in MeshSpec.mesh_repairs; the grid is rebuilt with
+      it. The rule runs inside generate_mesh() as the LAST step (after
+      easyMesh, interface refinement, port alignment, the max-cell cap and the
+      manual lines), so preview and solver script agree.
+  Remove the offending line…
+      Deletes ONE auto grid line; the two cells merge. Stored as a normal Mesh
+      Editor removal (manual_mesh_lines_removed). Disabled when both faces are
+      authored coordinates. May leave a grading jump — Repair re-spaces instead.
+  Snap onto the neighbour line…
+      Only for duplicate-scale slivers (cell < 0.1 % of a normal cell): the two
+      lines are the same coordinate up to float noise; the auto one is dropped.
+      Disabled for a real gap (snapping would delete a line the geometry needs).
+  Accept region (do not repair)
+      Stores the region in MeshSpec.accepted_cells. The mark stays (grey) and
+      the report counts it as accepted instead of an open finding. Use it when
+      the geometry genuinely needs the cell (cause geometrie) or when you accept
+      the runtime cost.
+  Explain…
+      Cause, source, penalty and what the default repair would do (read-only).
+
+What the repair may and may not touch
+  Never removed: authored coordinates — domain edges, primitive faces
+  (box/cylinder/polygon/STL), port/dump/NF2FF faces and manual mesh lines. They
+  are passed to the repair as "protected" (computed once from
+  source_coordinates). A cell with BOTH faces authored is "geometrie" and is
+  never merged; a cell with one auto face may be merged.
+  The repair merges a too-small cell into its SMALLER neighbour (removes the
+  inner line), re-spaces the grading only around the cells it created (max
+  grading ratio from Mesh Parameters) and splits cells above the hard
+  λ_air(f_max)/10 cap. It never moves an authored line.
+
+Enforce min cell size (repair) — the global floor (V2)
+  Mesh Parameters → "Enforce min cell size (repair)", or the Mesh menu entry.
+  • "Min cell size" becomes a hard floor on every axis; "Min cell size (Z)"
+    overrides the layer thickness.
+  • After easyMesh every cell below the floor whose faces are not both authored
+    is merged into its smaller neighbour and the grading is re-spaced. Genuine
+    gaps stay and are reported.
+  • While the switch is on the floor is NOT passed to easyMesh: easyMesh reacts
+    to Min cell size by re-refining the lateral axes (measured on
+    Filter_new_test1: cells x2.42 at dt only x1.35), which the repair would then
+    have to undo. Decoupled the same project gives dt x1.45 at cells x0.98.
+  • The report lists, per axis, the requested floor and the achieved minimum,
+    e.g. "z: achieved 0.035 mm — not reached: the remaining cells are bounded by
+    authored coordinates (the geometry needs them)".
+  • Cylindrical (polar) mesh: not available; the build log says so. The switch
+    only acts when Min cell size (or Min cell size (Z)) is set.
+
+Storage (MeshSpec — old projects load with the defaults)
+  mesh_repairs          list of {axis, lo, hi, floor, expand} (V1 rules)
+  accepted_cells        list of {axis, lo, hi} ("do not repair" regions)
+  enforce_min_cellsize  bool, default False (V2 switch)
+  The repair is deterministic: it only removes lines it is allowed to remove
+  and adds split lines above the max-cell limit.
+
+Limits
+  • It cannot fix a grading jump outside the expanded interval; the preview
+    warns with the remaining ratio.
+  • A genuine gap (both faces authored) stays — no setting can coarsen it away.
+  • The floor is a minimum, not a target: merging is pairwise, so the achieved
+    cell can be up to ~2x the floor (the report shows the real value).
+  • Repair changes the mesh, not the physics: check the mesh report and the
+    timestep before/after, and re-run the simulation after a repair.
 """,
     "Cylindrical Mesh": """CYLINDRICAL MESH — openEMS CoordSystem=1 (rho/phi/z)
 

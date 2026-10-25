@@ -453,6 +453,11 @@ Reparatur als letzter Schritt, Untergrenze nicht mehr an easyMesh),
   Ohne Cursor ist das Ziel der schlimmste offene Befund; die Freigabe kommt aus
   demselben Helfer wie das Rechtsklick-Menü, die beiden können also nicht
   auseinanderlaufen.
+  Hilfe: F1 → *Mesh Repair* (auch Help-Knopf im Reparatur-Dialog und Help →
+  *Mesh repair (critical cells)…*) beschreibt Ursachen, die fünf Aktionen, die
+  Vorschau, die Schutzregeln, die globale Untergrenze, die gespeicherten Felder
+  und die Grenzen; die Themen *Mesh Viewer* und *Mesh Parameters* verweisen
+  darauf.
 * **V4 — ehrliche Diagnose.** `cell_below_min` vergleicht nur noch mit der
   **vom Nutzer gesetzten** Mindestgröße (`requested_min_cellsize`); die
   abgeleiteten Fallbacks (`refined_cellsize`, `target_cell_units`) markierten
