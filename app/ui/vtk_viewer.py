@@ -95,12 +95,17 @@ DEFAULT_AXES: dict = {
 #: AppSettings). ``size`` = arrow length in units of the arrow sampling distance,
 #: ``max_arrows`` caps how many arrows are drawn (deterministic decimation, so a
 #: time series does not flicker), ``normalize`` draws all arrows the same length
-#: (direction only) instead of scaling them by |E|.
+#: (direction only) instead of scaling them by |E|, ``overlay`` additionally
+#: draws the coloured field representation underneath the arrows.
 DEFAULT_VECTORS: dict = {
     "enabled": False,
     "size": 1.0,
     "max_arrows": 2000,
     "normalize": True,
+    #: The arrows *are* the representation (ParaView style). Drawing the opaque
+    #: slice/surface/volume as well hides up to half of every arrow, so the
+    #: overlay is off by default and only drawn on request.
+    "overlay": False,
 }
 
 #: Standard views of the 3D pane (key -> label). "keep" only fits the camera and
@@ -397,6 +402,9 @@ class VtkFieldViewer(QWidget):
         self._vectors = dict(DEFAULT_VECTORS)
         self.on_vectors_changed = None  # callback(options: dict) for persistence
         self._has_vectors = False  # loaded grid carries a 3-component field array
+        #: cached reference |field| over the series + the array it was taken from
+        self._vec_series_ref: float | None = None
+        self._vec_ref_name: str | None = None
         self._marker = None  # vtkOrientationMarkerWidget (corner axes)
         self._marker_axes = None  # its vtkAxesActor
         self._build_ui()
@@ -624,8 +632,11 @@ class VtkFieldViewer(QWidget):
             "the strength of the field in the current representation:\n"
             "Slice → arrows in the cut plane, Surface → on the surface,\n"
             "Iso-surface → on the iso-surface.\n"
-            "During playback the arrows follow the field, so rotating /\n"
-            "travelling fields become visible."
+            "The arrows replace the coloured field plot (an opaque slice or\n"
+            "volume would cover the arrows pointing into it) — tick 'field\n"
+            "underneath' to get the overlay back.\n"
+            "During playback the arrows follow the field; while stepping by\n"
+            "hand the step label adds how many arrows flipped."
         )
         self.chk_vectors.toggled.connect(self._on_vectors_toggled)
         self._vec_tip = self.chk_vectors.toolTip()
@@ -658,14 +669,27 @@ class VtkFieldViewer(QWidget):
         self.chk_vec_norm.setToolTip(
             "All arrows the same length: purely the direction is visible\n"
             "(best for watching the field rotate).\n"
-            "Untick to scale the length with the field strength (99 % of the\n"
-            "values map to the 'size' length; weak spots get short arrows)."
+            "Untick to scale the length with the field strength: the same\n"
+            "field strength gives the same arrow length in every frame (the\n"
+            "reference is measured once over the whole series), so the real\n"
+            "amplitude change over time stays visible (99 % of it maps to the\n"
+            "'size' length)."
         )
         self.chk_vec_norm.toggled.connect(self._on_vector_option_changed)
+        self.chk_vec_overlay = QCheckBox("field underneath")
+        self.chk_vec_overlay.setChecked(DEFAULT_VECTORS["overlay"])
+        self.chk_vec_overlay.setToolTip(
+            "Also draw the coloured field representation (slice / surface /\n"
+            "iso-surface) underneath the arrows. Off by default: an opaque\n"
+            "surface or volume hides the arrows that point into it, so the\n"
+            "arrows alone are the representation (as in ParaView)."
+        )
+        self.chk_vec_overlay.toggled.connect(self._on_vector_option_changed)
         row_vec.addWidget(self.chk_vectors)
         row_vec.addWidget(self.spn_vec_size)
         row_vec.addWidget(self.spn_vec_count)
         row_vec.addWidget(self.chk_vec_norm)
+        row_vec.addWidget(self.chk_vec_overlay)
         row_vec.addStretch(1)
         root.addLayout(row_vec)
 
@@ -981,6 +1005,8 @@ class VtkFieldViewer(QWidget):
         self._series_times, self._series_freqs = [], []
         self._current_path = None
         self._grid = None
+        self._vec_series_ref = None
+        self._vec_ref_name = None
         self._slice_pos_exact = None
         self._scalar_name = None
         self._data_range = (0.0, 1.0)
@@ -1189,6 +1215,8 @@ class VtkFieldViewer(QWidget):
         if not path.exists():
             return
         self._detect_series(path)
+        self._vec_series_ref = None  # a new series needs a new length reference
+        self._vec_ref_name = None
         if not self._read_into_grid(path, show_errors=True):
             return
         self._current_path = path
@@ -1530,6 +1558,7 @@ class VtkFieldViewer(QWidget):
             "size": float(self.spn_vec_size.value()),
             "max_arrows": int(self.spn_vec_count.value()),
             "normalize": bool(self.chk_vec_norm.isChecked()),
+            "overlay": bool(self.chk_vec_overlay.isChecked()),
         }
 
     def set_vector_options(self, options: dict | None, *, notify: bool = False) -> None:
@@ -1546,6 +1575,7 @@ class VtkFieldViewer(QWidget):
         try:
             opts["enabled"] = bool(opts["enabled"])
             opts["normalize"] = bool(opts["normalize"])
+            opts["overlay"] = bool(opts["overlay"])
             opts["size"] = min(8.0, max(0.1, float(opts["size"])))
             opts["max_arrows"] = min(50000, max(50, int(opts["max_arrows"])))
         except (TypeError, ValueError):
@@ -1555,6 +1585,7 @@ class VtkFieldViewer(QWidget):
             (self.spn_vec_size, opts["size"]),
             (self.spn_vec_count, opts["max_arrows"]),
             (self.chk_vec_norm, opts["normalize"]),
+            (self.chk_vec_overlay, opts["overlay"]),
         ):
             widget.blockSignals(True)
             if isinstance(widget, QCheckBox):
@@ -1623,6 +1654,72 @@ class VtkFieldViewer(QWidget):
         steps = [s / c for s, c in zip(spans, cells) if c > 0 and s > 0]
         return min(steps) if steps else 1.0
 
+    def _vector_reference(self, per_frame: float) -> float:
+        """Reference |field| the arrow lengths are scaled against.
+
+        With a loaded series the reference is measured once over the whole
+        series (sampled): an arrow of equal strength then keeps its length from
+        frame to frame. The old per-frame 99 % value made every frame rescale
+        itself, so the arrows "breathed" and the real amplitude change over
+        time was masked. Without a series the current frame is used.
+        """
+        if not self._series:
+            return per_frame
+        name = self._vector_array_name()
+        if self._vec_series_ref is None or self._vec_ref_name != name:
+            self._vec_ref_name = name
+            self._vec_series_ref = self._measure_series_reference()
+        return self._vec_series_ref or per_frame
+
+    def _measure_series_reference(self, sample: int = 24) -> float:
+        """99th percentile of |field| over the series (sampled, cached).
+
+        Reads at most ``sample`` frames, so even a series with thousands of
+        steps costs only a fraction of a second.
+        """
+        name = self._vector_array_name()
+        if not name or not self._series:
+            return 0.0
+        import numpy as np
+        from vtk.util import numpy_support as ns
+
+        vtk = getattr(self, "_vtk", None) or _vtk()
+        files = list(self._series)
+        if len(files) > sample:
+            stride = len(files) / float(sample)
+            idxs = sorted({min(int(i * stride), len(files) - 1) for i in range(sample)})
+        else:
+            idxs = list(range(len(files)))
+        refs: list[float] = []
+        for i in idxs:
+            try:
+                reader = _make_reader(vtk, files[i])
+                reader.SetFileName(str(files[i]))
+                reader.Update()
+                arr = reader.GetOutput().GetPointData().GetArray(name)
+                if arr is None or arr.GetNumberOfTuples() == 0:
+                    continue
+                vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
+                mags = np.linalg.norm(vals, axis=1) if vals.ndim == 2 else np.abs(vals)
+                mags = mags[np.isfinite(mags)]
+                if mags.size:
+                    refs.append(float(np.percentile(mags, 99.0)))
+            except Exception:  # noqa: BLE001 — one broken frame must not stop this
+                continue
+        refs = [r for r in refs if r > 0.0]  # empty frames (t = 0) carry no scale
+        if not refs:
+            return 0.0
+        # Median (not max): a series that starts with the huge excitation pulse
+        # would otherwise shrink every steady-state arrow to nothing. The
+        # median keeps the lengths comparable across the frames that matter.
+        ref = float(np.median(refs))
+        print(
+            f"VTK viewer: vector length reference |{name}| = {ref:.4g} "
+            f"(median over {len(refs)} of {len(files)} step(s), "
+            f"range {min(refs):.3g}..{max(refs):.3g})"
+        )
+        return ref
+
     @staticmethod
     def _vector_input(vtk, data, rep: str):
         """Geometry the arrows sit on (same shape as the visible representation).
@@ -1663,13 +1760,20 @@ class VtkFieldViewer(QWidget):
         arr = sampled.GetPointData().GetArray(name)
         if arr is None or arr.GetNumberOfTuples() == 0:
             return None
+        # vtkGlyph3D orients along the *active* vectors of its input; a filter
+        # chain or an older export may have lost that flag, which leaves the
+        # arrows pointing in a constant direction while only their length
+        # follows the field - set it explicitly.
+        sampled.GetPointData().SetActiveVectors(name)
 
         # 99th percentile instead of the maximum: one hot spot must not shrink
         # every other arrow to nothing.
         vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
         mags = np.linalg.norm(vals, axis=1) if vals.ndim == 2 else np.abs(vals)
         mags = mags[np.isfinite(mags)]
-        vref = float(np.percentile(mags, 99.0)) if mags.size else 0.0
+        vref = self._vector_reference(
+            float(np.percentile(mags, 99.0)) if mags.size else 0.0
+        )
 
         spacing = self._characteristic_spacing()
         # mean distance of the sampled points: cell size scaled by the decimation
@@ -1790,6 +1894,17 @@ class VtkFieldViewer(QWidget):
             mapper.ScalarVisibilityOff()
         return mapper, data
 
+    def _show_field_actor(self) -> bool:
+        """Draw the scalar field representation underneath the arrows?
+
+        False while the arrows are shown (the default): an opaque slice,
+        surface or volume covers every arrow that points into it, which is what
+        made the vector display unusable. The "field underneath" option brings
+        the colour plot back for those who want the overlay.
+        """
+        vectors_on = bool(self.chk_vectors.isChecked()) and self._has_vectors
+        return (not vectors_on) or bool(self._vectors.get("overlay"))
+
     def _refresh_display(self, *_args) -> None:
         if self._renderer is None or self._grid is None:
             return
@@ -1806,7 +1921,11 @@ class VtkFieldViewer(QWidget):
 
         lut = self._lookup_table()
         mapper, base_data = self._make_mapper(vtk, lut, loc, name)
-        if mapper is not None:
+        # The arrows replace the scalar representation: an opaque slice /
+        # surface / volume covers the arrows that point into it. "field
+        # underneath" brings the colour plot back as an overlay.
+        show_field = self._show_field_actor()
+        if mapper is not None and show_field:
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
             if rep == "Wireframe":
@@ -1815,10 +1934,11 @@ class VtkFieldViewer(QWidget):
             if name:
                 actor.GetMapper().SetLookupTable(lut)
             self._renderer.AddActor(actor)
-            if name:
-                self._renderer.AddActor2D(
-                    self._make_scalar_bar(vtk, lut, name, self._field_unit)
-                )
+        if mapper is not None and name:
+            # also explains the arrow colours while the field plot is hidden
+            self._renderer.AddActor2D(
+                self._make_scalar_bar(vtk, lut, name, self._field_unit)
+            )
 
         # vector glyphs (ParaView "Glyph") on top of the current representation
         self._update_vector_controls()
@@ -1982,9 +2102,11 @@ class VtkFieldViewer(QWidget):
             self.lbl_level.setText(f"{n} points")
         if self._series:
             i = self.slider_time.value()
-            self.lbl_time_info.setText(
-                f"{i + 1}/{len(self._series)}  ({self._step_label(i)})"
-            )
+            info = f"{i + 1}/{len(self._series)}  ({self._step_label(i)})"
+            motion = self._vector_motion_text(i)
+            if motion:
+                info += f"   |   {motion}"
+            self.lbl_time_info.setText(info)
         self._update_sim_time_label()
         self._update_field_label(path)
         print(f"VTK viewer: loaded {path.name} ({n} points, scalar={name})")
@@ -1994,6 +2116,56 @@ class VtkFieldViewer(QWidget):
         lab = self._series_labels[i] if i < len(self._series_labels) else str(i)
         m = re.fullmatch(r"t(\d+)", str(lab))
         return f"step {m.group(1)}" if m else str(lab)
+
+    def _vector_motion_text(self, idx: int) -> str:
+        """How much the arrows re-orient from the previous step, as short text.
+
+        Answers "do the vectors actually move?" with a number: the share of
+        arrows that flipped and the median cosine between the field direction
+        of this and the previous step (-1 = reversed, +1 = unchanged). Only
+        while stepping by hand — during Play the extra file reads are not worth
+        it.
+        """
+        if not self._series or not self.chk_vectors.isChecked():
+            return ""
+        if self.btn_play.isChecked() or idx <= 0 or idx >= len(self._series):
+            return ""
+        name = self._vector_array_name()
+        if not name:
+            return ""
+        import numpy as np
+        from vtk.util import numpy_support as ns
+
+        vtk = getattr(self, "_vtk", None) or _vtk()
+
+        def directions(path):
+            try:
+                reader = _make_reader(vtk, path)
+                reader.SetFileName(str(path))
+                reader.Update()
+                arr = reader.GetOutput().GetPointData().GetArray(name)
+            except Exception:  # noqa: BLE001 — a broken frame: no readout
+                return None
+            if arr is None or arr.GetNumberOfTuples() == 0:
+                return None
+            vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
+            if vals.ndim != 2:
+                return None
+            mags = np.linalg.norm(vals, axis=1)
+            ok = mags > 1e-30
+            if not ok.any():
+                return None
+            return vals[ok] / mags[ok, None]
+
+        prev = directions(self._series[idx - 1])
+        cur = directions(self._series[idx])
+        if prev is None or cur is None or prev.shape != cur.shape or not prev.size:
+            return ""
+        cos = np.sum(prev * cur, axis=1)
+        return (
+            f"arrows: {100.0 * float(np.mean(cos < 0)):.0f}% reversed vs. previous "
+            f"step (median cos {float(np.median(cos)):+.2f})"
+        )
 
     @staticmethod
     def format_sim_time(seconds: float | None) -> str:

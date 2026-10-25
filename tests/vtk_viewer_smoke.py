@@ -275,7 +275,8 @@ def main() -> int:
     v.set_vector_options({"enabled": True, "size": 2.5, "max_arrows": 500,
                           "normalize": False})
     assert v.vector_options() == {"enabled": True, "size": 2.5,
-                                  "max_arrows": 500, "normalize": False}
+                                  "max_arrows": 500, "normalize": False,
+                                  "overlay": False}
     v.set_vector_options({"size": 999.0, "max_arrows": 1})
     assert v.vector_options()["size"] == 8.0 and v.vector_options()["max_arrows"] == 50
     v.set_vector_options(dict(DEFAULT_VECTORS))
