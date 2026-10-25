@@ -86,9 +86,9 @@ class MainWindow(QMainWindow):
         self._viewer_geometry_sig: str | None = None
         #: True while the tree / material list is rebuilt (programmatic selection)
         self._tree_rebuilding = False
-        #: state of the last mouse press in the tree (toggle on the second click)
-        self._tree_press_selected = False
-        self._tree_press_key: tuple[str, int] | None = None
+        #: serial of the selection (a click that changed it must not toggle)
+        self._tree_selection_serial = 0
+        self._tree_last_click_serial = -1
         self._tree_last_click = 0.0
         # user deleted the mesh -> suppress the automatic rebuild until the next
         # explicit Build Mesh
@@ -332,9 +332,8 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.tree)
         self.tree.itemDoubleClicked.connect(self._on_tree_double_clicked)
         # selecting an entry highlights the object in the Mesh Viewer; a second
-        # click on the already highlighted row clears it again
+        # click on the already selected row toggles only the viewer mark
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
-        self.tree.itemPressed.connect(self._on_tree_item_pressed)
         self.tree.itemClicked.connect(self._on_tree_item_clicked)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
@@ -2151,6 +2150,7 @@ class MainWindow(QMainWindow):
         tree is rebuilt after every edit and re-selects the same row, which must
         not pull the plane back while working.
         """
+        self._tree_selection_serial += 1
         items = self.tree.selectedItems()
         if not items:
             self._highlight_in_viewer([], [], "", focus=False)  # no highlight
@@ -2165,43 +2165,32 @@ class MainWindow(QMainWindow):
             focus=not self._tree_rebuilding,
         )
 
-    def _on_tree_item_pressed(self, item) -> None:
-        """Remember whether the pressed row was already selected.
-
-        Qt emits ``itemPressed`` *before* the selection model updates, so this
-        is the state the click started from — needed to tell "select" from
-        "click the selected row again".
-        """
-        k = item.data(Qt.UserRole)
-        i = item.data(Qt.UserRole + 1)
-        self._tree_press_selected = bool(item.isSelected())
-        self._tree_press_key = (
-            "" if k is None else str(k),
-            -1 if i is None else int(i),
-        )
-
     def _on_tree_item_clicked(self, item) -> None:
-        """A second click on the already highlighted row clears the highlight."""
+        """A repeat click on the selected row toggles the viewer mark.
+
+        The row itself stays selected (the tree selection is the user's
+        working selection). Only the mark in the Mesh Viewer is cleared /
+        restored, so a second click does not make the row disappear.
+        """
         now = time.monotonic()
         last = getattr(self, "_tree_last_click", 0.0)
         self._tree_last_click = now
+        changed = self._tree_selection_serial != self._tree_last_click_serial
+        self._tree_last_click_serial = self._tree_selection_serial
+        if changed:
+            return  # this click changed the selection: the mark was just set
         if now - last < 0.30:
-            # second click of a double-click (opens the editor) - keep the mark
-            return
-        if not self._tree_press_selected:
-            return
+            return  # second click of a double-click (opens the editor)
         k = item.data(Qt.UserRole)
         i = item.data(Qt.UserRole + 1)
-        key = ("" if k is None else str(k), -1 if i is None else int(i))
-        if key != self._tree_press_key:
-            return
-        self.tree.blockSignals(True)
-        try:
-            self.tree.clearSelection()
-            self.tree.setCurrentRow(-1)
-        finally:
-            self.tree.blockSignals(False)
-        self._highlight_in_viewer([], [], "", focus=False)
+        kind = "" if k is None else str(k)
+        idx = -1 if i is None else int(i)
+        boxes, names, label = self._tree_selection_highlight(kind, idx)
+        current = getattr(self.mesh_viewer, "highlight", lambda: {})()
+        if label and current.get("label") == label:
+            self._highlight_in_viewer([], [], "", focus=False)
+        elif label:
+            self._highlight_in_viewer(boxes, names, label, focus=False)
 
     def _refresh_ports(self) -> None:
         self.port_list.clear()
