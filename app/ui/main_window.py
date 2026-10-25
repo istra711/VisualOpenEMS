@@ -494,6 +494,8 @@ class MainWindow(QMainWindow):
         viewer_layout.setContentsMargins(0, 0, 0, 0)
         self.mesh_viewer = MeshGeometryViewer(work_dir=self.settings.work_path())
         self.mesh_viewer.mesh_edited.connect(self._on_mesh_edited)
+        self.mesh_viewer.critical_changed.connect(self._on_critical_overlay_changed)
+        self.mesh_viewer.critical_cells_changed.connect(self._sync_critical_menu)
         self.mesh_viewer.rebuild_requested.connect(self._on_rebuild_scratch)
         self.mesh_viewer.port_place_requested.connect(self._on_mesh_port_place)
         self.mesh_viewer.port_mode_changed.connect(self._on_mesh_port_mode_changed)
@@ -968,6 +970,38 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+Shift+M",
             tip="All mesh parameters in one window (Apply / Close)",
         )
+        # V1-V3: the repair options are also reachable without opening a
+        # window (same state as the Mesh Parameters checkbox / the viewer's
+        # right-click submenu).
+        self.act_enforce_min = add_action(
+            mmenu,
+            "Enforce min cell size (repair)",
+            slot=self._on_toggle_enforce_min_cellsize,
+            tip="Treat 'Min cell size' as a hard lower bound: after easyMesh a "
+            "cell below it whose faces are not both authored coordinates is "
+            "merged into its smaller neighbour and the grading is re-spaced. "
+            "Genuine geometry gaps stay and are reported. Off = easyMesh decides.",
+        )
+        self.act_enforce_min.setCheckable(True)
+        self.act_enforce_min.setChecked(
+            bool(getattr(self.project.mesh, "enforce_min_cellsize", False))
+        )
+        add_action(
+            mmenu,
+            "Repair critical cells\u2026",
+            slot=self._on_repair_critical_cells,
+            tip="Open the Mesh Viewer and the repair preview for the worst open "
+            "finding (needs a built mesh). The rule is stored in the project, so "
+            "the preview and the solver script build the same grid.",
+        )
+        self.act_critical_overlay = add_action(
+            mmenu,
+            "Mark critical cells",
+            slot=self._on_toggle_critical_overlay,
+            tip="Draw the cells that cost runtime in the Mesh Viewer (same as "
+            "the viewer's right-click entry; default off)",
+        )
+        self.act_critical_overlay.setCheckable(True)
         mmenu.addSeparator()
         add_action(mmenu, "Mesh Report", slot=self._show_mesh_report_tab)
         add_action(
@@ -1139,6 +1173,97 @@ class MainWindow(QMainWindow):
             f"Mesh editor: {na} added, {nr} removed{extra} (applied to the "
             "current mesh; click Build Mesh to save csx.xml)"
         )
+        self._sync_mesh_menu_actions()
+
+    # ------------------------------------------------------------------ #
+    # Mesh menu: repair options (V1-V3)
+    # ------------------------------------------------------------------ #
+    def _on_toggle_enforce_min_cellsize(self, checked: bool) -> None:
+        """Mesh menu: treat Min cell size as a hard lower bound (V2)."""
+        from app.meshing.coord_diag import requested_min_cellsize
+
+        mesh = getattr(self.project, "mesh", None)
+        if mesh is None:
+            return
+        mesh.enforce_min_cellsize = bool(checked)
+        dlg = self._mesh_params_dlg
+        if dlg is not None:
+            box = getattr(dlg.panel, "chk_enforce_min", None)
+            if box is not None:
+                box.blockSignals(True)
+                box.setChecked(bool(checked))
+                box.blockSignals(False)
+        unit = str(getattr(mesh, "drawing_unit", "mm") or "mm")
+        if checked:
+            floor = requested_min_cellsize(mesh)
+            if floor:
+                self._log(
+                    f"Min cell enforcement: ON - {float(floor):.6g} {unit} is now "
+                    "a hard floor (repair pass after easyMesh; build the mesh "
+                    "to apply)"
+                )
+            else:
+                self._log(
+                    "Min cell enforcement: ON but no Min cell size is set - "
+                    "set it in Mesh Parameters first"
+                )
+        else:
+            self._log("Min cell enforcement: OFF - easyMesh decides the cells")
+        self._refresh_run_script_if_generated()
+
+    def _on_toggle_critical_overlay(self, checked: bool) -> None:
+        """Mesh menu: draw/hide the critical-cell marks (like right-click)."""
+        self.mesh_viewer.set_critical_enabled(bool(checked))
+        if checked and not self.mesh_viewer.critical_count():
+            self._log("Critical cells: no marks yet - build the mesh first")
+
+    def _on_critical_overlay_changed(self, on: bool) -> None:
+        """Keep the checkable menu entry in sync with the viewer."""
+        act = getattr(self, "act_critical_overlay", None)
+        if act is None:
+            return
+        act.blockSignals(True)
+        act.setChecked(bool(on))
+        act.blockSignals(False)
+
+    def _sync_critical_menu(self) -> None:
+        """Show the open finding count on the Mesh-menu entry."""
+        act = getattr(self, "act_critical_overlay", None)
+        if act is None:
+            return
+        try:
+            n_open = self.mesh_viewer.critical_open_count()
+        except Exception:  # noqa: BLE001
+            n_open = 0
+        act.setText(
+            f"Mark critical cells ({n_open})" if n_open else "Mark critical cells"
+        )
+
+    def _sync_mesh_menu_actions(self) -> None:
+        """Mirror MeshSpec + viewer state into the Mesh-menu check states."""
+        act = getattr(self, "act_enforce_min", None)
+        if act is not None:
+            act.blockSignals(True)
+            act.setChecked(
+                bool(getattr(self.project.mesh, "enforce_min_cellsize", False))
+            )
+            act.blockSignals(False)
+        self._sync_critical_menu()
+
+    def _on_repair_critical_cells(self) -> None:
+        """Mesh menu: preview/repair the worst open critical cell (V1/V3)."""
+        self._show_mesh_viewer()
+        if not self.mesh_viewer.critical_count():
+            self._log("Critical cells: no marks yet - build the mesh first")
+            return
+        label = self.mesh_viewer.repair_worst_open_cell()
+        if label is None:
+            self._log(
+                "Critical cells: nothing repairable - every open region is "
+                "bounded by authored coordinates (accept it instead)"
+            )
+        else:
+            self._log(f"Critical cells: repair preview for {label}")
 
     def _on_rebuild_scratch(self) -> None:
         """Discard all manual lines and rebuild the mesh from scratch."""
@@ -2114,6 +2239,7 @@ class MainWindow(QMainWindow):
         self._update_excitation_state()
         self.cmb_preset.setCurrentText(m.preset)
         self.cmb_unit.setCurrentText(m.drawing_unit)
+        self._sync_mesh_menu_actions()
         if hasattr(self, "cmb_coords"):
             self.cmb_coords.setCurrentText(
                 str(getattr(m, "coord_system", "cartesian") or "cartesian")
@@ -2319,6 +2445,7 @@ class MainWindow(QMainWindow):
         if dlg is None:
             return
         dlg.panel.write_to_project(self.project)
+        self._sync_mesh_menu_actions()
         # mirror into the Mesh tab widgets (build re-syncs from that panel)
         m = self.project.mesh
         self._freq_guard = True

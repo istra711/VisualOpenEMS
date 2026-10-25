@@ -328,6 +328,57 @@ def test_project_panel_toggle() -> None:
     print("PROJECT PANEL TOGGLE OK")
 
 
+def test_mesh_menu_repair_options() -> None:
+    """Mesh menu: enforcement switch, critical-cell overlay, repair entry."""
+    w = _win()
+    mesh_menu = _menu("Mesh")
+    texts = [_strip(a.text()) for a in mesh_menu.actions() if not a.isSeparator()]
+    assert "Enforce min cell size (repair)" in texts, texts
+    assert "Repair critical cells\u2026" in texts, texts
+    assert any(t.startswith("Mark critical cells") for t in texts), texts
+
+    # --- enforcement switch writes the MeshSpec -------------------------
+    act = _find(mesh_menu, "Enforce min cell size (repair)")
+    assert act.isCheckable(), "enforcement entry must be checkable"
+    before = bool(getattr(w.project.mesh, "enforce_min_cellsize", False))
+    assert act.isChecked() == before
+    act.trigger()
+    assert bool(w.project.mesh.enforce_min_cellsize) is (not before)
+    assert act.isChecked() is (not before)
+
+    # --- the Mesh Parameters checkbox follows, and Apply mirrors back ----
+    _find(mesh_menu, "Mesh Parameters\u2026").trigger()
+    dlg = w._mesh_params_dlg
+    assert dlg is not None
+    assert dlg.panel.chk_enforce_min.isChecked() is (not before)
+    dlg.panel.chk_enforce_min.setChecked(before)
+    dlg.btn_apply.click()
+    assert act.isChecked() is before
+    act.trigger()  # restore the toggled state, then put it back
+    assert bool(w.project.mesh.enforce_min_cellsize) is (not before)
+    act.trigger()
+    assert bool(w.project.mesh.enforce_min_cellsize) is before
+
+    # --- overlay entry and the viewer stay in sync ----------------------
+    overlay = next(
+        a for a in mesh_menu.actions() if _strip(a.text()).startswith("Mark critical cells")
+    )
+    assert overlay.isCheckable()
+    start = bool(w.mesh_viewer._critical_on)
+    overlay.trigger()
+    assert w.mesh_viewer._critical_on is (not start)
+    assert overlay.isChecked() is (not start)
+    # the right-click entry changes the same state
+    w.mesh_viewer.set_critical_enabled(start)
+    assert overlay.isChecked() is start
+    w.mesh_viewer.set_critical_enabled(False)
+    assert overlay.isChecked() is False
+
+    # --- 'Repair critical cells…' without a mesh must not crash ---------
+    _find(mesh_menu, "Repair critical cells\u2026").trigger()
+    print("MESH MENU REPAIR OPTIONS OK")
+
+
 def test_pcb_hairpin_preset() -> None:
     """Presets → PCB Hairpin Bandpass loads the 2.4 GHz RT/duroid project."""
     from PySide6.QtCore import Qt
@@ -367,6 +418,7 @@ def main() -> int:
         test_mesh_params_dialog,
         test_log_mesh_report_tab,
         test_mesh_viewer_scene_info_tab,
+        test_mesh_menu_repair_options,
         test_pcb_hairpin_preset,
     ):
         try:

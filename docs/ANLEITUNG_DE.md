@@ -352,6 +352,11 @@ Bericht. Der Schalter ist opt-in, damit bestehende Presets unverändert
 reproduzierbar bleiben; easyMesh bekommt die Untergrenze dabei nicht mehr zu
 sehen (sonst verfeinert es die lateralen Achsen gegen die Reparatur).
 
+Beides liegt auch im **Mesh-Menü**: „Enforce min cell size (repair)" (spiegelt
+die Checkbox), „Repair critical cells…" (öffnet den Viewer und die Vorschau für
+den schlimmsten offenen Befund) und „Mark critical cells (N)" (schaltet das
+Overlay ein/aus, mit der Zahl der offenen Befunde).
+
 ### 5.2 Material / Assignment
 
 1. **Add Material…** — z. B. `substrate` (εr=4,4, tanδ=0,02), `copper`

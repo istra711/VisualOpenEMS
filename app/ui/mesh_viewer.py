@@ -256,6 +256,10 @@ class MeshGeometryViewer(QWidget):
     #: emitted when the user changes the manual mesh-line overrides (the caller
     #: may refresh the scene info / mark the mesh stale for a rebuild).
     mesh_edited = Signal()
+    #: the critical-cell overlay was switched on/off (right-click or Mesh menu)
+    critical_changed = Signal(bool)
+    #: the list of critical-cell marks changed (build, accept, remove, repair)
+    critical_cells_changed = Signal()
     #: emitted by "Rebuild from scratch" — the caller clears the overrides and
     #: runs a full (easyMesh) build, discarding the manual lines.
     rebuild_requested = Signal()
@@ -1336,6 +1340,7 @@ class MeshGeometryViewer(QWidget):
             self._redraw()
         except Exception as e:  # noqa: BLE001 — never crash the viewer
             print(f"mesh viewer critical redraw error: {e}")
+        self.critical_cells_changed.emit()
 
     def add_critical_cell(self, cell) -> None:
         """Append one mark (e.g. the engine's smallest-timestep cell)."""
@@ -1346,6 +1351,7 @@ class MeshGeometryViewer(QWidget):
             self._redraw()
         except Exception as e:  # noqa: BLE001
             print(f"mesh viewer critical redraw error: {e}")
+        self.critical_cells_changed.emit()
 
     def set_critical_enabled(self, on: bool) -> None:
         """Draw / hide the critical-cell marks (right-click menu)."""
@@ -1354,9 +1360,37 @@ class MeshGeometryViewer(QWidget):
             self._redraw()
         except Exception as e:  # noqa: BLE001
             print(f"mesh viewer critical redraw error: {e}")
+        self.critical_changed.emit(self._critical_on)
 
     def critical_count(self) -> int:
         return len(self._critical)
+
+    def critical_open_count(self) -> int:
+        """Marks that are neither accepted nor already repaired away."""
+        return sum(
+            1 for c in self._critical if not getattr(c, "accepted", False)
+        )
+
+    def repair_worst_open_cell(self) -> str | None:
+        """Open the repair preview for the worst open, repairable mark.
+
+        Returns the mark's label, or ``None`` when nothing is repairable (all
+        regions accepted or bounded by authored coordinates).
+        """
+        candidates = [
+            c
+            for c in self._critical
+            if not getattr(c, "accepted", False)
+            and bool(getattr(c, "repairable", True))
+        ]
+        if not candidates:
+            return None
+        worst = max(
+            candidates, key=lambda c: float(getattr(c, "penalty", 1.0) or 1.0)
+        )
+        self.set_critical_enabled(True)
+        self._critical_repair(worst)
+        return worst.label
 
     def _critical_marks(self) -> list:
         """Marks to draw (empty while the toggle is off)."""
@@ -1594,6 +1628,7 @@ class MeshGeometryViewer(QWidget):
         self._critical = [
             c for c in self._critical if not self._mark_inside(c, axis, rep.lo, rep.hi)
         ]
+        self.critical_cells_changed.emit()
         self._refresh_editor()
         try:
             self._redraw()
@@ -1664,6 +1699,7 @@ class MeshGeometryViewer(QWidget):
             )
         ]
         self._apply_editor_change()
+        self.critical_cells_changed.emit()
 
     def _critical_snap(self, cell) -> None:
         """Drop the auto line of a duplicate-scale sliver (same as remove)."""
@@ -1699,6 +1735,7 @@ class MeshGeometryViewer(QWidget):
             self._redraw()
         except Exception:  # noqa: BLE001
             pass
+        self.critical_cells_changed.emit()
         self.mesh_edited.emit()
 
     def _critical_explain(self, cell) -> None:

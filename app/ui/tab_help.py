@@ -91,7 +91,8 @@ Views (tabs inside the plot area)
     repair) (stays grey, no longer an open finding) and Explain… (cause, source,
     penalty and what a repair would do). Repair is disabled for cause
     `geometrie`: both faces are authored coordinates, the geometry needs that
-    cell.
+    cell. The Mesh menu mirrors this: *Mark critical cells (N)* toggles the
+    overlay, *Repair critical cells…* opens the worst open finding.
 
 Navigation
   • Mouse wheel — zoom at cursor (works even without the toolbar zoom).
@@ -395,7 +396,8 @@ Fields
     below it are merged into the smaller neighbour and the grading is re-spaced;
     cells whose two faces are authored coordinates stay and are reported as
     "not reached". While the switch is on, easyMesh does not see the floor (it
-    would otherwise refine the lateral axes against the repair).
+    would otherwise refine the lateral axes against the repair). The same switch
+    is a checkable entry in the Mesh menu.
 
 Readout (live, before Apply)
   • λ_air at f_max, max/target cell size, current preset + frequencies.

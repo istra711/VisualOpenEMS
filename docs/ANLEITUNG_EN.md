@@ -346,6 +346,11 @@ from the geometry) stay and are reported as "not reached". The switch is opt-in
 so existing presets stay reproducible; easyMesh no longer sees the floor (it
 would otherwise refine the lateral axes against the repair).
 
+Both are also in the **Mesh menu**: "Enforce min cell size (repair)" (mirrors
+the checkbox), "Repair critical cells…" (opens the viewer and the preview for
+the worst open finding) and "Mark critical cells (N)" (toggles the overlay and
+shows the number of open findings).
+
 ### 5.2 Material / assignment
 
 1. **Add Material…** — e.g. `substrate` (εr=4.4, tanδ=0.02), `copper`
