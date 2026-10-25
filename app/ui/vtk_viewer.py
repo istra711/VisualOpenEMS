@@ -2342,6 +2342,21 @@ class VtkFieldViewer(QWidget):
                     "(pip install imageio imageio-ffmpeg).",
                 )
                 return None
+            # The distributed EXE does not bundle ffmpeg (it would add ~60 MB
+            # to the download); the user installs imageio-ffmpeg once or points
+            # IMAGEIO_FFMPEG_EXE at an ffmpeg.exe.
+            try:
+                import imageio_ffmpeg  # noqa: F401
+            except ImportError:
+                QMessageBox.warning(
+                    self,
+                    "Save video",
+                    "MP4 export needs ffmpeg, which this build does not bundle\n"
+                    "(it would add ~60 MB to the download).\n\n"
+                    "Install it once with:  pip install imageio-ffmpeg\n"
+                    "or set IMAGEIO_FFMPEG_EXE to an ffmpeg.exe on this machine.",
+                )
+                return None
             try:
                 writer = imageio.get_writer(
                     str(target),

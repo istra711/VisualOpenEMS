@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Smaller Windows EXE** (`build_exe.py`): the frozen bundle no longer ships
+  the bundled ffmpeg (MP4 export now asks for `imageio-ffmpeg` / an ffmpeg on
+  `PATH`), the Qt Quick/Qml/Pdf/Network DLLs and plugins, the software-OpenGL
+  fallback (`opengl32sw.dll`) and the unused pure-Python stacks that only enter
+  through optional imports (django, astropy, sympy, sqlalchemy, networkx,
+  pytest, hypothesis). 248.6 -> **172.3 MB**. `OPENEMS_KEEP_OPENGL_SW=1` keeps
+  the software-OpenGL fallback for machines without a GPU driver.
+
 ## [0.6.0] - 2026-10-25
 
 ### Added
