@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-25
+
 ### Added
 
 - **Mesh timing / feasibility report** (`app/meshing/timing.py`, Mesh menu
@@ -1827,4 +1829,6 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.7]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.7
 [0.5.8]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.8
 [0.5.9]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.9
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.5.4...HEAD
+[0.5.10]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.10
+[0.6.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.6.0
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.6.0...HEAD
