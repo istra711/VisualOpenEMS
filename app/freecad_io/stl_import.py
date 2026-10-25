@@ -162,10 +162,12 @@ def load_stl_meshes(
         if tris is None or not len(tris):
             result.warnings.append(f"No triangles in {mesh_path}")
             continue
-        # STL is float32: a coordinate of 1.6 mm comes back as 1.6000000238 and
-        # becomes a second mesh line next to the float64 1.6 of boxes/ports ->
-        # sliver cells + grading warnings. Round to 0.1 um (irrelevant for FDTD).
-        tris = np.round(np.asarray(tris, dtype=np.float64), 4)
+        # Keep the full tessellation here: the *coordinate grid* is decided when
+        # the CSX is built (MeshSpec.align_coordinates -> align_coordinates()),
+        # so one switch rules box / port / dump / triangle coordinates alike.
+        # (Historically this rounded to 0.1 um to avoid sliver cells next to the
+        # then-float64 box coordinates; f32() on the boxes superseded that.)
+        tris = np.asarray(tris, dtype=np.float64)
         name = _unique_name(str(cand["name"]), taken)
         npy = ""
         if write_npy:

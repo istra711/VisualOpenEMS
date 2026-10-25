@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -96,3 +97,26 @@ def test_add_triangle_mesh_keeps_stl_for_non_box(tmp_path):
     prim = add_triangle_mesh(prop, name="wedge", stl_path=stl, priority=10)
     assert "Polyhedron" in type(prim).__name__
     assert stl.exists()
+
+
+def test_triangle_mesh_vertices_use_the_float32_grid():
+    """P1: a mesh vertex sits on the float32 grid of boxes/ports."""
+    from CSXCAD import ContinuousStructure
+
+    from app.csxcad_builder.quantize import f32
+    from app.csxcad_builder.triangle_mesh import add_triangle_mesh
+
+    # a tessellation vertex that is neither a float32 nor a 0.1 um grid point
+    x = 20.00006
+    flat = box_tris([x, 0, 1.6], [30, 4, 1.6])  # zero thickness -> stays a mesh
+    csx = ContinuousStructure()
+    prop = csx.AddMetal("copper")
+    aligned = add_triangle_mesh(prop, name="aligned", triangles=flat, priority=7)
+    legacy = add_triangle_mesh(
+        prop, name="legacy", triangles=flat, priority=7, align=False
+    )
+    a_lo = aligned.GetBoundBox()[0]
+    l_lo = legacy.GetBoundBox()[0]
+    assert a_lo[0] == f32(x)  # the grid boxes/ports use
+    assert l_lo[0] == f32(round(x, 4))  # legacy 0.1 um decimal rounding
+    assert a_lo[0] != l_lo[0]  # the offset P1 removes

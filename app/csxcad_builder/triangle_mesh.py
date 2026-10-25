@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from app.csxcad_builder.quantize import f32
+from app.csxcad_builder.quantize import align_coordinates, f32
 
 
 def axis_aligned_box_bounds(
@@ -41,11 +41,14 @@ def axis_aligned_box_bounds(
     return lo, hi
 
 
-def _poly_from_triangles(prop: Any, triangles: np.ndarray, priority: int = 10) -> Any:
+def _poly_from_triangles(
+    prop: Any, triangles: np.ndarray, priority: int = 10, *, aligned: bool = True
+) -> Any:
     """Add triangles as a CSPrimPolyhedron (triangle faces) to a CSXCAD property."""
-    # 0.1 um grid: STL float32 vertices (1.6 -> 1.6000000238) must not create
-    # sliver cells next to float64 box/port coordinates.
-    tris = np.round(np.asarray(triangles, dtype=float), 4)
+    # Same coordinate grid as boxes/ports/dumps (see quantize.align_coordinates):
+    # a vertex and a box face that should be equal must be bit-identical.
+    # Legacy mode (aligned=False) rounds to 0.1 um instead.
+    tris = align_coordinates(triangles, aligned=aligned)
     if tris.ndim != 3 or tris.shape[-1] != 3 or tris.shape[1] != 3:
         raise ValueError(f"triangles must be (N,3,3), got {tris.shape}")
     ph = prop.AddPolyhedron(priority=priority)
@@ -87,6 +90,7 @@ def add_triangle_mesh(
     stl_path: str | Path | None = None,
     mesh_path: str | Path | None = None,
     priority: int = 10,
+    align: bool = True,
 ) -> Any:
     """Attach a triangle mesh to a CSXCAD property without CSX.AddMesh.
 
@@ -99,6 +103,11 @@ def add_triangle_mesh(
     is silently skipped. So the STL is the primary path; an .stl is written
     next to the .npy when only the triangle array is given.
 
+    ``align`` (default True) puts the vertices on the float32 grid that boxes,
+    ports, dumps and the NF2FF box already use, so "equal" coordinates are
+    bit-identical; ``False`` restores the legacy 0.1 um decimal rounding
+    (``MeshSpec.align_coordinates``).
+
     Returns the created primitive.
     """
     stl = Path(stl_path) if stl_path else None
@@ -110,6 +119,11 @@ def add_triangle_mesh(
         if src is not None and Path(src).exists():
             tris = _load_triangles_from_path(src)
     have_tris = tris is not None and len(np.asarray(tris)) > 0
+    if have_tris:
+        # One grid for all sources: boxes/ports/dumps use f32() (see
+        # quantize.align_coordinates); idempotent, so the STL write, the
+        # box-bounds check and the fallback below all see the same values.
+        tris = align_coordinates(tris, aligned=align)
 
     # 0) Axis-aligned box mesh -> openEMS box (exact metal edges, see
     #    axis_aligned_box_bounds). Geometry still comes from FreeCAD.
@@ -153,7 +167,9 @@ def add_triangle_mesh(
             f"(stl_path={stl}, mesh_path={npy}); openEMS ignores in-memory "
             "Polyhedron primitives - this geometry will NOT be simulated"
         )
-        return _poly_from_triangles(prop, np.asarray(tris), priority=priority)
+        return _poly_from_triangles(
+            prop, np.asarray(tris), priority=priority, aligned=align
+        )
 
     raise FileNotFoundError(
         f"Triangle mesh '{name}' unavailable (stl={stl}, mesh_path={npy}, triangles={'yes' if triangles is not None else 'no'})"

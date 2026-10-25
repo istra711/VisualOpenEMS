@@ -171,7 +171,12 @@ from app.meshing.validators import validate_mesh, report_to_lines
 from app.postproc import fields as fld
 from app.postproc import nf2ff as nf
 from app.postproc import sparams as sp
-from app.csxcad_builder.quantize import f32, inflate_sheet_box, zero_extent_axes
+from app.csxcad_builder.quantize import (
+    f32,
+    inflate_sheet_box,
+    zero_extent_axes,
+)
+from app.simulation.grid_dedupe import dedupe_grid_lines, get_domain_box
 from app.simulation.msl import extend_zero_propagation, resolve_msl_axes
 from app.simulation.excitation import apply_excitation
 
@@ -363,65 +368,8 @@ def get_or_create_prop(CSX, mat_name: str, materials):
     return CSX.AddMaterial(mate, epsilon=1.0)
 
 
-def get_domain_box(CSX):
-    """Return (lo, hi) of the FDTD domain as floats, or None if no mesh lines yet."""
-    from app.meshing.preview import get_sim_area
-
-    area = get_sim_area(CSX)
-    if area is None:
-        return None
-    return [float(v) for v in area[0]], [float(v) for v in area[1]]
-
-
-def dedupe_grid_lines(CSX, tol: float = 1e-12, frac: float = 0.1) -> None:
-    """Remove duplicate / near-duplicate grid lines that create tiny FDTD cells.
-
-    ``tol`` catches exact duplicates: port ``edges2grid`` inserts the arm-axis
-    line (x=0 / y=0) which collides with the mesh line already on that
-    coordinate, leaving a zero-width cell that collapses the Courant timestep.
-
-    ``frac`` additionally merges lines that sit closer than ``frac`` times the
-    following cell: easyMesh's own edge refinement can place a line a few
-    microns next to a geometry/manual line (e.g. a float32-rounded metal edge
-    next to the exact manual line), which again collapses the timestep.
-    Domain-boundary lines are never touched — they define the FDTD box edges.
-    """
-    import numpy as np
-
-    grid = CSX.GetGrid()
-    dom = get_domain_box(CSX)
-    removed_total = 0
-    for axis in range(3):
-        raw = grid.GetLines(axis)
-        if raw is None:
-            continue
-        vals = np.sort(np.array(raw, dtype=float))
-        if vals.size < 2:
-            continue
-        keep: list[float] = []
-        removed = 0
-        # domain edges are structural: never drop them
-        dom_lo = dom[0][axis] if dom is not None else None
-        dom_hi = dom[1][axis] if dom is not None else None
-        for i, v in enumerate(vals):
-            if dom_lo is not None and (abs(v - dom_lo) < tol or abs(v - dom_hi) < tol):
-                keep.append(float(v))
-                continue
-            if keep:
-                gap = abs(float(v) - keep[-1])
-                nxt = float(vals[i + 1]) - float(v) if i + 1 < vals.size else gap
-                if gap < max(tol, frac * max(nxt, 0.0)):
-                    removed += 1
-                    continue
-            keep.append(float(v))
-        if len(keep) < 2:
-            continue
-        if removed:
-            grid.SetLines(axis, np.array(keep, dtype=float))
-            removed_total += removed
-            print(f"  dedupe axis {axis}: removed {removed} zero-size cell(s), {len(keep)} lines left")
-    if removed_total == 0:
-        print("  dedupe: no zero-size cells found")
+# ``get_domain_box`` / ``dedupe_grid_lines`` live in app/simulation/grid_dedupe.py
+# (imported above) so the exact code that runs here is unit-testable.
 
 
 def clamp_box_into_domain(start, stop, dom_lo, dom_hi, pad=1.0):
@@ -608,6 +556,7 @@ def main() -> int:
                 stl_path=stl_path or None,
                 mesh_path=path if path and Path(path).exists() else None,
                 priority=pri,
+                align=bool(getattr(mesh, "align_coordinates", True)),
             )
             ntri = 0 if tris is None else len(tris)
             kind_txt = "axis-aligned box" if type(mesh_prim).__name__ == "CSPrimBox" else "polyhedron"
@@ -716,7 +665,9 @@ def main() -> int:
         inflate_sheet_box(_box, _axes)
     print("Mesh setup:", json.dumps(setup, indent=2, default=str))
 
-    dedupe_grid_lines(CSX)
+    dedupe_grid_lines(
+        CSX, ulp_align=bool(getattr(mesh, "align_coordinates", True))
+    )
 
     # Now that the mesh exists, add the deferred MSL ports. AddMSLPort adds the
     # microstrip metal strip (prop_dir x transverse) and needs the grid lines.
