@@ -111,11 +111,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is honest (repair disabled for `geometrie`, snap only for duplicate-scale
   slivers, remove only when a face is an auto line). Accepted regions stay
   visible in grey but count as accepted instead of open findings.
-- **The same options in the Mesh menu** (`app/ui/main_window.py`):
-  *Enforce min cell size (repair)* (checkable, mirrors the Mesh Parameters
-  checkbox), *Repair critical cells…* (opens the Mesh Viewer and the preview for
-  the worst open finding) and *Mark critical cells (N)* (checkable, mirrors the
-  viewer's right-click toggle; the count updates after every build and action).
+- **The same options in the Mesh menu** (`app/ui/main_window.py`): the
+  *Critical cells (N open)* submenu mirrors the viewer's right-click menu —
+  *Mark critical cells* (overlay, checkable), *Repair the worst open region…*,
+  *Remove the offending line…*, *Snap onto the neighbour line…*, *Accept region
+  (do not repair)*, *Explain…* and *Enforce min cell size (repair)* (checkable,
+  mirrors the Mesh Parameters checkbox). Without a cursor the target is the
+  worst open finding; the enablement comes from the same viewer helper as the
+  right-click menu, so the two can never disagree.
 - Tests: `tests/test_mesh_repair.py` (34 checks: merge/relax/split, protection
   incl. float32 vs. float64, preview, cause/penalty/accepted, per-axis floors,
   the easyMesh decoupling), `tests/repair_actions_smoke.py` (menu enablement,

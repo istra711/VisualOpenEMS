@@ -91,8 +91,8 @@ Views (tabs inside the plot area)
     repair) (stays grey, no longer an open finding) and Explain… (cause, source,
     penalty and what a repair would do). Repair is disabled for cause
     `geometrie`: both faces are authored coordinates, the geometry needs that
-    cell. The Mesh menu mirrors this: *Mark critical cells (N)* toggles the
-    overlay, *Repair critical cells…* opens the worst open finding.
+    cell. The Mesh menu has the same actions under *Critical cells (N open)*;
+    without a cursor the target is the worst open finding.
 
 Navigation
   • Mouse wheel — zoom at cursor (works even without the toolbar zoom).

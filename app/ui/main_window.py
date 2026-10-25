@@ -970,11 +970,60 @@ class MainWindow(QMainWindow):
             shortcut="Ctrl+Shift+M",
             tip="All mesh parameters in one window (Apply / Close)",
         )
-        # V1-V3: the repair options are also reachable without opening a
-        # window (same state as the Mesh Parameters checkbox / the viewer's
-        # right-click submenu).
+        # V1-V3: one submenu that mirrors the Mesh Viewer's right-click
+        # submenu. The menu has no cursor, so its target is the worst open
+        # finding ("worst open region"); the enablement comes from the same
+        # viewer helper the right-click menu uses.
+        self.menu_critical = mmenu.addMenu("Critical cells")
+        self.act_critical_overlay = add_action(
+            self.menu_critical,
+            "Mark critical cells",
+            slot=self._on_toggle_critical_overlay,
+            tip="Draw the cells that cost runtime in the Mesh Viewer (same as "
+            "the viewer's right-click entry; default off)",
+        )
+        self.act_critical_overlay.setCheckable(True)
+        self.menu_critical.addSeparator()
+        self.act_critical_repair = add_action(
+            self.menu_critical,
+            "Repair the worst open region\u2026",
+            slot=self._on_repair_critical_cells,
+            tip="Open the Mesh Viewer and the repair preview for the open "
+            "finding with the largest runtime penalty (needs a built mesh). "
+            "The rule is stored in the project, so the preview and the solver "
+            "script build the same grid.",
+        )
+        self.act_critical_remove = add_action(
+            self.menu_critical,
+            "Remove the offending line\u2026",
+            slot=self._on_remove_worst_critical,
+            tip="Delete one auto grid line of the worst open finding (stored as "
+            "a Mesh Editor removal). The two cells merge; may leave a grading "
+            "jump - 'Repair' re-spaces instead.",
+        )
+        self.act_critical_snap = add_action(
+            self.menu_critical,
+            "Snap onto the neighbour line\u2026",
+            slot=self._on_snap_worst_critical,
+            tip="Duplicate-scale slivers only (cell < 0.1 % of a normal cell): "
+            "drop the auto line so only the authored coordinate remains.",
+        )
+        self.act_critical_accept = add_action(
+            self.menu_critical,
+            "Accept region (do not repair)",
+            slot=self._on_accept_worst_critical,
+            tip="Store the worst open region in MeshSpec.accepted_cells: the "
+            "mark stays (grey) but is no longer an open finding.",
+        )
+        self.act_critical_explain = add_action(
+            self.menu_critical,
+            "Explain\u2026",
+            slot=self._on_explain_worst_critical,
+            tip="Cause, source, runtime penalty and what a repair would do.",
+        )
+        self.menu_critical.addSeparator()
         self.act_enforce_min = add_action(
-            mmenu,
+            self.menu_critical,
             "Enforce min cell size (repair)",
             slot=self._on_toggle_enforce_min_cellsize,
             tip="Treat 'Min cell size' as a hard lower bound: after easyMesh a "
@@ -986,22 +1035,6 @@ class MainWindow(QMainWindow):
         self.act_enforce_min.setChecked(
             bool(getattr(self.project.mesh, "enforce_min_cellsize", False))
         )
-        add_action(
-            mmenu,
-            "Repair critical cells\u2026",
-            slot=self._on_repair_critical_cells,
-            tip="Open the Mesh Viewer and the repair preview for the worst open "
-            "finding (needs a built mesh). The rule is stored in the project, so "
-            "the preview and the solver script build the same grid.",
-        )
-        self.act_critical_overlay = add_action(
-            mmenu,
-            "Mark critical cells",
-            slot=self._on_toggle_critical_overlay,
-            tip="Draw the cells that cost runtime in the Mesh Viewer (same as "
-            "the viewer's right-click entry; default off)",
-        )
-        self.act_critical_overlay.setCheckable(True)
         mmenu.addSeparator()
         add_action(mmenu, "Mesh Report", slot=self._show_mesh_report_tab)
         add_action(
@@ -1138,6 +1171,12 @@ class MainWindow(QMainWindow):
         for m in (fmenu, pmenu, gmenu, mmenu, smenu, vmenu, tmenu, hmenu):
             m.aboutToShow.connect(_sync_enabled)
 
+        # The Critical-cells submenu mirrors the viewer; refresh it whenever a
+        # menu opens (marks/accept state can change without a project signal).
+        mmenu.aboutToShow.connect(self._sync_mesh_menu_actions)
+        self.menu_critical.aboutToShow.connect(self._sync_critical_menu)
+        self._sync_mesh_menu_actions()
+
     def _sync_view_menu(self) -> None:
         """Check the View entry of the tab that is currently on top."""
         try:
@@ -1227,17 +1266,32 @@ class MainWindow(QMainWindow):
         act.blockSignals(False)
 
     def _sync_critical_menu(self) -> None:
-        """Show the open finding count on the Mesh-menu entry."""
-        act = getattr(self, "act_critical_overlay", None)
-        if act is None:
+        """Open count + per-action enablement for the Critical-cells submenu."""
+        sub = getattr(self, "menu_critical", None)
+        if sub is None:
             return
         try:
             n_open = self.mesh_viewer.critical_open_count()
         except Exception:  # noqa: BLE001
             n_open = 0
-        act.setText(
-            f"Mark critical cells ({n_open})" if n_open else "Mark critical cells"
+        sub.setTitle(
+            f"Critical cells ({n_open} open)" if n_open else "Critical cells"
         )
+        cell = self._worst_open_critical()
+        try:
+            state = self.mesh_viewer.critical_action_state(cell)
+        except Exception:  # noqa: BLE001
+            state = {}
+        for name, key in (
+            ("act_critical_repair", "repair"),
+            ("act_critical_remove", "remove"),
+            ("act_critical_snap", "snap"),
+            ("act_critical_accept", "accept"),
+            ("act_critical_explain", "explain"),
+        ):
+            act = getattr(self, name, None)
+            if act is not None:
+                act.setEnabled(bool(state.get(key)))
 
     def _sync_mesh_menu_actions(self) -> None:
         """Mirror MeshSpec + viewer state into the Mesh-menu check states."""
@@ -1264,6 +1318,45 @@ class MainWindow(QMainWindow):
             )
         else:
             self._log(f"Critical cells: repair preview for {label}")
+
+    def _worst_open_critical(self):
+        """The worst open finding (the Mesh menu has no cursor to aim with)."""
+        try:
+            return self.mesh_viewer.worst_open_cell()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _on_remove_worst_critical(self) -> None:
+        cell = self._worst_open_critical()
+        if cell is None:
+            self._log("Critical cells: no open region to remove")
+            return
+        self._show_mesh_viewer()
+        self.mesh_viewer._critical_remove(cell)
+
+    def _on_snap_worst_critical(self) -> None:
+        cell = self._worst_open_critical()
+        if cell is None:
+            self._log("Critical cells: no open region to snap")
+            return
+        self._show_mesh_viewer()
+        self.mesh_viewer._critical_snap(cell)
+
+    def _on_accept_worst_critical(self) -> None:
+        cell = self._worst_open_critical()
+        if cell is None:
+            self._log("Critical cells: no open region to accept")
+            return
+        self.mesh_viewer._critical_accept(cell)
+        self._log(f"Critical cells: accepted {cell.label}")
+
+    def _on_explain_worst_critical(self) -> None:
+        cell = self._worst_open_critical()
+        if cell is None:
+            self._log("Critical cells: no open region to explain")
+            return
+        self._show_mesh_viewer()
+        self.mesh_viewer._critical_explain(cell)
 
     def _on_rebuild_scratch(self) -> None:
         """Discard all manual lines and rebuild the mesh from scratch."""

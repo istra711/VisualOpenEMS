@@ -432,11 +432,10 @@ close the loop without making the diagnosis dishonest:
   snap only for duplicate-scale slivers (< 0.1 % of a normal cell), remove only
   when at least one face is an auto line. Accepted regions stay visible (grey)
   but count as accepted instead of open findings.
-  The same state is reachable from the **Mesh menu**: *Enforce min cell size
-  (repair)* (checkable, mirrors the Mesh Parameters checkbox), *Repair critical
-  cells…* (opens the viewer and the preview for the worst open finding) and
-  *Mark critical cells (N)* (checkable, mirrors the viewer's right-click toggle;
-  the count follows every build, accept, remove and repair).
+  The same actions are in the **Mesh menu** under *Critical cells (N open)*
+  (overlay toggle, repair/remove/snap/accept/explain, enforcement switch).
+  Without a cursor the target is the worst open finding; the enablement is the
+  same helper the right-click menu uses, so the two menus cannot disagree.
 * **V4 — honest diagnostics.** `cell_below_min` compares against the
   **user-set** minimum only (`requested_min_cellsize`); the derived fallbacks
   (`refined_cellsize`, `target_cell_units`) previously flagged 162 ordinary

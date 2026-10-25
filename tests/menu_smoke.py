@@ -329,16 +329,47 @@ def test_project_panel_toggle() -> None:
 
 
 def test_mesh_menu_repair_options() -> None:
-    """Mesh menu: enforcement switch, critical-cell overlay, repair entry."""
+    """Mesh menu: the Critical-cells submenu mirrors the viewer's right-click."""
     w = _win()
     mesh_menu = _menu("Mesh")
-    texts = [_strip(a.text()) for a in mesh_menu.actions() if not a.isSeparator()]
-    assert "Enforce min cell size (repair)" in texts, texts
-    assert "Repair critical cells\u2026" in texts, texts
-    assert any(t.startswith("Mark critical cells") for t in texts), texts
+
+    # --- the submenu exists and mirrors the viewer's action set ----------
+    sub_act = next(
+        (
+            a
+            for a in mesh_menu.actions()
+            if a.menu() is not None and _strip(a.text()).startswith("Critical cells")
+        ),
+        None,
+    )
+    assert sub_act is not None, [_strip(a.text()) for a in mesh_menu.actions()]
+    sub = sub_act.menu()
+    texts = [_strip(a.text()) for a in sub.actions() if not a.isSeparator()]
+    for want in (
+        "Mark critical cells",
+        "Repair the worst open region\u2026",
+        "Remove the offending line\u2026",
+        "Snap onto the neighbour line\u2026",
+        "Accept region (do not repair)",
+        "Explain\u2026",
+        "Enforce min cell size (repair)",
+    ):
+        assert want in texts, (want, texts)
+
+    # --- without marks: global switches on, per-mark actions off ---------
+    assert _find(sub, "Enforce min cell size (repair)").isEnabled()
+    assert _find(sub, "Mark critical cells").isEnabled()
+    for name in (
+        "Repair the worst open region\u2026",
+        "Remove the offending line\u2026",
+        "Snap onto the neighbour line\u2026",
+        "Accept region (do not repair)",
+        "Explain\u2026",
+    ):
+        assert not _find(sub, name).isEnabled(), name
 
     # --- enforcement switch writes the MeshSpec -------------------------
-    act = _find(mesh_menu, "Enforce min cell size (repair)")
+    act = _find(sub, "Enforce min cell size (repair)")
     assert act.isCheckable(), "enforcement entry must be checkable"
     before = bool(getattr(w.project.mesh, "enforce_min_cellsize", False))
     assert act.isChecked() == before
@@ -360,22 +391,53 @@ def test_mesh_menu_repair_options() -> None:
     assert bool(w.project.mesh.enforce_min_cellsize) is before
 
     # --- overlay entry and the viewer stay in sync ----------------------
-    overlay = next(
-        a for a in mesh_menu.actions() if _strip(a.text()).startswith("Mark critical cells")
-    )
+    overlay = _find(sub, "Mark critical cells")
     assert overlay.isCheckable()
     start = bool(w.mesh_viewer._critical_on)
     overlay.trigger()
     assert w.mesh_viewer._critical_on is (not start)
     assert overlay.isChecked() is (not start)
-    # the right-click entry changes the same state
     w.mesh_viewer.set_critical_enabled(start)
     assert overlay.isChecked() is start
     w.mesh_viewer.set_critical_enabled(False)
     assert overlay.isChecked() is False
 
-    # --- 'Repair critical cells…' without a mesh must not crash ---------
-    _find(mesh_menu, "Repair critical cells\u2026").trigger()
+    # --- with one open mark: same enablement as the right-click menu -----
+    from app.meshing.critical_cells import CriticalCell
+
+    # marks only exist after a build, and a build sets the project context
+    w.mesh_viewer.set_project_context(
+        project=w.project,
+        primitives=w.primitives,
+        ports=w.project.ports,
+        nf2ff=w.project.nf2ff,
+    )
+    mark = CriticalCell(
+        "timestep_cell", 2, (0.0, 0.0, 1.6), (1.0, 1.0, 1.635),
+        min_cell=0.035, cause="artefakt", penalty=46.0,
+    )
+    w.mesh_viewer.set_critical_cells([mark])
+    w._sync_critical_menu()
+    assert sub_act.text().startswith("Critical cells (1 open)"), sub_act.text()
+    assert _find(sub, "Repair the worst open region\u2026").isEnabled()
+    assert _find(sub, "Remove the offending line\u2026").isEnabled()
+    assert not _find(sub, "Snap onto the neighbour line\u2026").isEnabled()  # no grid
+    assert _find(sub, "Accept region (do not repair)").isEnabled()
+    assert _find(sub, "Explain\u2026").isEnabled()
+
+    # accept from the menu stores the region and closes the finding
+    before_specs = len(getattr(w.project.mesh, "accepted_cells", None) or [])
+    _find(sub, "Accept region (do not repair)").trigger()
+    specs = list(getattr(w.project.mesh, "accepted_cells", None) or [])
+    assert len(specs) == before_specs + 1, specs
+    assert specs[-1]["axis"] == "z", specs
+    assert sub_act.text() == "Critical cells", sub_act.text()
+    assert not _find(sub, "Repair the worst open region\u2026").isEnabled()
+
+    # --- 'Repair the worst open region…' without marks must not crash ----
+    w.mesh_viewer.set_critical_cells([])
+    w._sync_critical_menu()
+    _find(sub, "Repair the worst open region\u2026").trigger()
     print("MESH MENU REPAIR OPTIONS OK")
 
 

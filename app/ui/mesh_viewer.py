@@ -1371,12 +1371,8 @@ class MeshGeometryViewer(QWidget):
             1 for c in self._critical if not getattr(c, "accepted", False)
         )
 
-    def repair_worst_open_cell(self) -> str | None:
-        """Open the repair preview for the worst open, repairable mark.
-
-        Returns the mark's label, or ``None`` when nothing is repairable (all
-        regions accepted or bounded by authored coordinates).
-        """
+    def worst_open_cell(self):
+        """The open, repairable mark with the largest runtime penalty."""
         candidates = [
             c
             for c in self._critical
@@ -1385,9 +1381,58 @@ class MeshGeometryViewer(QWidget):
         ]
         if not candidates:
             return None
-        worst = max(
+        return max(
             candidates, key=lambda c: float(getattr(c, "penalty", 1.0) or 1.0)
         )
+
+    def critical_action_state(self, cell) -> dict[str, bool]:
+        """Which per-mark action is honest for ``cell`` (enablement).
+
+        Shared by the viewer's right-click submenu and the Mesh menu so the two
+        can never disagree about what is allowed.
+        """
+        state = {
+            "repair": False,
+            "remove": False,
+            "snap": False,
+            "accept": False,
+            "explain": False,
+        }
+        if cell is None:
+            return state
+        axis = "xyz"[cell.axis]
+        accepted = bool(getattr(cell, "accepted", False))
+        size = float(cell.cell_size)
+        prot = self._protected_lines(axis)
+        faces = [float(cell.lo[cell.axis]), float(cell.hi[cell.axis])]
+        free = [
+            v
+            for v in faces
+            if not any(abs(v - p) <= 1e-6 * max(1.0, abs(v)) for p in prot)
+        ]
+        lines = self._axis_grid_lines(axis)
+        med = (
+            float(np.median(np.diff(np.asarray(lines, float))))
+            if len(lines) > 2
+            else 0.0
+        )
+        sliver = med > 0 and size <= 1e-3 * med
+        state["repair"] = bool(getattr(cell, "repairable", True)) and not accepted
+        state["remove"] = bool(free) and not accepted
+        state["snap"] = sliver and not accepted
+        state["accept"] = not accepted
+        state["explain"] = True
+        return state
+
+    def repair_worst_open_cell(self) -> str | None:
+        """Open the repair preview for the worst open, repairable mark.
+
+        Returns the mark's label, or ``None`` when nothing is repairable (all
+        regions accepted or bounded by authored coordinates).
+        """
+        worst = self.worst_open_cell()
+        if worst is None:
+            return None
         self.set_critical_enabled(True)
         self._critical_repair(worst)
         return worst.label
@@ -1468,8 +1513,9 @@ class MeshGeometryViewer(QWidget):
         size = float(cell.cell_size)
         sub.setToolTip(cell.label)
         repairable = bool(getattr(cell, "repairable", True))
+        state = self.critical_action_state(cell)
         act = sub.addAction(f"Repair this {axis} region ({size:.4g} {unit})…")
-        act.setEnabled(repairable and not cell.accepted)
+        act.setEnabled(state["repair"])
         if not repairable:
             act.setToolTip(
                 "Both faces are authored coordinates (cause: geometrie) - the\n"
@@ -1494,7 +1540,7 @@ class MeshGeometryViewer(QWidget):
             v for v in faces
             if not any(abs(v - p) <= 1e-6 * max(1.0, abs(v)) for p in prot)
         ]
-        act.setEnabled(bool(free) and not cell.accepted)
+        act.setEnabled(state["remove"])
         act.setToolTip(
             "Delete one auto grid line (stored as a Mesh Editor removal).\n"
             "Both faces are authored coordinates - nothing to remove."
@@ -1508,7 +1554,7 @@ class MeshGeometryViewer(QWidget):
         lines = self._axis_grid_lines(axis)
         med = float(np.median(np.diff(np.asarray(lines, float)))) if len(lines) > 2 else 0.0
         sliver = med > 0 and size <= 1e-3 * med
-        act.setEnabled(sliver and not cell.accepted)
+        act.setEnabled(state["snap"])
         act.setToolTip(
             "Only for a duplicate-scale sliver (cell < 0.1 % of a normal cell).\n"
             f"This cell is {size:.4g} {unit} - a real gap, not a duplicate:\n"
@@ -1520,7 +1566,7 @@ class MeshGeometryViewer(QWidget):
         actions[act] = "snap"
 
         act = sub.addAction("Accept region (do not repair)")
-        act.setEnabled(not cell.accepted)
+        act.setEnabled(state["accept"])
         act.setToolTip(
             "Store this region in MeshSpec.accepted_cells: the mark stays (grey)\n"
             "but the report counts it as accepted instead of an open finding."

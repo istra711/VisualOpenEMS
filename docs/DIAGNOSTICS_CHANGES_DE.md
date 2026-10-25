@@ -448,12 +448,11 @@ Reparatur als letzter Schritt, Untergrenze nicht mehr an easyMesh),
   Zelle), Remove nur, wenn mindestens eine Fläche eine Auto-Linie ist.
   Akzeptierte Regionen bleiben sichtbar (grau), zählen aber als akzeptiert
   statt als offener Befund.
-  Derselbe Zustand ist im **Mesh-Menü** erreichbar: *Enforce min cell size
-  (repair)* (checkbar, spiegelt die Checkbox in *Mesh Parameters*), *Repair
-  critical cells…* (öffnet den Viewer und die Vorschau für den schlimmsten
-  offenen Befund) und *Mark critical cells (N)* (checkbar, spiegelt den
-  Rechtsklick-Schalter des Viewers; die Zahl folgt jedem Build, Accept, Remove
-  und Repair).
+  Dieselben Aktionen stehen im **Mesh-Menü** unter *Critical cells (N open)*
+  (Overlay-Schalter, Repair/Remove/Snap/Accept/Explain, Enforce-Schalter).
+  Ohne Cursor ist das Ziel der schlimmste offene Befund; die Freigabe kommt aus
+  demselben Helfer wie das Rechtsklick-Menü, die beiden können also nicht
+  auseinanderlaufen.
 * **V4 — ehrliche Diagnose.** `cell_below_min` vergleicht nur noch mit der
   **vom Nutzer gesetzten** Mindestgröße (`requested_min_cellsize`); die
   abgeleiteten Fallbacks (`refined_cellsize`, `target_cell_units`) markierten
