@@ -226,6 +226,16 @@ class MeshParamsPanel(QWidget):
             "up in the Mesh Viewer marks and in the mesh report section\n"
             "'Fine-cell sources'. Diagnostic only - the mesh is not changed."
         )
+        self.chk_enforce_min = QCheckBox("Enforce min cell size (repair)")
+        self.chk_enforce_min.setChecked(False)
+        self.chk_enforce_min.setToolTip(
+            "V2: treat 'Min cell size' as a hard lower bound. After easyMesh, a\n"
+            "cell below it whose faces are NOT both authored coordinates is\n"
+            "merged into its smaller neighbour (grading is re-spaced); a genuine\n"
+            "gap whose both faces come from the geometry is kept and reported.\n"
+            "Off (default) = easyMesh decides; the report still lists the cells\n"
+            "that set the timestep."
+        )
         fm.addRow("Refined cell size", self.spn_refined)
         fm.addRow("Min cell size", self.spn_min_cell)
         fm.addRow("Min cell size (Z)", self.spn_min_cell_z)
@@ -241,6 +251,7 @@ class MeshParamsPanel(QWidget):
         fm.addRow(self.chk_graded_transitions)
         fm.addRow(self.chk_align_coords)
         fm.addRow(self.chk_diag_sources)
+        fm.addRow(self.chk_enforce_min)
         root.addWidget(g_m)
 
         self.readout = QPlainTextEdit()
@@ -459,6 +470,9 @@ class MeshParamsPanel(QWidget):
         )
         self.chk_align_coords.setChecked(bool(getattr(m, "align_coordinates", True)))
         self.chk_diag_sources.setChecked(bool(getattr(m, "diagnose_cell_sources", True)))
+        self.chk_enforce_min.setChecked(
+            bool(getattr(m, "enforce_min_cellsize", False))
+        )
         # mirror the loaded values into the draft buffer (readout source)
         self._draft = Project.new_default("draft")
         self.sync_mesh_freqs(self._draft, "range")
@@ -494,6 +508,7 @@ class MeshParamsPanel(QWidget):
         m.add_graded_mesh_lines_at_material_transitions = self.chk_graded_transitions.isChecked()
         m.align_coordinates = self.chk_align_coords.isChecked()
         m.diagnose_cell_sources = self.chk_diag_sources.isChecked()
+        m.enforce_min_cellsize = self.chk_enforce_min.isChecked()
         self.refresh_readout(project)
 
     # --- live readout ----------------------------------------------------

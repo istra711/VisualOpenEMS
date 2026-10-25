@@ -1128,9 +1128,16 @@ class MainWindow(QMainWindow):
         rem = getattr(mesh, "manual_mesh_lines_removed", None) or {}
         na = sum(len(v or []) for v in add.values())
         nr = sum(len(v or []) for v in rem.values())
+        repairs = len(getattr(mesh, "mesh_repairs", None) or [])
+        accepted = len(getattr(mesh, "accepted_cells", None) or [])
+        extra = ""
+        if repairs:
+            extra += f", {repairs} repair rule(s)"
+        if accepted:
+            extra += f", {accepted} accepted region(s)"
         self._log(
-            f"Mesh editor: {na} added, {nr} removed (applied to the current mesh; "
-            "click Build Mesh to save csx.xml)"
+            f"Mesh editor: {na} added, {nr} removed{extra} (applied to the "
+            "current mesh; click Build Mesh to save csx.xml)"
         )
 
     def _on_rebuild_scratch(self) -> None:

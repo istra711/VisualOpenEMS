@@ -83,6 +83,15 @@ Views (tabs inside the plot area)
     ("Critical cells: …") and into the mesh report. The
     mark also names the geometry that forced it (e.g. `box:feed + manual`) while
     *Mesh Parameters → Attribute fine cells to their source* is on.
+    Right-click a mark → "Critical cells (N open)": Repair this x/y/z region…
+    (preview with the lines removed, the new smallest cell and dt before/after;
+    OK stores the rule in MeshSpec.mesh_repairs and rebuilds), Remove the
+    offending line… (one auto line, stored as a Mesh Editor removal), Snap onto
+    the neighbour line… (duplicate-scale slivers only), Accept region (do not
+    repair) (stays grey, no longer an open finding) and Explain… (cause, source,
+    penalty and what a repair would do). Repair is disabled for cause
+    `geometrie`: both faces are authored coordinates, the geometry needs that
+    cell.
 
 Navigation
   • Mouse wheel — zoom at cursor (works even without the toolbar zoom).
@@ -380,6 +389,13 @@ Fields
   • Coordinate system — cartesian (x/y/z, easyMesh) or cylindrical
     (openEMS CoordSystem=1, rho/phi/z). See Help → Cylindrical Mesh for
     the supported primitives, degree-based phi editing and limits.
+  • Refined / Min / Min (Z) / Max cell size, Max grading ratio — cell limits.
+    "Enforce min cell size (repair)" (default off) turns Min cell size into a
+    hard floor on every axis (Min (Z) overrides the layer thickness): cells
+    below it are merged into the smaller neighbour and the grading is re-spaced;
+    cells whose two faces are authored coordinates stay and are reported as
+    "not reached". While the switch is on, easyMesh does not see the floor (it
+    would otherwise refine the lateral axes against the repair).
 
 Readout (live, before Apply)
   • λ_air at f_max, max/target cell size, current preset + frequencies.

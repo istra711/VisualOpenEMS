@@ -629,6 +629,11 @@ class MeshGeometryViewer(QWidget):
                         [float(v) for v in rems.get(name, []) or []],
                     )
                     g.SetLines(d, [float(v) for v in new_lines])
+                # Stored repairs (MeshSpec.mesh_repairs) come after the manual
+                # lines in generate_mesh too - keep the live grid consistent.
+                from app.meshing.repair import apply_mesh_repairs
+
+                apply_mesh_repairs(self._csx, mesh, None)
             except Exception as e:  # noqa: BLE001
                 print(f"mesh editor incremental apply failed: {e}")
         self._refresh_editor()
@@ -990,7 +995,7 @@ class MeshGeometryViewer(QWidget):
         val = self._snap_to_edge(axis, val)
         self._editor_add(val)
 
-    def _show_context_menu(self) -> None:
+    def _show_context_menu(self, event=None) -> None:
         """Right-click menu on the plot area (editor toggle + pop-out)."""
         menu = QMenu(self)
         act_editor = menu.addAction("Mesh editor")
@@ -1025,6 +1030,7 @@ class MeshGeometryViewer(QWidget):
             "Off by default: the count next to the entry tells you whether there\n"
             "is anything to look at before you switch the overlay on."
         )
+        crit_actions = self._critical_menu(menu, event)
         act_pop = menu.addAction("Pop-out viewer…")
         menu.addSeparator()
         n_sel = len(getattr(self, "_selected_lines", []) or [])
@@ -1049,6 +1055,10 @@ class MeshGeometryViewer(QWidget):
             self.set_port_mode(not self._port_mode)
         elif chosen is act_crit:
             self.set_critical_enabled(not self._critical_on)
+        elif chosen in crit_actions:
+            self._on_critical_action(
+                crit_actions[chosen], self._critical_near(event)
+            )
         elif chosen is act_pop:
             self._on_popout()
         elif chosen is act_del:
@@ -1065,7 +1075,7 @@ class MeshGeometryViewer(QWidget):
         """Slice click: right = menu; left = add a line / select one on a line."""
         try:
             if event.button == 3:
-                self._show_context_menu()
+                self._show_context_menu(event)
                 return
             if event.button != 1 or event.inaxes is None:
                 return
@@ -1351,6 +1361,410 @@ class MeshGeometryViewer(QWidget):
     def _critical_marks(self) -> list:
         """Marks to draw (empty while the toggle is off)."""
         return list(self._critical) if self._critical_on else []
+
+    # --------------------------------------------- critical cell actions (V1-V3)
+    def _axis_grid_lines(self, axis: str) -> list[float]:
+        """Current grid lines of one axis (drawing units)."""
+        if self._csx is None:
+            return []
+        try:
+            return sorted(
+                float(v)
+                for v in np.asarray(self._csx.GetGrid().GetLines(axis), float)
+            )
+        except Exception:  # noqa: BLE001 - no grid yet
+            return []
+
+    def _protected_lines(self, axis: str) -> list[float]:
+        """Authored coordinates of this axis - a repair never removes them."""
+        try:
+            from app.meshing.coord_diag import source_coordinates
+            from app.meshing.repair import protected_coordinates
+
+            mesh = self._mesh_spec()
+            src = source_coordinates(
+                getattr(self, "_project", None),
+                getattr(self, "_primitives", None) or [],
+                getattr(mesh, "manual_mesh_lines", None),
+            )
+            return list(protected_coordinates(src).get(axis, []))
+        except Exception:  # noqa: BLE001 - protection is best effort
+            return []
+
+    def _critical_near(self, event=None):
+        """The mark closest to the right-click position (open marks first)."""
+        marks = [c for c in self._critical if not getattr(c, "accepted", False)]
+        if not marks:
+            marks = list(self._critical)
+        if not marks:
+            return None
+        view = _slice_key(self.cmb_view.currentText())
+        if view is None or event is None or getattr(event, "xdata", None) is None:
+            return marks[0]
+        ax_a, ax_b, _normal = _SLICE_AXES[view]
+        best = None
+        best_d = None
+        for cell in marks:
+            axis = "xyz"[cell.axis]
+            if axis not in (ax_a, ax_b):
+                continue
+            value = event.xdata if axis == ax_a else event.ydata
+            if value is None:
+                continue
+            mid = 0.5 * (float(cell.lo[cell.axis]) + float(cell.hi[cell.axis]))
+            dist = abs(float(value) - mid)
+            if best_d is None or dist < best_d:
+                best, best_d = cell, dist
+        return best or marks[0]
+
+    def _critical_menu(self, menu, event=None) -> dict:
+        """Add the per-mark actions to the context menu (V3)."""
+        cell = self._critical_near(event)
+        n_open = len([c for c in self._critical if not getattr(c, "accepted", False)])
+        sub = menu.addMenu(f"Critical cells ({n_open} open)")
+        sub.setEnabled(cell is not None)
+        actions: dict = {}
+        if cell is None:
+            sub.setToolTip("No mark yet - build the mesh first.")
+            return actions
+        unit = str(
+            getattr(self._mesh_spec(), "drawing_unit", "mm") or "mm"
+        )
+        axis = "xyz"[cell.axis]
+        size = float(cell.cell_size)
+        sub.setToolTip(cell.label)
+        repairable = bool(getattr(cell, "repairable", True))
+        act = sub.addAction(f"Repair this {axis} region ({size:.4g} {unit})…")
+        act.setEnabled(repairable and not cell.accepted)
+        if not repairable:
+            act.setToolTip(
+                "Both faces are authored coordinates (cause: geometrie) - the\n"
+                "geometry needs this cell, a repair would remove a real line.\n"
+                "Use 'Accept region' to keep it out of the open findings."
+            )
+        elif cell.accepted:
+            act.setToolTip("This region is accepted - undo it in the project file.")
+        else:
+            act.setToolTip(
+                "Re-space the lines around this cell: merge it into its smaller\n"
+                "neighbour, keep every authored coordinate, relax the grading.\n"
+                "Shows lines removed, new min cell, dt and the expected runtime\n"
+                "BEFORE anything changes; the rule is stored in the project."
+            )
+        actions[act] = "repair"
+
+        act = sub.addAction("Remove the offending line…")
+        prot = self._protected_lines(axis)
+        faces = [float(cell.lo[cell.axis]), float(cell.hi[cell.axis])]
+        free = [
+            v for v in faces
+            if not any(abs(v - p) <= 1e-6 * max(1.0, abs(v)) for p in prot)
+        ]
+        act.setEnabled(bool(free) and not cell.accepted)
+        act.setToolTip(
+            "Delete one auto grid line (stored as a Mesh Editor removal).\n"
+            "Both faces are authored coordinates - nothing to remove."
+            if not free
+            else "Delete one auto grid line; the two cells merge. May leave a\n"
+            "grading jump - 'Repair' re-spaces instead and keeps the grading."
+        )
+        actions[act] = "remove"
+
+        act = sub.addAction("Snap onto the neighbour line…")
+        lines = self._axis_grid_lines(axis)
+        med = float(np.median(np.diff(np.asarray(lines, float)))) if len(lines) > 2 else 0.0
+        sliver = med > 0 and size <= 1e-3 * med
+        act.setEnabled(sliver and not cell.accepted)
+        act.setToolTip(
+            "Only for a duplicate-scale sliver (cell < 0.1 % of a normal cell).\n"
+            f"This cell is {size:.4g} {unit} - a real gap, not a duplicate:\n"
+            "snapping would remove a line the geometry needs."
+            if not sliver
+            else "The two lines are the same coordinate up to float noise: drop\n"
+            "the auto one so only the authored coordinate remains."
+        )
+        actions[act] = "snap"
+
+        act = sub.addAction("Accept region (do not repair)")
+        act.setEnabled(not cell.accepted)
+        act.setToolTip(
+            "Store this region in MeshSpec.accepted_cells: the mark stays (grey)\n"
+            "but the report counts it as accepted instead of an open finding."
+        )
+        actions[act] = "accept"
+
+        act = sub.addAction("Explain…")
+        act.setToolTip("Cause, source, runtime penalty and what a repair would do.")
+        actions[act] = "explain"
+        return actions
+
+    def _on_critical_action(self, action: str, cell) -> None:
+        if cell is None:
+            return
+        if action == "repair":
+            self._critical_repair(cell)
+        elif action == "remove":
+            self._critical_remove(cell)
+        elif action == "snap":
+            self._critical_snap(cell)
+        elif action == "accept":
+            self._critical_accept(cell)
+        elif action == "explain":
+            self._critical_explain(cell)
+
+    def _critical_repair(self, cell) -> None:
+        """Plan, preview and apply a local re-spacing of this region (V1)."""
+        from PySide6.QtWidgets import QDialog
+
+        from app.meshing.repair import apply_repairs, preview, repair_axis
+        from app.ui.repair_dialog import RepairDialog
+
+        mesh = self._mesh_spec()
+        if mesh is None or self._csx is None:
+            return
+        axis = "xyz"[cell.axis]
+        lines = self._axis_grid_lines(axis)
+        if len(lines) < 3:
+            return
+        unit_m = float(mesh.unit_to_meters())
+        unit = str(getattr(mesh, "drawing_unit", "mm") or "mm")
+        ratio = float(mesh.effective_max_grading_ratio())
+        protected = self._protected_lines(axis)
+        lo = float(cell.lo[cell.axis])
+        hi = float(cell.hi[cell.axis])
+
+        def plan(floor):
+            return repair_axis(
+                lines, axis, lo, hi, floor=floor, ratio=ratio,
+                protected=protected, expand=1,
+            )
+
+        def make(floor: float):
+            rep = plan(float(floor))
+            if rep is None or not rep.changed:
+                return (
+                    "No cell below the floor in this region - nothing to merge.\n\n"
+                    f"The region is uniformly fine ({float(cell.cell_size):.6g} "
+                    f"{unit}).\nRaise the minimum cell to coarsen it, or accept "
+                    "the region if the geometry needs it.",
+                    False,
+                )
+            pv = preview(
+                [rep],
+                {ax: self._axis_grid_lines(ax) for ax in "xyz"},
+                unit_m,
+            )
+            return rep.describe(unit_m) + "\n\n" + pv.text(), True
+
+        default = plan(None)
+        default_floor = (
+            float(default.floor) if default is not None else float(cell.cell_size)
+        )
+        dlg = RepairDialog(
+            self,
+            title=f"Repair {axis} region",
+            floor=default_floor,
+            floor_min=max(0.0, float(cell.cell_size) * 0.5),
+            floor_max=max(lines[-1] - lines[0], default_floor * 8.0),
+            unit=unit,
+            preview_fn=make,
+            note=(
+                f"{cell.label}\n"
+                f"{len(protected)} authored line(s) on {axis} are protected and "
+                "stay in the grid."
+            ),
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        rep = plan(dlg.floor_value())
+        if rep is None or not rep.changed:
+            return
+        apply_repairs(self._csx, [rep])
+        rules = [dict(r) for r in (getattr(mesh, "mesh_repairs", None) or [])]
+        rules.append(
+            {
+                "axis": axis,
+                "lo": float(rep.lo),
+                "hi": float(rep.hi),
+                "floor": float(rep.floor),
+                "expand": 1,
+            }
+        )
+        mesh.mesh_repairs = rules
+        self._critical = [
+            c for c in self._critical if not self._mark_inside(c, axis, rep.lo, rep.hi)
+        ]
+        self._refresh_editor()
+        try:
+            self._redraw()
+        except Exception:  # noqa: BLE001
+            pass
+        self.mesh_edited.emit()
+
+    @staticmethod
+    def _mark_inside(cell, axis: str, lo: float, hi: float) -> bool:
+        if "xyz"[cell.axis] != axis:
+            return False
+        a = float(cell.lo[cell.axis])
+        b = float(cell.hi[cell.axis])
+        tol = max(1e-9, 1e-6 * abs(float(hi) - float(lo)))
+        return a >= float(lo) - tol and b <= float(hi) + tol
+
+    def _critical_remove(self, cell) -> None:
+        """Delete one auto line (stored as a Mesh Editor removal)."""
+        from PySide6.QtWidgets import QMessageBox
+
+        mesh = self._mesh_spec()
+        if mesh is None:
+            return
+        axis = "xyz"[cell.axis]
+        unit = str(getattr(mesh, "drawing_unit", "mm") or "mm")
+        prot = self._protected_lines(axis)
+        faces = [float(cell.lo[cell.axis]), float(cell.hi[cell.axis])]
+        free = [
+            v for v in faces
+            if not any(abs(v - p) <= 1e-6 * max(1.0, abs(v)) for p in prot)
+        ]
+        if not free:
+            QMessageBox.information(
+                self,
+                "Remove line",
+                "Both faces of this cell are authored coordinates\n"
+                "(primitive, port, dump, NF2FF or manual line).\n\n"
+                "Removing one would delete a line the geometry needs - use\n"
+                "'Accept region' if the cell is genuine.",
+            )
+            return
+        target = free[0]
+        answer = QMessageBox.question(
+            self,
+            "Remove line",
+            f"Remove the grid line at {target:.6g} {unit} on {axis}?\n\n"
+            "The two cells merge. This may leave a grading jump that the mesh\n"
+            "report flags - 'Repair this region' re-spaces the lines instead\n"
+            "and keeps the grading valid.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        adds = self._lines_dict(mesh, "manual_mesh_lines")
+        rems = self._lines_dict(mesh, "manual_mesh_lines_removed")
+        if self._has(adds.get(axis, []), target):
+            adds[axis] = [
+                v for v in adds.get(axis, []) if not self._has([target], v)
+            ]
+        elif not self._has(rems.get(axis, []), target):
+            rems.setdefault(axis, []).append(target)
+        self._critical = [
+            c
+            for c in self._critical
+            if not self._mark_inside(
+                c, axis, float(cell.lo[cell.axis]), float(cell.hi[cell.axis])
+            )
+        ]
+        self._apply_editor_change()
+
+    def _critical_snap(self, cell) -> None:
+        """Drop the auto line of a duplicate-scale sliver (same as remove)."""
+        self._critical_remove(cell)
+
+    def _critical_accept(self, cell) -> None:
+        """Store the region as accepted (no longer an open finding)."""
+        mesh = self._mesh_spec()
+        if mesh is None:
+            return
+        axis = "xyz"[cell.axis]
+        lo = float(cell.lo[cell.axis])
+        hi = float(cell.hi[cell.axis])
+        specs = [dict(s) for s in (getattr(mesh, "accepted_cells", None) or [])]
+        already = any(
+            str(s.get("axis")) == axis
+            and abs(float(s.get("lo", 0.0)) - lo) <= 1e-9 * max(1.0, abs(lo))
+            and abs(float(s.get("hi", 0.0)) - hi) <= 1e-9 * max(1.0, abs(hi))
+            for s in specs
+        )
+        if not already:
+            specs.append(
+                {
+                    "axis": axis,
+                    "lo": lo,
+                    "hi": hi,
+                    "note": "accepted in the Mesh Viewer",
+                }
+            )
+            mesh.accepted_cells = specs
+        cell.accepted = True
+        try:
+            self._redraw()
+        except Exception:  # noqa: BLE001
+            pass
+        self.mesh_edited.emit()
+
+    def _critical_explain(self, cell) -> None:
+        """Cause, source, penalty and the default repair plan."""
+        from PySide6.QtWidgets import QMessageBox
+
+        from app.meshing.repair import preview, repair_axis
+
+        mesh = self._mesh_spec()
+        unit_m = float(mesh.unit_to_meters()) if mesh is not None else 0.001
+        unit = str(getattr(mesh, "drawing_unit", "mm") or "mm")
+        axis = "xyz"[cell.axis]
+        rows = [
+            f"axis            : {axis}",
+            f"cell size       : {float(cell.cell_size):.6g} {unit}",
+            f"region          : {float(cell.lo[cell.axis]):.6g} … "
+            f"{float(cell.hi[cell.axis]):.6g} {unit}",
+            f"runtime penalty : {float(getattr(cell, 'penalty', 1.0)):.3g}x "
+            "(cell of this axis / this cell)",
+        ]
+        if getattr(cell, "source", ""):
+            rows.append(f"source          : {cell.source}")
+        if getattr(cell, "cause", ""):
+            rows.append(f"cause           : {cell.cause}")
+        if getattr(cell, "accepted", False):
+            rows.append("status          : accepted (not an open finding)")
+        rows.append("")
+        rows.append(
+            "geometrie = both faces are authored coordinates (the geometry needs\n"
+            "            the cell; a repair would remove a real line)\n"
+            "wunschwert = below the min cell size you requested\n"
+            "artefakt  = easyMesh made it (grading/smoothing/arc/PML); a repair\n"
+            "            can remove it without touching the geometry\n"
+            "engine    = the cell the solver reported as the timestep limit"
+        )
+        if mesh is not None and self._csx is not None:
+            lines = self._axis_grid_lines(axis)
+            rep = repair_axis(
+                lines,
+                axis,
+                float(cell.lo[cell.axis]),
+                float(cell.hi[cell.axis]),
+                ratio=float(mesh.effective_max_grading_ratio()),
+                protected=self._protected_lines(axis),
+                expand=1,
+            )
+            rows.append("")
+            if rep is None or not rep.changed:
+                rows.append(
+                    "A repair would not change this region at the default floor\n"
+                    "(it is uniformly fine, or every line is protected)."
+                )
+            else:
+                pv = preview(
+                    [rep], {ax: self._axis_grid_lines(ax) for ax in "xyz"}, unit_m
+                )
+                rows.append("A repair would do this:")
+                rows.append(rep.describe(unit_m))
+                rows.append("")
+                rows.append(pv.text())
+        box = QMessageBox(self)
+        box.setWindowTitle("Critical cell")
+        box.setText(cell.label)
+        box.setDetailedText("\n".join(rows))
+        box.setIcon(QMessageBox.Icon.Information)
+        box.exec()
 
     def focus_highlight(self) -> bool:
         """Put the slice plane on the middle of the highlighted object.
@@ -2423,15 +2837,24 @@ class MeshGeometryViewer(QWidget):
             if w <= 0.0 or h <= 0.0:
                 continue
             engine = cell.kind == "engine_timestep"
+            accepted = bool(getattr(cell, "accepted", False))
             ax.add_patch(
                 Rectangle(
                     (x0, y0), w, h,
-                    facecolor=(0.85, 0.10, 0.10, 0.22) if engine else "none",
-                    edgecolor="#c62828",
-                    linewidth=1.4 if engine else 1.0,
-                    linestyle="-" if engine else (0, (4, 2)),
+                    facecolor=(
+                        (0.6, 0.6, 0.6, 0.16) if accepted
+                        else (0.85, 0.10, 0.10, 0.22) if engine
+                        else "none"
+                    ),
+                    edgecolor="#9e9e9e" if accepted else "#c62828",
+                    linewidth=1.0 if accepted else (1.4 if engine else 1.0),
+                    linestyle="-" if (engine or accepted) else (0, (4, 2)),
                     zorder=6,
-                    label="critical cell" if engine else "critical region",
+                    label=(
+                        "accepted cell" if accepted
+                        else "critical cell" if engine
+                        else "critical region"
+                    ),
                 )
             )
 
@@ -2813,19 +3236,20 @@ class MeshGeometryViewer(QWidget):
             for c in marks:
                 lo, hi = float(c.lo[idx]), float(c.hi[idx])
                 size = float(c.cell_size)
+                col = "#9e9e9e" if bool(getattr(c, "accepted", False)) else "#c62828"
                 if c.kind == "engine_timestep":
                     ax.plot(
                         [0.5 * (lo + hi)], [size], "o", ms=7, mfc="none",
-                        mec="#c62828", mew=1.6, zorder=6,
+                        mec=col, mew=1.6, zorder=6,
                     )
                 else:
                     # a merged region: the span plus the size of its smallest cell
-                    ax.axvspan(lo, hi, color="#c62828", alpha=0.10, lw=0, zorder=0)
-                    ax.hlines(size, lo, hi, colors="#c62828", linewidth=1.4,
+                    ax.axvspan(lo, hi, color=col, alpha=0.10, lw=0, zorder=0)
+                    ax.hlines(size, lo, hi, colors=col, linewidth=1.4,
                               zorder=6)
                     # anchor marker: a one-cell region is only a hairline wide
                     ax.plot([0.5 * (lo + hi)], [size], "v", ms=5,
-                            color="#c62828", zorder=6)
+                            color=col, zorder=6)
             ax.set_xlabel(f"{d} position [mm]")
             ax.set_ylabel("cell size [mm]")
             ax.set_title(f"{d}: {sizes.size} cells")
