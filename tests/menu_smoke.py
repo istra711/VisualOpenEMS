@@ -519,6 +519,14 @@ def test_tree_selection_highlights_only_objects() -> None:
         hl = w.mesh_viewer.highlight()
         assert hl["label"].startswith("Port:"), hl
 
+    # a second click on the already highlighted row clears it again
+    item = w.tree.item(rows["prim"][0])
+    w.tree.setCurrentRow(rows["prim"][0])
+    w._on_tree_item_pressed(item)
+    w._on_tree_item_clicked(item)
+    assert w.mesh_viewer.highlight()["label"] == "", w.mesh_viewer.highlight()
+    assert not w.tree.selectedItems(), "row should be deselected"
+
     print("TREE SELECTION HIGHLIGHTS OBJECTS ONLY OK")
 
 
