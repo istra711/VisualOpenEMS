@@ -85,6 +85,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_coord_diag.py` — 21 checks incl. the corrected auto-quantum rule
   and the cell-fraction classification.
 
+- **Critical cells can be repaired (V1, opt-in, preview first)**
+  (`app/meshing/repair.py`, `app/ui/repair_dialog.py`): right-click a mark in the
+  Mesh Viewer → *Repair this x/y/z region…* shows what would change (lines
+  removed, new smallest cell, dt before/after, expected cell count) before
+  anything is written; OK stores a rule in `MeshSpec.mesh_repairs` and the mesh
+  is rebuilt with it. The repair merges a too-small cell into its **smaller**
+  neighbour, relaxes the grading only around the merged cells and splits cells
+  above the max-cell limit — deterministic, and it never removes an authored line
+  (domain edges, primitive/port/dump/NF2FF faces, manual lines). A cell with both
+  faces authored is reported as `geometrie` and not repairable.
+- **Min cell size can be enforced by the repair pass (V2, default off)**
+  (`MeshSpec.enforce_min_cellsize`, checkbox *Mesh Parameters → "Enforce min cell
+  size (repair)"*): `Min cell size` becomes a hard floor on every axis,
+  `Min cell size (Z)` overrides the layer thickness. While the switch is on the
+  floor is no longer passed to easyMesh — measured on `Filter_new_test1`,
+  easyMesh alone reacted to `min=0.1` with cells ×2.42 and dt only ×1.35, with
+  the decoupled floor the project gives dt ×1.45 at cells ×0.98. The report lists
+  requested vs. achieved per axis and names the reason when a genuine gap keeps
+  a smaller cell.
+- **Per-mark actions in the Mesh Viewer (V3)** (`app/ui/mesh_viewer.py`): the
+  right-click submenu *Critical cells (N open)* now offers **Repair…**,
+  **Remove the offending line…**, **Snap onto the neighbour line…**,
+  **Accept region (do not repair)** and **Explain…**, each enabled only where it
+  is honest (repair disabled for `geometrie`, snap only for duplicate-scale
+  slivers, remove only when a face is an auto line). Accepted regions stay
+  visible in grey but count as accepted instead of open findings.
+- Tests: `tests/test_mesh_repair.py` (34 checks: merge/relax/split, protection
+  incl. float32 vs. float64, preview, cause/penalty/accepted, per-axis floors,
+  the easyMesh decoupling), `tests/repair_actions_smoke.py` (menu enablement,
+  accept, remove, repair round-trip, explain).
+
 ### Fixed
 
 - **Field Viewer: the vector glyphs no longer fight with the field plot**: the
@@ -123,6 +154,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SCRIPT_TEMPLATE` string into `app/simulation/grid_dedupe.py`, so the code
   that actually runs is unit-testable; the generated script imports it like the
   other `app.*` modules.
+- **Honest "below min cell size" diagnostics (V4)**
+  (`app/meshing/critical_cells.py`, `app/meshing/coord_diag.py`): the
+  `cell_below_min` mark now compares against the **user-set** `min_cellsize` /
+  `min_cellsize_z` only (`requested_min_cellsize`); the derived fallbacks
+  (`refined_cellsize`, `target_cell_units`) are targets, and using them as a
+  minimum flagged 162 ordinary cells / 5.08 mm in a real project without
+  `min_cellsize`. Every mark also names its cause (`geometrie` > `wunschwert` >
+  `artefakt`, `engine` for solver-reported cells), its runtime penalty (axis
+  median / cell) and whether it is accepted; the mesh report lists requested vs.
+  achieved per axis and states when the remaining cells are bounded by authored
+  coordinates instead of claiming a repair.
 - Tests: new `tests/test_dedupe_grid_lines.py`; `tests/test_quantize.py` and
   `tests/test_axis_aligned_box.py` extended (bit-identity, legacy offset,
   ULP tolerance).

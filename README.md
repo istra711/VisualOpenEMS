@@ -487,7 +487,7 @@ python tests\yagi_mesh_ends.py    # Yagi cylinder-end densification
 | [docs/FREECAD_WORKFLOW_EN.md](docs/FREECAD_WORKFLOW_EN.md) | Step-by-step workflow checklist (EN) |
 | [docs/FREECAD_PORTS_EN.md](docs/FREECAD_PORTS_EN.md) | Port marking in FreeCAD (EN) |
 | [docs/EASYMESH_CHANGES_EN.md](docs/EASYMESH_CHANGES_EN.md) | Local easyMesh modifications (EN) |
-| [docs/DIAGNOSTICS_CHANGES_EN.md](docs/DIAGNOSTICS_CHANGES_EN.md) | Mesh diagnostics: timing, run status, critical cells, fine-cell sources, coordinate quantization (EN) |
+| [docs/DIAGNOSTICS_CHANGES_EN.md](docs/DIAGNOSTICS_CHANGES_EN.md) | Mesh diagnostics: timing, run status, critical cells, fine-cell sources, coordinate quantization, cell repair (V1–V4) (EN) |
 | [docs/DIAGNOSTICS_CHANGES_DE.md](docs/DIAGNOSTICS_CHANGES_DE.md) | Same, German — with the measurements over the real projects (DE) |
 | [CHANGELOG.md](CHANGELOG.md) | Full change history per release |
 

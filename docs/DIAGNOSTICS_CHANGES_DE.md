@@ -406,6 +406,114 @@ pytest-Checks**.
 
 ---
 
+## Änderung 8 — V1–V4: die Laufzeit-Zellen reparieren (opt-in)
+
+**Dateien:** `app/meshing/repair.py` (neu: `repair_axis`, `preview`,
+`apply_repairs`, `apply_mesh_repairs`, `enforced_floors`,
+`protected_coordinates`, `repair_report`), `app/meshing/critical_cells.py`
+(`cause`, `penalty`, `accepted`, `repairable`), `app/meshing/coord_diag.py`
+(`requested_min_cellsize`), `app/meshing/easy_wrapper.py` (`easy_mesh_setup()`,
+Reparatur als letzter Schritt, Untergrenze nicht mehr an easyMesh),
+`app/meshing/build_task.py`, `app/simulation/script_gen.py`,
+`app/models/project.py` (`MeshSpec.mesh_repairs`, `enforce_min_cellsize`,
+`accepted_cells`), `app/ui/repair_dialog.py` (neu), `app/ui/mesh_viewer.py`
+(Aktionen pro Marke), `app/ui/mesh_params.py` (Checkbox),
+`tests/test_mesh_repair.py`, `tests/repair_actions_smoke.py`.
+
+**Was:** Die Änderungen 1–7 haben die Zellen, die den Zeitschritt setzen, nur
+*berichtet*. V1–V4 schließen den Kreis, ohne die Diagnose unehrlich zu machen:
+
+* **V1 — die markierte Region reparieren (opt-in, Vorschau zuerst).**
+  Rechtsklick auf eine Marke → *Repair this x/y/z region…* öffnet eine Vorschau
+  (entfernte Linien, neue kleinste Zelle, dt vorher/nachher, erwartete
+  Zellzahl); OK ist gesperrt, solange sich nichts ändern würde. OK speichert
+  eine Regel in `MeshSpec.mesh_repairs`. Die Regel läuft in `generate_mesh()`
+  als **letzter** Schritt (nach easyMesh, `interface_refine`, Port-Ausrichtung,
+  Max-Cell-Deckel und manuellen Linien) — Vorschau und generiertes Solver-Skript
+  erzeugen also dasselbe Gitter.
+* **V2 — Mindestzellgröße erzwingen (Schalter, Default aus).** *Mesh Parameters
+  → „Enforce min cell size (repair)"*. `Min cell size` wird zur harten
+  Untergrenze auf jeder Achse, `Min cell size (Z)` überschreibt die
+  Schichtdicke. Eine Zelle darunter wird in den kleineren Nachbarn verschmolzen;
+  das Grading wird nur um die verschmolzenen Zellen neu verteilt; Zellen über
+  dem Max-Cell-Limit werden geteilt. Bei aktivem Schalter bekommt easyMesh die
+  Untergrenze **nicht** mehr zu sehen — gemessen an `Filter_new_test1`: easyMesh
+  allein reagierte auf `min=0.1` mit Zellen ×2,42 und dt nur ×1,35; ohne die
+  Untergrenze in easyMesh ergibt dasselbe Projekt dt ×1,45 bei Zellen ×0,98.
+* **V3 — Aktionen pro Marke.** Das Kontext-Untermenü *Critical cells (N open)*
+  bietet jetzt **Repair…**, **Remove the offending line…**, **Snap onto the
+  neighbour line…**, **Accept region (do not repair)** und **Explain…** — jeweils
+  nur aktiv, wo es ehrlich ist: Repair ist bei `geometrie` (beide Flächen
+  autorisiert) gesperrt, Snap nur bei Duplikat-Slivers (< 0,1 % einer normalen
+  Zelle), Remove nur, wenn mindestens eine Fläche eine Auto-Linie ist.
+  Akzeptierte Regionen bleiben sichtbar (grau), zählen aber als akzeptiert
+  statt als offener Befund.
+* **V4 — ehrliche Diagnose.** `cell_below_min` vergleicht nur noch mit der
+  **vom Nutzer gesetzten** Mindestgröße (`requested_min_cellsize`); die
+  abgeleiteten Fallbacks (`refined_cellsize`, `target_cell_units`) markierten
+  vorher in einem Projekt ohne `min_cellsize` 162 normale Zellen / 5,08 mm.
+  Jede Marke nennt jetzt ihre Ursache (`geometrie` > `wunschwert` > `artefakt`;
+  `engine` für vom Solver gemeldete Zellen), ihre Laufzeit-Strafe (Achsen-Median
+  / Zelle) und ob sie akzeptiert ist. Der Bericht listet je Achse die
+  angeforderte Untergrenze und das erreichte Minimum — und sagt es, wenn die
+  Grenze nicht erreicht wurde, weil die restlichen Zellen durch autorisierte
+  Koordinaten begrenzt sind.
+
+**Schutzregel:** Die Reparatur entfernt nie eine autorisierte Linie —
+Domänenkanten, Primitive-/Port-/Dump-/NF2FF-Flächen und manuelle Linien werden
+als `protected` übergeben (einmal aus `source_coordinates` berechnet). Eine
+Zelle mit **beiden** autorisierten Flächen ist `geometrie` und nicht
+reparierbar; eine Zelle mit einer Auto-Fläche darf verschmolzen werden. Der
+Gleichheitsvergleich nutzt `_SAME_TOL = 1e-6` (Zeicheneinheiten): CSXCAD
+speichert Gitterlinien als float32 (`1.635` → `1.6349999904632568`), die
+autorisierten Koordinaten sind float64 — mit 1e-12 löschte eine Reparatur in
+`Filter_new_test1` die geschützte Linie 1.635.
+
+**Gemessen (reale Projekte, `build_mesh_and_validate`, gleiche Maschine):**
+
+| Projekt | Variante | dt [ps] | Zellen | dt × | Zellen × |
+|---|---|---|---|---|---|
+| `Filter_new_test1` | Basis | 0.0790 | 375 570 | 1.000 | 1.000 |
+| | V1 (z-Marke) | 0.1157 | 361 660 | **1.465** | 0.963 |
+| | V2 (min 0.1) | 0.1143 | 369 150 | **1.447** | 0.983 |
+| `Dipol_CST_openems_Test_cyl_z_sym` | Basis | 0.1186 | 2 922 507 | 1.000 | 1.000 |
+| | V1 (x-Marke, Default-Floor) | 0.1186 | 2 901 780 | 1.000 | 0.993 |
+| | V2 (min 0.5) | 1.2107 | 1 940 057 | **10.207** | 0.664 |
+
+* Filter V1 entfernt das 0,023781-mm-Artefakt; das verbleibende z-Minimum ist
+  0,035 mm bei `1.635..1.670672` mit Ursache `geometrie`
+  (`box:substrate + box:msl_line`) — der Befund ist jetzt echt, und der Bericht
+  sagt das, statt eine Reparatur zu behaupten.
+* Filter V2 kann 0,1 mm auf z aus demselben Grund nicht erreichen; die
+  Berichtszeile lautet `z: achieved 0.035 mm — not reached: the remaining cells
+  are bounded by authored coordinates (the geometry needs them)`.
+* Dipol V1 ist mit dem Default-Floor ein No-op: die x/y-Bänder mit 0,051282 mm
+  sind ein *Plateau* (beide äußeren Nachbarn gleich groß), deshalb lehnt die
+  Default-Regel (eine Einzelzellen-*Delle* verschmelzen) korrekt ab. Der
+  funktionierende Weg ist V2 (`min = 0.5`): dt ×10,2 und ein Drittel weniger
+  Zellen.
+* Attribution am Filter (V2, `min = 0.1`): easyMesh allein verändert das Gitter
+  (dt ×1,348, Zellen ×2,417); die Durchsetzung darauf ist dt ×2,108 bei Zellen
+  ×0,980. Die Arbeit macht also der Schalter, und easyMesh muss dieselbe Zahl
+  nicht mehr jagen.
+
+**Im Projekt gespeichert** (`MeshSpec`; alte Projekte laden mit den Defaults):
+`mesh_repairs` (Liste aus `{axis, lo, hi, floor, expand}`), `accepted_cells`
+(Liste aus `{axis, lo, hi}`) und `enforce_min_cellsize` (bool, Default `False`).
+Die Reparatur ist deterministisch (kein RNG, kein Solver) und entfernt nur
+Linien, die sie entfernen darf, oder fügt Teilungslinien über dem Max-Cell-Limit
+hinzu.
+
+**Grenzen:** Die Reparatur verschiebt keine autorisierten Linien, ein echter
+Spalt (beide Flächen autorisiert) bleibt und wird als solcher berichtet. Einen
+Grading-Sprung außerhalb des erweiterten Intervalls kann sie nicht beheben (der
+Bericht warnt mit dem verbleibenden Verhältnis). Der zylindrische (polare)
+Mesher wird nicht repariert; der Schalter meldet „min-cell enforcement: not
+available for the cylindrical mesher“. V2 wirkt nur, wenn `Min cell size` (oder
+`Min cell size (Z)`) gesetzt ist.
+
+---
+
 ## Nicht geändert
 
 * Solver-Verhalten, Presets, Beispiele und gespeicherte Projekte.
@@ -422,6 +530,10 @@ pytest-Checks**.
 * Menüstruktur (nur neue Einträge: Mesh → *Mesh Timing / Feasibility…*,
   Simulation → *Simulation Status…*) und `AppSettings` (die neuen
   Vektor-Optionen reiten im bestehenden Options-Dict mit).
+* Der Standard-Mesh-Pfad: mit *Repair* und *Enforce min cell size* aus (beides
+  Defaults) ist das Gitter genau das, was easyMesh vorher erzeugt hat — Presets
+  und Beispiele reproduzieren ihre Netze. Die neuen Aktionen pro Marke erweitern
+  den bestehenden *Critical cells*-Rechtsklick; nichts läuft von selbst.
 
 ---
 
@@ -432,13 +544,16 @@ $PY = "c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe"
 cd c:\Users\istra\Documents\claude_ps\FreeCAD_OpenEMS_GUI
 
 # 1) komplette Suite (enthält die neuen Tests)
-& $PY -m pytest tests -q                     # erwartet: 233 passed
+& $PY -m pytest tests -q                     # erwartet: 290 passed
 
 # 2) Standalone-Smokes (VTK/GUI laufen NICHT unter pytest)
 & $PY tests\mesh_thread_smoke.py             # MESH THREAD SMOKE OK
 & $PY tests\vtk_viewer_smoke.py              # VTK VIEWER SMOKE PASS
 & $PY tests\vtk_vectors_smoke.py             # VTK VECTORS SMOKE PASS
 & $PY tests\mesh_params_flow.py              # ALL PASS
+& $PY tests\mesh_viewer_smoke.py             # MESH VIEWER SMOKE PASS
+& $PY tests\repair_actions_smoke.py          # REPAIR ACTIONS SMOKE PASS
+& $PY tests\tab_help_smoke.py                # TAB HELP SMOKE PASS
 
 # 3) In der App
 #    Mesh -> Build Mesh           -> Logzeilen "Mesh timing: …" und "Coord probe: …"

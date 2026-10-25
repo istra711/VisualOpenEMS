@@ -393,6 +393,106 @@ pytest checks**.
 
 ---
 
+## Change 8 — V1–V4: repair the runtime-only cells (opt-in)
+
+**Files:** `app/meshing/repair.py` (new: `repair_axis`, `preview`,
+`apply_repairs`, `apply_mesh_repairs`, `enforced_floors`,
+`protected_coordinates`, `repair_report`), `app/meshing/critical_cells.py`
+(`cause`, `penalty`, `accepted`, `repairable`), `app/meshing/coord_diag.py`
+(`requested_min_cellsize`), `app/meshing/easy_wrapper.py` (`easy_mesh_setup()`,
+repair hook last, floor kept out of easyMesh), `app/meshing/build_task.py`,
+`app/simulation/script_gen.py`, `app/models/project.py`
+(`MeshSpec.mesh_repairs`, `enforce_min_cellsize`, `accepted_cells`),
+`app/ui/repair_dialog.py` (new), `app/ui/mesh_viewer.py` (per-mark actions),
+`app/ui/mesh_params.py` (checkbox), `tests/test_mesh_repair.py`,
+`tests/repair_actions_smoke.py`.
+
+**What:** Changes 1–7 only *reported* the cells that set the timestep. V1–V4
+close the loop without making the diagnosis dishonest:
+
+* **V1 — repair the flagged region (opt-in, preview first).** Right-click a
+  mark → *Repair this x/y/z region…* opens a preview (lines removed, new minimum
+  cell, dt before/after, expected cell count); OK is disabled while nothing
+  would change. OK stores a rule in `MeshSpec.mesh_repairs`. The rule is applied
+  inside `generate_mesh()` as the **last** step (after easyMesh,
+  `interface_refine`, port alignment, the max-cell cap and the manual lines), so
+  the preview and the generated solver script produce the same grid.
+* **V2 — enforce the min cell size (switch, default off).** *Mesh Parameters →
+  "Enforce min cell size (repair)"*. `Min cell size` becomes a hard floor on
+  every axis, `Min cell size (Z)` overrides the layer thickness. A cell below it
+  is merged into its smaller neighbour; the grading is re-spaced only around the
+  merged cells; cells above the max-cell limit are split. While the switch is on
+  the floor is **not** passed to easyMesh — measured on `Filter_new_test1`:
+  easyMesh alone reacted to `min=0.1` with cells ×2.42 and dt only ×1.35; with
+  the floor kept out of easyMesh the same project gives dt ×1.45 at cells ×0.98.
+* **V3 — per-mark actions.** The context submenu *Critical cells (N open)* now
+  offers **Repair…**, **Remove the offending line…**, **Snap onto the neighbour
+  line…**, **Accept region (do not repair)** and **Explain…**, each enabled only
+  where it is honest: repair is disabled for `geometrie` (both faces authored),
+  snap only for duplicate-scale slivers (< 0.1 % of a normal cell), remove only
+  when at least one face is an auto line. Accepted regions stay visible (grey)
+  but count as accepted instead of open findings.
+* **V4 — honest diagnostics.** `cell_below_min` compares against the
+  **user-set** minimum only (`requested_min_cellsize`); the derived fallbacks
+  (`refined_cellsize`, `target_cell_units`) previously flagged 162 ordinary
+  cells / 5.08 mm in a project without `min_cellsize`. Every mark now names its
+  cause (`geometrie` > `wunschwert` > `artefakt`; `engine` for solver-reported
+  cells), its runtime penalty (axis median / cell) and whether it is accepted.
+  The report lists, per axis, the requested floor and the achieved minimum, and
+  says when the floor was not reached because the remaining cells are bounded by
+  authored coordinates.
+
+**Protection rule:** the repair never removes an authored line — domain edges,
+primitive/port/dump/NF2FF faces and manual lines are passed in as `protected`
+(computed once from `source_coordinates`). A cell with **both** faces authored
+is `geometrie` and not repairable; a cell with one auto face can be merged.
+Same-line matching uses `_SAME_TOL = 1e-6` (drawing units): CSXCAD stores grid
+lines as float32 (`1.635` → `1.6349999904632568`) while authored coordinates are
+float64 — a 1e-12 tolerance let a repair delete the protected line 1.635 in
+`Filter_new_test1`.
+
+**Measured (real projects, `build_mesh_and_validate`, same machine):**
+
+| project | variant | dt [ps] | cells | dt × | cells × |
+|---|---|---|---|---|---|
+| `Filter_new_test1` | baseline | 0.0790 | 375 570 | 1.000 | 1.000 |
+| | V1 (z mark) | 0.1157 | 361 660 | **1.465** | 0.963 |
+| | V2 (min 0.1) | 0.1143 | 369 150 | **1.447** | 0.983 |
+| `Dipol_CST_openems_Test_cyl_z_sym` | baseline | 0.1186 | 2 922 507 | 1.000 | 1.000 |
+| | V1 (x mark, default floor) | 0.1186 | 2 901 780 | 1.000 | 0.993 |
+| | V2 (min 0.5) | 1.2107 | 1 940 057 | **10.207** | 0.664 |
+
+* Filter V1 removes the 0.023781 mm artefact; the remaining z minimum is
+  0.035 mm at `1.635..1.670672` with cause `geometrie`
+  (`box:substrate + box:msl_line`) — the finding is now genuine, and the report
+  says so instead of claiming a repair.
+* Filter V2 cannot reach 0.1 mm on z for the same reason; the report line reads
+  `z: achieved 0.035 mm — not reached: the remaining cells are bounded by
+  authored coordinates (the geometry needs them)`.
+* Dipole V1 at the default floor is a no-op: the x/y 0.051282 mm bands are a
+  *plateau* (both outside neighbours are the same size), so the default rule
+  (merge a single-cell *dip*) correctly declines. The working path is V2
+  (`min = 0.5`), which raises dt ×10.2 and removes a third of the cells.
+* Attribution on the Filter (V2, `min = 0.1`): easyMesh alone changes the grid
+  (dt ×1.348, cells ×2.417); the enforcement pass on top of that grid is
+  dt ×2.108 at cells ×0.980. The switch therefore does the work, and easyMesh is
+  no longer asked to chase the same number.
+
+**Stored in the project** (`MeshSpec`; old projects load with the defaults):
+`mesh_repairs` (list of `{axis, lo, hi, floor, expand}`), `accepted_cells`
+(list of `{axis, lo, hi}`) and `enforce_min_cellsize` (bool, default `False`).
+The repair is deterministic (no RNG, no solver) and only ever *removes* lines it
+is allowed to remove or *adds* split lines above the max-cell limit.
+
+**Limits:** the repair does not move authored lines, so a genuine gap (both
+faces authored) stays and is reported as such. It cannot fix a grading jump that
+sits outside the expanded interval (the report warns with the remaining ratio).
+The cylindrical (polar) mesher is not repaired; the switch prints
+"min-cell enforcement: not available for the cylindrical mesher". V2 only acts
+when `Min cell size` (or `Min cell size (Z)`) is set.
+
+---
+
 ## Not changed
 
 * Solver behaviour, presets, examples and saved projects.
@@ -408,6 +508,10 @@ pytest checks**.
 * Menu structure (only new entries: Mesh → *Mesh Timing / Feasibility…*,
   Simulation → *Simulation Status…*) and `AppSettings` (the new vector options
   ride in the existing options dict).
+* The default mesh path: with *Repair* and *Enforce min cell size* off (both
+  defaults) the grid is exactly what easyMesh produced before — presets and
+  examples reproduce their meshes. The new per-mark actions extend the existing
+  *Critical cells* right-click entry; nothing runs on its own.
 
 ---
 
@@ -418,13 +522,16 @@ $PY = "c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe"
 cd c:\Users\istra\Documents\claude_ps\FreeCAD_OpenEMS_GUI
 
 # 1) full suite (contains the new tests)
-& $PY -m pytest tests -q                     # expect: 233 passed
+& $PY -m pytest tests -q                     # expect: 290 passed
 
 # 2) standalone smokes (VTK/GUI do NOT run under pytest)
 & $PY tests\mesh_thread_smoke.py             # MESH THREAD SMOKE OK
 & $PY tests\vtk_viewer_smoke.py              # VTK VIEWER SMOKE PASS
 & $PY tests\vtk_vectors_smoke.py             # VTK VECTORS SMOKE PASS
 & $PY tests\mesh_params_flow.py              # ALL PASS
+& $PY tests\mesh_viewer_smoke.py             # MESH VIEWER SMOKE PASS
+& $PY tests\repair_actions_smoke.py          # REPAIR ACTIONS SMOKE PASS
+& $PY tests\tab_help_smoke.py                # TAB HELP SMOKE PASS
 
 # 3) in the app
 #    Mesh -> Build Mesh                   -> log lines "Mesh timing: …" and "Coord probe: …"

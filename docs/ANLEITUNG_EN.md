@@ -327,6 +327,25 @@ jumps and too-large cells stay in the mesh report only. The marks are always
 computed but drawn only on request; the count in the menu entry tells you
 beforehand whether there is anything to see.
 
+**Repairing cells (opt-in, preview first).** Right-click a mark →
+"Critical cells (N open)" offers: *Repair this x/y/z region…* (preview with the
+lines removed, the new smallest cell and dt before/after; OK stores the rule in
+the project), *Remove the offending line…* (delete one auto line), *Snap onto the
+neighbour line…* (duplicate-scale slivers only), *Accept region (do not repair)*
+(grey, no longer counted as an open finding) and *Explain…* (cause, source,
+runtime penalty). Only unprotected lines are touched; a cell with two geometry
+faces stays and is reported as `geometrie`. The repair runs as the last step of
+the mesh build — the preview and the generated solver script produce the same
+grid.
+
+**Enforcing the min cell size (V2, default: off).** In *Mesh Parameters*,
+"Enforce min cell size (repair)" turns "Min cell size" into a hard lower bound
+("Min cell size (Z)" overrides the layer thickness): cells below it are merged
+into the smaller neighbour and the grading is re-spaced; genuine gaps (both faces
+from the geometry) stay and are reported as "not reached". The switch is opt-in
+so existing presets stay reproducible; easyMesh no longer sees the floor (it
+would otherwise refine the lateral axes against the repair).
+
 ### 5.2 Material / assignment
 
 1. **Add Material…** — e.g. `substrate` (εr=4.4, tanδ=0.02), `copper`

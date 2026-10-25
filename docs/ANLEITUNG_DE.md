@@ -332,6 +332,26 @@ und zu große Zellen stehen weiterhin nur im Mesh-Bericht. Die Marken werden
 immer berechnet, aber erst auf Wunsch gezeichnet; die Zahl im Menüeintrag sagt
 vorher, ob es etwas zu sehen gibt.
 
+**Zellen reparieren (opt-in, Vorschau zuerst).** Rechtsklick auf eine Marke →
+„Critical cells (N open)" bietet: *Repair this x/y/z region…* (Vorschau mit
+entfernten Linien, neuer kleinster Zelle und dt vorher/nachher; OK speichert die
+Regel im Projekt), *Remove the offending line…* (eine Auto-Linie löschen),
+*Snap onto the neighbour line…* (nur bei Duplikat-Slivers), *Accept region (do
+not repair)* (grau, zählt nicht mehr als offener Befund) und *Explain…* (Ursache,
+Quelle, Laufzeit-Strafe). Repariert wird nur, was nicht durch autorisierte
+Koordinaten geschützt ist; eine Zelle mit zwei Geometrie-Flächen bleibt und wird
+als `geometrie` berichtet. Die Reparatur läuft als letzter Schritt der
+Mesherzeugung — Vorschau und generiertes Solver-Skript erzeugen dasselbe Gitter.
+
+**Mindestzellgröße erzwingen (V2, Standard: aus).** In *Mesh Parameters* macht
+„Enforce min cell size (repair)" aus „Min cell size" eine harte Untergrenze
+(„Min cell size (Z)" überschreibt die Schichtdicke): Zellen darunter werden in
+den kleineren Nachbarn verschmolzen, das Grading wird neu verteilt; echte Spalte
+(beide Flächen aus der Geometrie) bleiben und stehen als „not reached" im
+Bericht. Der Schalter ist opt-in, damit bestehende Presets unverändert
+reproduzierbar bleiben; easyMesh bekommt die Untergrenze dabei nicht mehr zu
+sehen (sonst verfeinert es die lateralen Achsen gegen die Reparatur).
+
 ### 5.2 Material / Assignment
 
 1. **Add Material…** — z. B. `substrate` (εr=4,4, tanδ=0,02), `copper`
