@@ -92,6 +92,12 @@ class MainWindow(QMainWindow):
         # background mesh build (worker thread) state
         self._mesh_building = False
         self._mesh_thread = None
+        #: MeshTiming report of the last mesh build (Mesh menu -> Mesh Timing)
+        self._last_mesh_timing = None
+        #: Phase-0 coordinate probe of the last mesh build (read-only)
+        self._last_coord_diag = None
+        #: text of the last post-run status block (Simulation menu -> Status)
+        self._last_sim_report_text = ""
         # reserved: Mesh-Editor edits are applied to the existing mesh directly
         # (no full rebuild), so no auto-build timer is needed anymore
         self._auto_mesh_build = False
@@ -964,6 +970,14 @@ class MainWindow(QMainWindow):
         )
         mmenu.addSeparator()
         add_action(mmenu, "Mesh Report", slot=self._show_mesh_report_tab)
+        add_action(
+            mmenu,
+            "Mesh Timing / Feasibility…",
+            slot=self._on_show_mesh_timing,
+            tip="Smallest cell, the resulting timestep (CFL), cells per wavelength "
+            "and the frequency resolution the mesh/settings allow — decides whether "
+            "the run can work at all",
+        )
         add_action(mmenu, "Show Mesh Viewer", slot=self._show_mesh_viewer)
         mmenu.addSeparator()
         add_action(mmenu, "Export CSX XML\u2026", btn=self.mesh_viewer.btn_export_xml)
@@ -980,6 +994,14 @@ class MainWindow(QMainWindow):
             "complete S-matrix — needs >= 2 ports",
         )
         add_action(smenu, "Abort", btn=self.btn_abort)
+        smenu.addSeparator()
+        add_action(
+            smenu,
+            "Simulation Status…",
+            slot=self._on_show_sim_status,
+            tip="Errors, warnings, convergence, passivity (|S11|^2+|S21|^2) and "
+            "the reliability of the last run — the same block is appended to the log",
+        )
         smenu.addSeparator()
         add_action(
             smenu,
@@ -1426,6 +1448,43 @@ class MainWindow(QMainWindow):
         """Single source for the mesh check report (log Mesh Report tab)."""
         self.mesh_report.setPlainText(text)
         self.log_mesh_report.setPlainText(text)
+
+    def _on_show_mesh_timing(self) -> None:
+        """Mesh menu: timing / feasibility report of the last mesh build.
+
+        Smallest cell -> Courant timestep, cells per wavelength, the frequency
+        resolution the settings allow and the runtime penalty of an
+        over-refined cell. Answers "can this simulation work at all?" before
+        the FDTD engine is started.
+        """
+        from app.ui.report_dialog import show_report
+
+        rep = getattr(self, "_last_mesh_timing", None)
+        if rep is None:
+            text = (
+                "No mesh analysed yet.\n\n"
+                "Use Mesh > Build Mesh first (Ctrl+M). The report is produced "
+                "right after meshing and is also shown in the Mesh Report tab."
+            )
+        else:
+            from app.meshing.timing import report_lines, summary_line
+
+            parts = [summary_line(rep), *report_lines(rep)]
+            coord = getattr(self, "_last_coord_diag", None)
+            if coord is not None:
+                from app.meshing.coord_diag import report_lines as coord_report
+                from app.meshing.coord_diag import summary_line as coord_summary
+
+                parts += [coord_summary(coord), *coord_report(coord)]
+            text = "\n".join(parts)
+        self._mesh_timing_dialog = show_report(
+            self,
+            "Mesh Timing / Feasibility",
+            text,
+            hint="Mesh-only estimates (no FDTD yet). The engine's exact timestep "
+            "is reported in the Simulation Status after a run.",
+            save_name="mesh_timing.txt",
+        )
 
     def _sync_scene_info(self) -> None:
         """Mirror the Mesh Viewer's info text into the scene info tab."""
@@ -4845,6 +4904,26 @@ class MainWindow(QMainWindow):
 
         text = "\n".join(lines)
         self._set_mesh_report(text)
+        self._last_mesh_timing = getattr(result, "timing", None)
+        self._last_coord_diag = getattr(result, "coord_diag", None)
+        if self._last_mesh_timing is not None:
+            from app.meshing.timing import summary_line
+
+            self._log(summary_line(self._last_mesh_timing))
+        if self._last_coord_diag is not None:
+            from app.meshing.coord_diag import summary_line as coord_summary_line
+
+            self._log(coord_summary_line(self._last_coord_diag))
+        # Hand the flagged cells to the Mesh Viewer (right-click toggles them).
+        try:
+            crit = getattr(result, "critical_cells", None)
+            self.mesh_viewer.set_critical_cells(crit)
+            if crit:
+                from app.meshing.critical_cells import summary_line as crit_summary
+
+                self._log(crit_summary(crit) + " - marked in the Mesh Viewer")
+        except Exception as e:  # noqa: BLE001 — a mark must not fail the build
+            self._log(f"Mesh Viewer critical cells failed: {e}")
         self._record_results(save=False)
         return text
 
@@ -5062,6 +5141,7 @@ class MainWindow(QMainWindow):
                         f"Log: {log_path}\n\n"
                         "Check the simulator log for CalcPort / export / mesh errors.",
                     )
+                self._publish_sim_report(work, exit_code, log_path)
                 self._end_run_log()
             except Exception as e:  # noqa: BLE001
                 print("post-sim viewer error:", e)
@@ -5191,7 +5271,110 @@ class MainWindow(QMainWindow):
                 self._log(f"S-param results ready: {found[-1]}")
         except Exception as e:  # noqa: BLE001 — merge succeeded, viewer is best-effort
             self._log(f"S-param viewer update failed: {e}")
+        self._publish_sim_report(
+            work, getattr(self.runner, "last_exit", None),
+            getattr(self.runner, "log_path", None),
+        )
         self._end_run_log()
+
+    def _publish_sim_report(self, work: Path, exit_code, log_path) -> str:
+        """Post-run status report: append it to the log, keep it for the menu.
+
+        Collects solver errors/warnings, convergence, the engine's timing facts
+        and the passivity (``|S11|^2 + |S21|^2``) of the measured S-parameters,
+        so a finished run can be judged without reading the whole log.
+        """
+        text = ""
+        try:
+            from app.simulation.report import build_report, render
+
+            log_text = ""
+            p = Path(log_path) if log_path else None
+            if p is not None and p.is_file():
+                log_text = p.read_text(encoding="utf-8", errors="replace")
+            sparams = None
+            sp_path = ""
+            files = self._find_sparams_files(work)
+            # _find_sparams_files prefers the merged Touchstone; the passivity
+            # check needs the JSON, so look for that separately.
+            json_cands = [f for f in files if f.suffix.lower() == ".json"]
+            if not json_cands:
+                for sub in ("sparams", "simulation"):
+                    cand = Path(work) / sub / "sparams.json"
+                    if cand.is_file():
+                        json_cands.append(cand)
+            if json_cands:
+                from app.postproc.sparams import load_sparams_json
+
+                sp_path = str(json_cands[-1])
+                try:
+                    sparams = load_sparams_json(json_cands[-1])
+                except Exception as e:  # noqa: BLE001 — report without the S-params
+                    self._log(f"Simulation status: S-params unreadable ({e})")
+            elif files:
+                sp_path = str(files[-1])
+            rep = build_report(
+                log_text=log_text,
+                exit_code=exit_code,
+                sparams=sparams,
+                sparams_path=sp_path,
+                log_path=str(p) if p is not None else "",
+                band_hz=(
+                    self.project.mesh.start_frequency,
+                    self.project.mesh.stop_frequency,
+                ),
+                target_hz=self.project.mesh.target_frequency,
+                end_criteria=self.project.sim.end_criteria,
+                timing=getattr(self, "_last_mesh_timing", None),
+                results_found=bool(files or json_cands),
+            )
+            text = render(rep)
+        except Exception as e:  # noqa: BLE001 — a report must never break a run
+            text = f"Simulation status report failed: {e}"
+        self._last_sim_report_text = text
+        for line in text.splitlines():
+            self._log(line)
+        # After a run the engine names the cell that sets the timestep: mark it
+        # in the Mesh Viewer (the "cells the simulation flagged" part).
+        if log_text:
+            try:
+                from app.meshing.critical_cells import parse_engine_cell
+                from app.meshing.preview import mesh_lines_from_csx
+
+                lines_by_axis = (
+                    mesh_lines_from_csx(self._last_csx)
+                    if getattr(self, "_last_csx", None) is not None
+                    else {}
+                )
+                cell = parse_engine_cell(log_text, lines_by_axis)
+                if cell is not None:
+                    self.mesh_viewer.add_critical_cell(cell)
+                    self._log(f"Mesh Viewer: {cell.label} marked")
+            except Exception as e:  # noqa: BLE001 — never break the report
+                self._log(f"Mesh Viewer engine-cell mark failed: {e}")
+        return text
+
+    def _on_show_sim_status(self) -> None:
+        """Simulation menu: status / quality report of the last run."""
+        from app.ui.report_dialog import show_report
+
+        text = getattr(self, "_last_sim_report_text", "")
+        if not text:
+            text = (
+                "No simulation finished in this session yet.\n\n"
+                "Run Simulation (Ctrl+R): the status block (errors, warnings, "
+                "convergence, engine timing, passivity) is written to the log "
+                "when the run ends and is available here afterwards."
+            )
+        self._sim_status_dialog = show_report(
+            self,
+            "Simulation Status",
+            text,
+            hint="Quality check of the last run: solver errors/warnings, "
+            "convergence, mesh-vs-engine timestep and the passivity of the "
+            "measured S-parameters.",
+            save_name="simulation_status.txt",
+        )
 
     def _on_abort(self) -> None:
         self._abort_requested = True

@@ -30,6 +30,12 @@ class MeshBuildResult:
     fdtd: object = None
     #: auto grid (per axis) BEFORE the manual Mesh-Editor overrides were applied
     auto_mesh_lines: dict = field(default_factory=dict)
+    #: :class:`app.meshing.timing.MeshTiming` of this build (None without a mesh)
+    timing: object = None
+    #: :class:`app.meshing.coord_diag.CoordDiag` of this build (Phase-0 probe)
+    coord_diag: object = None
+    #: :class:`app.meshing.critical_cells.CriticalCell` list (Mesh Viewer marks)
+    critical_cells: list = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -99,8 +105,14 @@ def build_mesh_and_validate(
 
     import numpy as np
 
+    from app.meshing.coord_diag import analyse_coord_diag, min_cellsize_units
+    from app.meshing.coord_diag import report_lines as coord_report_lines
+    from app.meshing.coord_diag import source_coordinates
+    from app.meshing.critical_cells import find_critical_cells, source_summary
+    from app.meshing.critical_cells import summary_line as critical_summary
     from app.meshing.easy_wrapper import apply_boundary, enhance_csx, enhance_fdtd, generate_mesh
     from app.meshing.rules import compute_targets
+    from app.meshing.timing import analyse_mesh_timing, report_lines
     from app.meshing.validators import report_to_lines, validate_mesh
     from app.meshing.preview import export_csx_xml
     from openEMS import openEMS
@@ -112,6 +124,9 @@ def build_mesh_and_validate(
 
     work_dir = Path(work_dir)
     lines: list[str] = []
+    timing = None
+    coord = None
+    critical: list = []
 
     # Mesh spec with the antenna-mode overrides applied (no-op when the mode is
     # off). The excitation centre frequency still comes from the project's
@@ -253,6 +268,7 @@ def build_mesh_and_validate(
                 stl_path=stl_path or None,
                 mesh_path=path if path and Path(path).exists() else None,
                 priority=pri,
+                align=bool(getattr(mesh, "align_coordinates", True)),
             )
             if pr.get("edges2grid"):
                 try:
@@ -362,6 +378,65 @@ def build_mesh_and_validate(
             coord_system=mesh.coord_system,
         )
         lines.extend(report_to_lines(report))
+        # Timing / feasibility picture of THIS mesh (smallest cell -> timestep,
+        # cells per wavelength, DFT resolution vs. the sweep) so the developer
+        # can judge the simulation before it starts.
+        _eps_max = max(
+            [float(getattr(m, "epsilon", 1.0) or 1.0) for m in project.materials]
+            or [1.0]
+        )
+        timing = analyse_mesh_timing(
+            CSX, mesh, project.sim, targets, eps_max=_eps_max
+        )
+        lines.extend(report_lines(timing))
+        # Phase-0 coordinate probe (read-only, no behaviour change): count
+        # near-duplicate grid lines, authored coordinates without a grid line
+        # and cells far below the requested min_cellsize.
+        coord = analyse_coord_diag(
+            CSX,
+            project,
+            primitives,
+            mesh,
+            targets,
+            manual_lines=mesh.manual_mesh_lines,
+            unit=str(getattr(mesh, "drawing_unit", "mm") or "mm"),
+            unit_m=float(mesh.unit_to_meters()),
+        )
+        lines.extend(coord_report_lines(coord))
+        # Critical cells as 3-D boxes: the same thresholds the validators use,
+        # so the Mesh Viewer can show *where* a finding sits (right-click toggle).
+        try:
+            _grid_lines: dict = {}
+            for _ax in "xyz":
+                try:
+                    _grid_lines[_ax] = np.asarray(
+                        CSX.GetGrid().GetLines(_ax), dtype=float
+                    )
+                except Exception:  # noqa: BLE001
+                    _grid_lines[_ax] = np.asarray([], dtype=float)
+            # P2: name the source that forced each flagged cell (switchable).
+            _sources = None
+            if bool(getattr(mesh, "diagnose_cell_sources", True)):
+                _sources = source_coordinates(
+                    project, primitives, mesh.manual_mesh_lines
+                )
+            critical = find_critical_cells(
+                _grid_lines,
+                targets,
+                min_cellsize=min_cellsize_units(mesh, targets),
+                sources=_sources,
+            )
+            lines.append("")
+            lines.append(critical_summary(critical))
+            if _sources is None:
+                lines.append(
+                    "Fine-cell attribution off (MeshSpec.diagnose_cell_sources)"
+                )
+            else:
+                lines.extend(source_summary(critical))
+        except Exception as e:  # noqa: BLE001 — a mark list must not fail the build
+            critical = []
+            lines.append(f"(critical-cell marks failed: {e})")
         manual = setup.get("manual_mesh_lines") if isinstance(setup, dict) else None
         if manual:
             lines.append("")
@@ -404,5 +479,11 @@ def build_mesh_and_validate(
         _log("Scene prepared (no mesh)")
     auto_grid = setup.get("auto_mesh_lines") if isinstance(setup, dict) else None
     return MeshBuildResult(
-        lines=lines, csx=CSX, fdtd=FDTD, auto_mesh_lines=auto_grid or {}
+        lines=lines,
+        csx=CSX,
+        fdtd=FDTD,
+        auto_mesh_lines=auto_grid or {},
+        timing=timing,
+        coord_diag=coord,
+        critical_cells=critical,
     )

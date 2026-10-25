@@ -192,6 +192,20 @@ class MeshSpec:
     cells_per_wavelength: float = 10.0
     num_lines: int = 5  # extra mesh lines per edge gap
     dirs: str = "xyz"  # mesh axes: xyz|xy|xz|yz|x|y|z
+    # Coordinate alignment (default on): every geometry coordinate goes through
+    # the same float32 rule (app/csxcad_builder/quantize.py::align_coordinates)
+    # that boxes/ports/dumps/NF2FF already use, so triangle-mesh vertices and box
+    # faces that should be equal are bit-identical - no second grid line, no
+    # sliver cell. Off restores the legacy 0.1 um decimal rounding of triangle
+    # meshes (and the strict dedupe tolerance). Old projects miss the key and
+    # load with the default (on).
+    align_coordinates: bool = True
+    # Fine-cell attribution (P2, default on): every cell the report flags is
+    # attributed to the primitive / port / manual line that forced it
+    # (app/meshing/critical_cells.attribute_cells), shown in the Mesh Viewer
+    # marks and in the mesh report ("Fine-cell sources"). Off = skip the
+    # attribution (the marks stay, without a source).
+    diagnose_cell_sources: bool = True
     # Manual mesh lines (Mesh Editor): per-axis coordinates (drawing units) to
     # ADD on top of the easyMesh-generated grid, and auto lines to REMOVE.
     # Applied app-side AFTER easyMesh (and the cap), so a user edit wins. Keys

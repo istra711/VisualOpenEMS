@@ -280,6 +280,11 @@ class MeshGeometryViewer(QWidget):
         self._nf2ff = None
         self._sel_line: tuple[str, float] | None = None  # highlighted editor row
         self._selected_lines: list[tuple[str, float]] = []  # (axis, coord) highlighted
+        #: cells the mesh report / last run flagged (app.meshing.critical_cells)
+        self._critical: list = []
+        #: draw them? Off by default — the marks are a diagnostic overlay the
+        #: user switches on via the right-click menu (count is always shown there)
+        self._critical_on = False
         # auto grid (per axis) before manual overrides — lets editor edits be
         # re-applied to the EXISTING mesh without re-running easyMesh
         self._auto_mesh: dict | None = None
@@ -1005,6 +1010,21 @@ class MeshGeometryViewer(QWidget):
         # What the click places. MSL needs the width direction, so it is part of
         # the entry ("width along X/Y/Z" = the in-plane axis the port is wide in).
         self._add_port_type_menu(menu)
+        n_crit = self.critical_count()
+        act_crit = menu.addAction(f"Mark critical cells ({n_crit})")
+        act_crit.setCheckable(True)
+        act_crit.setChecked(bool(self._critical_on))
+        act_crit.setEnabled(n_crit > 0)
+        act_crit.setToolTip(
+            "Show the cells that cost runtime — the ones that set the timestep:\n"
+            "cells below the requested min cell size, extremely small cells and\n"
+            "the engine's smallest-timestep cell. Consecutive cells are merged\n"
+            "into one region. Drawn as dashed outlines in the slice views (so the\n"
+            "grid stays visible) and as bands in the Cell-sizes plots.\n"
+            "Neighbour grading jumps and too-large cells stay in the mesh report.\n"
+            "Off by default: the count next to the entry tells you whether there\n"
+            "is anything to look at before you switch the overlay on."
+        )
         act_pop = menu.addAction("Pop-out viewer…")
         menu.addSeparator()
         n_sel = len(getattr(self, "_selected_lines", []) or [])
@@ -1027,6 +1047,8 @@ class MeshGeometryViewer(QWidget):
             self.chk_editor.setChecked(not self.chk_editor.isChecked())
         elif chosen is act_port:
             self.set_port_mode(not self._port_mode)
+        elif chosen is act_crit:
+            self.set_critical_enabled(not self._critical_on)
         elif chosen is act_pop:
             self._on_popout()
         elif chosen is act_del:
@@ -1290,6 +1312,45 @@ class MeshGeometryViewer(QWidget):
     def clear_highlight(self) -> None:
         """Drop the highlight of the Project / Geometry selection."""
         self.set_highlight()
+
+    # ----------------------------------------------------------- critical cells
+    def set_critical_cells(self, cells=None) -> None:
+        """Mark the cells the mesh report (or the last run) flagged.
+
+        ``cells`` are :class:`app.meshing.critical_cells.CriticalCell` objects;
+        ``None``/empty clears the marks. The right-click menu toggles whether
+        they are drawn (:meth:`set_critical_enabled`).
+        """
+        self._critical = list(cells or [])
+        try:
+            self._redraw()
+        except Exception as e:  # noqa: BLE001 — never crash the viewer
+            print(f"mesh viewer critical redraw error: {e}")
+
+    def add_critical_cell(self, cell) -> None:
+        """Append one mark (e.g. the engine's smallest-timestep cell)."""
+        if cell is None:
+            return
+        self._critical.append(cell)
+        try:
+            self._redraw()
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer critical redraw error: {e}")
+
+    def set_critical_enabled(self, on: bool) -> None:
+        """Draw / hide the critical-cell marks (right-click menu)."""
+        self._critical_on = bool(on)
+        try:
+            self._redraw()
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer critical redraw error: {e}")
+
+    def critical_count(self) -> int:
+        return len(self._critical)
+
+    def _critical_marks(self) -> list:
+        """Marks to draw (empty while the toggle is off)."""
+        return list(self._critical) if self._critical_on else []
 
     def focus_highlight(self) -> bool:
         """Put the slice plane on the middle of the highlighted object.
@@ -2345,6 +2406,35 @@ class MeshGeometryViewer(QWidget):
                         colors=(0.4, 0.4, 0.4), linewidths=lw, alpha=alpha,
                     )
 
+        # Critical cells (mesh report / last run): only the cells that set the
+        # timestep. Axis findings are whole-plane regions → outline only, so the
+        # grid stays visible; the exact engine cell gets a filled box.
+        for cell in self._critical_marks():
+            lo, hi = cell.lo, cell.hi
+            # An axis finding is a whole plane: in a slice whose normal *is* that
+            # axis it would cover the entire frame (and hide everything). Only
+            # the exact engine cell is drawn there as a box.
+            if cell.kind != "engine_timestep" and cell.axis == inorm:
+                continue
+            if not (lo[inorm] - eps <= plane <= hi[inorm] + eps):
+                continue  # this cell does not touch the slice plane
+            x0, y0 = float(lo[ia]), float(lo[ib])
+            w, h = float(hi[ia]) - x0, float(hi[ib]) - y0
+            if w <= 0.0 or h <= 0.0:
+                continue
+            engine = cell.kind == "engine_timestep"
+            ax.add_patch(
+                Rectangle(
+                    (x0, y0), w, h,
+                    facecolor=(0.85, 0.10, 0.10, 0.22) if engine else "none",
+                    edgecolor="#c62828",
+                    linewidth=1.4 if engine else 1.0,
+                    linestyle="-" if engine else (0, (4, 2)),
+                    zorder=6,
+                    label="critical cell" if engine else "critical region",
+                )
+            )
+
         # Pending Mesh-Editor overrides on the in-plane axes — shown before a
         # rebuild so the user sees exactly what will be added / removed.
         mesh_spec = self._mesh_spec()
@@ -2713,6 +2803,29 @@ class MeshGeometryViewer(QWidget):
                 continue
             mids, sizes = mesh_cells_from_lines(arr)
             ax.plot(mids, sizes, ".", ms=3, color="steelblue")
+            # critical cells of this axis (mesh report / last run): the engine
+            # cell is a 3-D cell, so it is marked in all three plots
+            idx = "xyz".index(d)
+            marks = [
+                c for c in self._critical_marks()
+                if c.kind == "engine_timestep" or c.axis == idx
+            ]
+            for c in marks:
+                lo, hi = float(c.lo[idx]), float(c.hi[idx])
+                size = float(c.cell_size)
+                if c.kind == "engine_timestep":
+                    ax.plot(
+                        [0.5 * (lo + hi)], [size], "o", ms=7, mfc="none",
+                        mec="#c62828", mew=1.6, zorder=6,
+                    )
+                else:
+                    # a merged region: the span plus the size of its smallest cell
+                    ax.axvspan(lo, hi, color="#c62828", alpha=0.10, lw=0, zorder=0)
+                    ax.hlines(size, lo, hi, colors="#c62828", linewidth=1.4,
+                              zorder=6)
+                    # anchor marker: a one-cell region is only a hairline wide
+                    ax.plot([0.5 * (lo + hi)], [size], "v", ms=5,
+                            color="#c62828", zorder=6)
             ax.set_xlabel(f"{d} position [mm]")
             ax.set_ylabel("cell size [mm]")
             ax.set_title(f"{d}: {sizes.size} cells")

@@ -205,6 +205,27 @@ class MeshParamsPanel(QWidget):
             "size, fallback local cell / 4), coarsening by the Max grading\n"
             "ratio with distance. Cartesian only."
         )
+        self.chk_align_coords = QCheckBox(
+            "Align coordinates (float32 grid)"
+        )
+        self.chk_align_coords.setChecked(True)
+        self.chk_align_coords.setToolTip(
+            "Put every geometry coordinate on the same float32 grid: CSXCAD\n"
+            "stores boxes/ports/dumps/NF2FF as float32, and triangle meshes\n"
+            "(STEP/STL/FCStd) are aligned to it as well, so coordinates that\n"
+            "should be equal are bit-identical - no second grid line, no sliver\n"
+            "cell that collapses the timestep.\n"
+            "Off = legacy: triangle meshes are rounded to 0.1 um instead, which\n"
+            "leaves that small offset between the coordinate sources."
+        )
+        self.chk_diag_sources = QCheckBox("Attribute fine cells to their source")
+        self.chk_diag_sources.setChecked(True)
+        self.chk_diag_sources.setToolTip(
+            "P2: name the primitive / port / manual line that forced every cell\n"
+            "the mesh report flags (too small, grading jump, ...). The name shows\n"
+            "up in the Mesh Viewer marks and in the mesh report section\n"
+            "'Fine-cell sources'. Diagnostic only - the mesh is not changed."
+        )
         fm.addRow("Refined cell size", self.spn_refined)
         fm.addRow("Min cell size", self.spn_min_cell)
         fm.addRow("Min cell size (Z)", self.spn_min_cell_z)
@@ -218,6 +239,8 @@ class MeshParamsPanel(QWidget):
         fm.addRow(self.chk_arc)
         fm.addRow(self.chk_edges)
         fm.addRow(self.chk_graded_transitions)
+        fm.addRow(self.chk_align_coords)
+        fm.addRow(self.chk_diag_sources)
         root.addWidget(g_m)
 
         self.readout = QPlainTextEdit()
@@ -246,6 +269,8 @@ class MeshParamsPanel(QWidget):
         self.chk_arc.toggled.connect(self._on_changed)
         self.chk_edges.toggled.connect(self._on_changed)
         self.chk_graded_transitions.toggled.connect(self._on_changed)
+        self.chk_align_coords.toggled.connect(self._on_changed)
+        self.chk_diag_sources.toggled.connect(self._on_changed)
 
         # Lazy form: edits never touch the project. `write_to_project` is the
         # only place the project is written (on Apply). The readout is served
@@ -432,6 +457,8 @@ class MeshParamsPanel(QWidget):
         self.chk_graded_transitions.setChecked(
             bool(getattr(m, "add_graded_mesh_lines_at_material_transitions", False))
         )
+        self.chk_align_coords.setChecked(bool(getattr(m, "align_coordinates", True)))
+        self.chk_diag_sources.setChecked(bool(getattr(m, "diagnose_cell_sources", True)))
         # mirror the loaded values into the draft buffer (readout source)
         self._draft = Project.new_default("draft")
         self.sync_mesh_freqs(self._draft, "range")
@@ -465,6 +492,8 @@ class MeshParamsPanel(QWidget):
         m.use_arc_detection = self.chk_arc.isChecked()
         m.handle_closely_placed_edges = self.chk_edges.isChecked()
         m.add_graded_mesh_lines_at_material_transitions = self.chk_graded_transitions.isChecked()
+        m.align_coordinates = self.chk_align_coords.isChecked()
+        m.diagnose_cell_sources = self.chk_diag_sources.isChecked()
         self.refresh_readout(project)
 
     # --- live readout ----------------------------------------------------
