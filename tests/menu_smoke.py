@@ -455,6 +455,12 @@ def test_new_project_starts_empty() -> None:
     assert w._load_recorded_csx() is False
     w._show_mesh_viewer()
     assert w.mesh_viewer._csx is None, "new project must not show an old mesh"
+    # the S-Param "Loaded files" list is only filled by "Scan work dir"
+    assert w.sparam_viewer.file_list.count() == 0
+    w._on_show_sparams()
+    assert w.sparam_viewer.file_list.count() == 0, (
+        "S-param file list must stay empty until 'Scan work dir'"
+    )
     print("NEW PROJECT STARTS EMPTY OK")
 
 

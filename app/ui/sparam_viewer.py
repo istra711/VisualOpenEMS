@@ -316,8 +316,9 @@ class SParamViewer(QWidget):
         )
 
         if self.work_dir:
-            # list files only; load on user selection / explicit open
-            self._on_scan()
+            # no automatic listing: "Loaded files" fills only on
+            # "Scan work dir" (or when a file is opened explicitly)
+            self.file_list.clear()
 
     # ----- analysis dialog (right-click) ---------------------------------
     def _build_analysis_dialog(self) -> QDialog:
@@ -353,13 +354,13 @@ class SParamViewer(QWidget):
 
     # ----- data loading -------------------------------------------------
     def set_work_dir(self, work_dir: Path) -> None:
-        """Scope the initial listing to ``work_dir`` (usually one project).
+        """Scope the auto-load to ``work_dir`` (usually one project).
 
-        "Scan work dir" ignores this scope and uses ``scan_root`` (the global
-        work directory) so results of other projects can be found on demand.
+        Does NOT fill the "Loaded files" list — that only happens on
+        "Scan work dir" (``scan_root`` = the global work directory) or when a
+        file is opened explicitly.
         """
         self.work_dir = Path(work_dir)
-        self._on_scan()
 
     def clear(self) -> None:
         """Drop the loaded network (empty diagram) — e.g. project without results."""

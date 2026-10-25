@@ -1654,7 +1654,7 @@ class MainWindow(QMainWindow):
             ):
                 try:
                     self.sparam_viewer.set_work_dir(self._project_work_dir())
-                    self.sparam_viewer._on_scan(auto_load=True)
+                    self._auto_load_sparams_if_empty()
                     # remember the run's artifacts in the project JSON so a
                     # re-opened project restores the viewers directly
                     self._record_results()
@@ -1965,11 +1965,24 @@ class MainWindow(QMainWindow):
             self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
 
     def _auto_load_sparams_if_empty(self) -> None:
-        """Auto-load the newest S-params only when nothing is loaded yet.
+        """Load the newest S-params of the current project (no file listing).
 
-        Re-scanning must never replace what the user has selected.
+        The "Loaded files" list stays empty until "Scan work dir" is pressed.
         """
-        self.sparam_viewer._on_scan(auto_load=self.sparam_viewer.network is None)
+        if self.sparam_viewer.network is not None:
+            return
+        from app.ui.sparam_viewer import find_latest_sparam_files
+
+        try:
+            files = find_latest_sparam_files(self._project_work_dir())
+        except Exception:  # noqa: BLE001
+            files = []
+        if not files:
+            return
+        try:
+            self.sparam_viewer.load_path(files[0])
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Could not auto-load S-params: {e}")
 
     def _on_popout_sparams(self) -> None:
         self.sparam_viewer.set_work_dir(self._project_work_dir())
@@ -5374,7 +5387,7 @@ class MainWindow(QMainWindow):
                         "Look for: S-param postproc FAILED / CalcPort failed / mesh validation failed"
                     )
                     self.sparam_viewer.set_work_dir(self._project_work_dir())
-                    self.sparam_viewer._on_scan(auto_load=True)
+                    self._auto_load_sparams_if_empty()
                     if self.sparam_tab_index >= 0:
                         self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
                     QMessageBox.warning(
