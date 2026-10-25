@@ -491,6 +491,37 @@ def test_pcb_hairpin_preset() -> None:
     print("PCB HAIRPIN PRESET OK")
 
 
+def test_tree_selection_highlights_only_objects() -> None:
+    """Only Prim/Port rows highlight the viewer — not materials or others."""
+    from PySide6.QtCore import Qt
+
+    w = _win()
+    rows: dict[str, list[int]] = {}
+    for i in range(w.tree.count()):
+        kind = str(w.tree.item(i).data(Qt.UserRole) or "")
+        rows.setdefault(kind, []).append(i)
+    assert "mat" in rows and "prim" in rows, rows.keys()
+
+    # a material row is not a scene object: no highlight
+    w.tree.setCurrentRow(rows["mat"][0])
+    hl = w.mesh_viewer.highlight()
+    assert not hl["boxes"] and not hl["names"], hl
+
+    # a primitive row highlights that object
+    w.tree.setCurrentRow(rows["prim"][0])
+    hl = w.mesh_viewer.highlight()
+    assert hl["boxes"] or hl["names"], hl
+    assert hl["label"].startswith("Prim:"), hl
+
+    # a port row highlights the port
+    if "port" in rows:
+        w.tree.setCurrentRow(rows["port"][0])
+        hl = w.mesh_viewer.highlight()
+        assert hl["label"].startswith("Port:"), hl
+
+    print("TREE SELECTION HIGHLIGHTS OBJECTS ONLY OK")
+
+
 def main() -> int:
     failed = 0
     for t in (
@@ -506,6 +537,7 @@ def main() -> int:
         test_mesh_menu_repair_options,
         test_new_project_starts_empty,
         test_pcb_hairpin_preset,
+        test_tree_selection_highlights_only_objects,
     ):
         try:
             t()

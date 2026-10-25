@@ -2099,62 +2099,30 @@ class MainWindow(QMainWindow):
             self._refresh_tree()
 
     def _on_material_selection_changed(self) -> None:
-        """A material picked in the Geometry tab highlights its objects."""
-        row = self.mat_list.currentRow()
-        if row < 0 or row >= len(self.project.materials):
+        """Materials are not scene objects — selecting one clears the highlight.
+
+        Only *Prim* and *Port* entries select something in the Mesh Viewer.
+        """
+        if self._tree_rebuilding:
             return
-        self._highlight_in_viewer(
-            *self._material_highlight(row), focus=not self._tree_rebuilding
-        )
+        self._highlight_in_viewer([], [], "", focus=False)
 
     # ----- highlight the Project / Geometry selection in the Mesh Viewer ----
-    def _material_highlight(self, index: int) -> tuple[list, list, str]:
-        """(boxes, names, label) for the material at ``index``."""
-        if not (0 <= index < len(self.project.materials)):
-            return [], [], ""
-        m = self.project.materials[index]
-        boxes = [
-            (pr.get("start"), pr.get("stop"))
-            for pr in self.primitives
-            if str(pr.get("material", "")) == m.name
-        ]
-        return boxes, [m.name], f"Mat: {m.name}"
-
     def _tree_selection_highlight(self, kind: str, idx: int) -> tuple[list, list, str]:
         """(boxes, names, label) for the entry selected in the tree.
 
-        ``boxes`` are the exact (start, stop) pairs of the selected object (the
-        viewer matches them against its primitives/ports/NF2FF), ``names`` cover
-        imported CAD objects, whose CSX primitives are named after the property.
+        Only real scene objects — **Prim** and **Port** — are highlighted.
+        Materials, assignments, imported geometry files, dumps and the NF2FF
+        box are not objects the user placed; selecting them leaves the viewer
+        unhighlighted.
         """
         if kind == "prim" and 0 <= idx < len(self.primitives):
             pr = self.primitives[idx]
             name = str(pr.get("name") or "")
             return [(pr.get("start"), pr.get("stop"))], [name], f"Prim: {name}"
-        if kind == "mat":
-            return self._material_highlight(idx)
-        if kind == "assign" and 0 <= idx < len(self.project.assignments):
-            a = self.project.assignments[idx]
-            return [], [a.object_name, a.material], f"Assign: {a.object_name}"
-        if kind == "geom" and 0 <= idx < len(self.project.geometry_files):
-            gf = self.project.geometry_files[idx]
-            objects = [str(n) for n in (gf.object_names or []) if str(n)]
-            mats = [
-                str(a.material)
-                for a in self.project.assignments
-                if str(a.object_name) in objects and a.material
-            ]
-            names = objects + mats + [Path(gf.path).stem]
-            return [], names, f"Geom: {Path(gf.path).name}"
         if kind == "port" and 0 <= idx < len(self.project.ports):
             p = self.project.ports[idx]
             return [(p.start, p.stop)], [p.name], f"Port: {p.name}"
-        if kind == "dump" and 0 <= idx < len(self.project.dumps):
-            d = self.project.dumps[idx]
-            return [(d.start, d.stop)], [d.name], f"Dump: {d.name}"
-        if kind == "nf2ff":
-            n = self.project.nf2ff
-            return [(n.start, n.stop)], [], "NF2FF box"
         return [], [], ""
 
     def _highlight_in_viewer(
