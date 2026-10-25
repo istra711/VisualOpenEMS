@@ -52,6 +52,26 @@ def apply_boundary(FDTD, boundary: BoundarySpec, mesh: MeshSpec, targets: MeshTa
     return resolved
 
 
+def easy_mesh_setup(mesh: MeshSpec, boundary: BoundarySpec, targets: MeshTargets) -> dict:
+    """The parameter dict easyMesh gets (pure: no CSX/Qt, unit-testable)."""
+    setup = mesh.global_setup(boundary)
+    setup["coord_system"] = getattr(mesh, "coord_system", "cartesian")
+    if bool(getattr(mesh, "enforce_min_cellsize", False)):
+        # V2 (opt-in): the repair pass enforces the floor AFTER easyMesh. Handing
+        # the same number to easyMesh as well makes it re-refine the lateral
+        # axes - measured on Filter_new_test1 with min=0.1: cells x2.42 and only
+        # dt x1.35, so the repair had to undo easyMesh's own reaction. With the
+        # floor kept out of easyMesh the same project gives dt x4.18 at cells
+        # x0.93. Existing projects are unaffected (switch defaults to off).
+        setup.pop("min_cellsize", None)
+        setup.pop("min_cellsize_z", None)
+    resolved = air_margin_units(mesh, boundary.air_margin, targets)
+    setup["boundary_distance"] = resolved
+    # easyMesh tutorials store BC as a dict; meshProcessing also accepts a list
+    setup["boundary_conditions"] = {"BoundaryCond": boundary.as_openems_list()}
+    return setup
+
+
 def generate_mesh(
     CSX,
     mesh: MeshSpec,
@@ -60,6 +80,7 @@ def generate_mesh(
     primitives_mesh_setup: dict | None = None,
     properties_mesh_setup: dict | None = None,
     ports: list | None = None,
+    protected: dict | None = None,
 ):
     """Generate mesh via easyMesh (cartesian) or the polar mesher (cylindrical).
 
@@ -68,13 +89,12 @@ def generate_mesh(
 
     ``ports`` (list of PortDef) is only used by the cylindrical branch to keep
     port faces on mesh lines.
+
+    ``protected`` maps axis -> authored coordinates (primitives/ports/dumps/
+    NF2FF); the repair pass never removes such a line. ``None`` protects only
+    the domain edges and the manual lines.
     """
-    setup = mesh.global_setup(boundary)
-    setup["coord_system"] = getattr(mesh, "coord_system", "cartesian")
-    resolved = air_margin_units(mesh, boundary.air_margin, targets)
-    setup["boundary_distance"] = resolved
-    # easyMesh tutorials store BC as a dict; meshProcessing also accepts a list
-    setup["boundary_conditions"] = {"BoundaryCond": boundary.as_openems_list()}
+    setup = easy_mesh_setup(mesh, boundary, targets)
 
     if getattr(mesh, "coord_system", "cartesian") == "cylindrical":
         # easyMesh is cartesian-only (AABB edge extraction on x/y/z); the polar
@@ -83,6 +103,11 @@ def generate_mesh(
         # mesher can read faces and port coordinates from the shared dict.
         from app.meshing.polar import generate_polar_mesh
 
+        if bool(getattr(mesh, "enforce_min_cellsize", False)):
+            print(
+                "  min-cell enforcement: not available for the cylindrical "
+                "mesher (skipped; the polar grid is built from r/alpha/z)"
+            )
         polar_report = generate_polar_mesh(
             CSX,
             mesh,
@@ -193,6 +218,40 @@ def generate_mesh(
         setup["manual_mesh_lines"] = stats
     except Exception as e:  # noqa: BLE001 — never fail a run on the editor
         print(f"  manual mesh lines skipped: {e}")
+    # Mesh repairs (V1/V2) LAST: they re-space auto lines that only cost
+    # runtime (cells below the floor / below the requested min cell size).
+    # Protected lines (authored geometry, ports, manual lines) are never
+    # removed, so a genuine gap keeps its resolution.
+    try:
+        from app.meshing.repair import apply_mesh_repairs
+
+        _prot = dict(protected or {})
+        # manual lines are authored coordinates too: a repair must keep them
+        for _axis in ("x", "y", "z"):
+            _vals = list(_prot.get(_axis) or [])
+            _manual = (getattr(mesh, "manual_mesh_lines", None) or {}).get(_axis)
+            for _v in _manual or []:
+                try:
+                    _vals.append(float(_v))
+                except (TypeError, ValueError):
+                    continue
+            _prot[_axis] = _vals
+        repairs = apply_mesh_repairs(CSX, mesh, targets, protected=_prot)
+        setup["mesh_repairs"] = [
+            {
+                "axis": r.axis,
+                "lo": r.lo,
+                "hi": r.hi,
+                "floor": r.floor,
+                "min_before": r.min_before,
+                "min_after": r.min_after,
+                "removed": list(r.removed),
+                "warning": r.warning,
+            }
+            for r in repairs
+        ]
+    except Exception as e:  # noqa: BLE001 — never fail a run on a repair
+        print(f"  mesh repair skipped: {e}")
     # Manual edits may have removed a line a port needs — the run would abort in
     # the validator, so re-assert the port coordinates one last time.
     _align_ports()

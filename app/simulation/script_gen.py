@@ -164,6 +164,8 @@ if _EASY.is_dir() and str(_EASY) not in sys.path:
 
 from app.models.project import Project
 from app.meshing.easy_wrapper import enhance_csx, enhance_fdtd, apply_boundary, generate_mesh
+from app.meshing.coord_diag import source_coordinates
+from app.meshing.repair import protected_coordinates
 from app.meshing.polar import ensure_polar_primitive
 from app.meshing.rules import compute_targets
 from app.meshing.bounds import nf2ff_box_center, nf2ff_center_offset
@@ -648,6 +650,17 @@ def main() -> int:
     # easyMesh can emit numpy RuntimeWarnings (mean of empty slice) — not fatal
     import warnings
 
+    # Authored coordinates (primitives, ports, dumps, NF2FF, manual lines): the
+    # repair pass must never remove one of these lines. Same input as the
+    # preview build, so the solver script and the preview agree.
+    try:
+        _protected = protected_coordinates(
+            source_coordinates(project, prims, mesh.manual_mesh_lines)
+        )
+    except Exception as _e:  # noqa: BLE001 — protection must not block a run
+        print(f"  repair protection skipped: {_e}")
+        _protected = None
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         setup = generate_mesh(
@@ -658,6 +671,7 @@ def main() -> int:
             primitives_mesh_setup=primitives_mesh_setup,
             properties_mesh_setup=properties_mesh_setup,
             ports=active_ports,
+            protected=_protected,
         )
     # Zero-thickness PEC sheets only get their 1 nm thickness once the grid
     # exists — the mesher must see the authored geometry.

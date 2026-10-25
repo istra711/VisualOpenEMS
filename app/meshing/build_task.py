@@ -107,10 +107,13 @@ def build_mesh_and_validate(
 
     from app.meshing.coord_diag import analyse_coord_diag, min_cellsize_units
     from app.meshing.coord_diag import report_lines as coord_report_lines
-    from app.meshing.coord_diag import source_coordinates
+    from app.meshing.coord_diag import requested_min_cellsize, source_coordinates
     from app.meshing.critical_cells import find_critical_cells, source_summary
     from app.meshing.critical_cells import summary_line as critical_summary
     from app.meshing.easy_wrapper import apply_boundary, enhance_csx, enhance_fdtd, generate_mesh
+    from app.meshing.repair import enforced_floors, protected_coordinates, repair_report
+    from app.meshing.repair import min_cell as grid_min_cell
+    from app.meshing.repair import unit_label
     from app.meshing.rules import compute_targets
     from app.meshing.timing import analyse_mesh_timing, report_lines
     from app.meshing.validators import report_to_lines, validate_mesh
@@ -320,6 +323,14 @@ def build_mesh_and_validate(
     if build_mesh:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
+            # Authored coordinates: a repair must never remove one of these
+            # lines (genuine gaps, port faces, dump/NF2FF edges, manual lines).
+            try:
+                _protected = protected_coordinates(
+                    source_coordinates(project, primitives, mesh.manual_mesh_lines)
+                )
+            except Exception:  # noqa: BLE001 — protection must not block a build
+                _protected = None
             setup = generate_mesh(
                 CSX,
                 mesh,
@@ -327,6 +338,7 @@ def build_mesh_and_validate(
                 targets,
                 primitives_mesh_setup=primitives_mesh_setup,
                 ports=active_ports,
+                protected=_protected,
             )
         # Zero-thickness PEC sheets only get their 1 nm thickness once the grid
         # exists — the mesher must see the authored geometry.
@@ -423,8 +435,11 @@ def build_mesh_and_validate(
             critical = find_critical_cells(
                 _grid_lines,
                 targets,
-                min_cellsize=min_cellsize_units(mesh, targets),
+                # Only what the user asked for: the derived fallback of
+                # min_cellsize_units would mark every ordinary graded cell.
+                min_cellsize=requested_min_cellsize(mesh),
                 sources=_sources,
+                accepted=getattr(mesh, "accepted_cells", None),
             )
             lines.append("")
             lines.append(critical_summary(critical))
@@ -457,6 +472,43 @@ def build_mesh_and_validate(
                     lines.append(
                         f"    WARNING: manual line at {_c:.4g} is outside the domain — ignored"
                     )
+        repairs = setup.get("mesh_repairs") if isinstance(setup, dict) else None
+        if repairs:
+            lines.extend(repair_report(repairs, float(mesh.unit_to_meters())))
+        if bool(getattr(mesh, "enforce_min_cellsize", False)):
+            _u = unit_label(float(mesh.unit_to_meters()))
+            _req = enforced_floors(mesh)
+            _gl: dict = {}
+            for _ax in "xyz":
+                try:
+                    _gl[_ax] = np.asarray(CSX.GetGrid().GetLines(_ax), dtype=float)
+                except Exception:  # noqa: BLE001
+                    _gl[_ax] = np.asarray([], dtype=float)
+            lines.append("")
+            if not _req:
+                lines.append(
+                    "Min cell enforcement is ON but no Min cell size is set — "
+                    "nothing to enforce (set the smallest cell first)."
+                )
+            else:
+                _parts = ", ".join(
+                    f"{_ax} {_req[_ax]:.6g} {_u}" for _ax in "xyz" if _ax in _req
+                )
+                lines.append(
+                    "Min cell enforcement (MeshSpec.enforce_min_cellsize): "
+                    f"requested {_parts}"
+                )
+                for _ax in "xyz":
+                    if _ax not in _req or _gl[_ax].size < 2:
+                        continue
+                    _ach = grid_min_cell(_gl[_ax])
+                    _note = ""
+                    if _ach < _req[_ax] * (1.0 - 1e-6):
+                        _note = (
+                            " — not reached: the remaining cells are bounded by "
+                            "authored coordinates (the geometry needs them)"
+                        )
+                    lines.append(f"  {_ax}: achieved {_ach:.6g} {_u}{_note}")
         lines.append("")
         lines.append("Mesh setup:")
         lines.append(json.dumps(setup, indent=2, default=str))

@@ -170,6 +170,36 @@ class CoordDiag:
 # --------------------------------------------------------------------------- #
 # planned lattice (informational: what Phase 2 would choose)
 # --------------------------------------------------------------------------- #
+def requested_min_cellsize(mesh, axis: str | None = None) -> float | None:
+    """The smallest cell the USER asked for (``None`` when they did not).
+
+    Only ``min_cellsize`` / ``min_cellsize_z`` count. The derived fallbacks of
+    :func:`min_cellsize_units` (``refined_cellsize``, ``target_cell_units``) are
+    *targets*, not a hard minimum: using them as one marks every normal graded
+    mesh as "below min" (a real project without ``min_cellsize`` derived 5.08 mm
+    and flagged 162 ordinary cells). Diagnostics and the repair pass therefore
+    use this function; the Phase-0 probe keeps the informational one.
+    """
+    values = (
+        [getattr(mesh, "min_cellsize_z", None)]
+        if axis == "z"
+        else [getattr(mesh, "min_cellsize", None)]
+        if axis in ("x", "y")
+        else [
+            getattr(mesh, "min_cellsize", None),
+            getattr(mesh, "min_cellsize_z", None),
+        ]
+    )
+    for value in values:
+        try:
+            v = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            return v
+    return None
+
+
 def min_cellsize_units(mesh, targets=None) -> float | None:
     """Requested smallest cell in project units (``None`` when unknown).
 

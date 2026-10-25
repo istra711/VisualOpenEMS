@@ -67,9 +67,20 @@ class CriticalCell:
     detail: str = ""
     #: authored source(s) at the cell faces (P2 attribution), "" when unknown
     source: str = ""
+    #: how many cell faces sit on an authored coordinate (0..2, P2)
+    faces: int = 0
     #: smallest cell inside the mark (a merged region holds many cells); 0 when
     #: the mark is a single cell, then :attr:`size` is the cell size
     min_cell: float = 0.0
+    #: why the cell exists: ``geometrie`` (both faces authored - cannot be
+    #: removed without touching the geometry), ``wunschwert`` (below the
+    #: requested min_cellsize), ``artefakt`` (easyMesh-made, repairable),
+    #: ``engine`` (the cell the solver reported). "" when the attribution is off.
+    cause: str = ""
+    #: typical cell of this axis / this cell (the runtime penalty it imposes)
+    penalty: float = 1.0
+    #: the user marked this region as "do not repair" (stored on the MeshSpec)
+    accepted: bool = False
 
     @property
     def size(self) -> float:
@@ -81,11 +92,22 @@ class CriticalCell:
         return float(self.min_cell) if self.min_cell > 0 else self.size
 
     @property
+    def repairable(self) -> bool:
+        """A repair may remove this cell (false for genuine geometry)."""
+        return not self.accepted and self.cause != "geometrie"
+
+    @property
     def label(self) -> str:
         unit = {0: "x", 1: "y", 2: "z"}.get(self.axis, "?")
         text = f"{self.kind} ({unit}={self.cell_size:.4g}"
         if self.detail:
             text += f" {self.detail}"
+        if self.penalty and self.penalty >= 1.5:
+            text += f" · {self.penalty:.3g}x"
+        if self.cause:
+            text += f" · {self.cause}"
+        if self.accepted:
+            text += " · accepted"
         if self.source:
             text += f" | {self.source}"
         return text + ")"
@@ -126,17 +148,25 @@ def find_critical_cells(
     min_cellsize: float | None = None,
     max_marks: int = MAX_MARKS,
     sources: Mapping[str, Sequence[tuple[float, str]]] | None = None,
+    accepted: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[CriticalCell]:
     """Flag the cells of one built grid (``{axis: lines}`` in drawing units).
 
     ``targets`` is the :class:`app.meshing.rules.MeshTargets` of the build (only
-    ``max_cell_units`` is used); ``min_cellsize`` is the requested smallest cell
-    (``MeshSpec``/probe).
+    ``max_cell_units`` is used); ``min_cellsize`` is the smallest cell the
+    **user** requested (``coord_diag.requested_min_cellsize``) - pass ``None``
+    when they did not set one, otherwise every ordinary cell of a graded mesh
+    counts as "below min".
 
     ``sources`` (optional) is ``{axis: [(coordinate, tag), …]}`` as returned by
     :func:`app.meshing.coord_diag.source_coordinates`: every mark is then
-    attributed to the primitive / port / manual line that forced it (P2). Pass
-    ``None`` to skip the attribution (``MeshSpec.diagnose_cell_sources``).
+    attributed to the primitive / port / manual line that forced it (P2) and
+    classified (``geometrie`` / ``wunschwert`` / ``artefakt``). Pass ``None`` to
+    skip the attribution (``MeshSpec.diagnose_cell_sources``).
+
+    ``accepted`` holds the regions the user marked as "do not repair"
+    (``MeshSpec.accepted_cells``); those marks stay in the list with
+    ``accepted=True`` but no longer count as open findings.
     """
     clean: dict[str, np.ndarray] = {}
     for axis in "xyz":
@@ -160,6 +190,7 @@ def find_critical_cells(
         # those cells are marked (plus the absolute "below min / very small"
         # findings): a grading jump or a uniform grid is not a problem cell.
         axis_min = float(np.min(cells))
+        axis_median = float(np.median(cells))
         # A (nearly) uniform axis has no outlier to fix: the min cell is the
         # typical cell. Only a graded axis can have cells that cost timestep.
         graded = float(np.max(cells)) > 2.0 * axis_min
@@ -195,7 +226,10 @@ def find_critical_cells(
             lo, hi = _box(axis_idx, arr[i], arr[j + 1], area_lo, area_hi)
             out.append(
                 CriticalCell(
-                    kind, axis_idx, lo, hi, detail, min_cell=smallest_in
+                    kind, axis_idx, lo, hi, detail, min_cell=smallest_in,
+                    penalty=(
+                        axis_median / smallest_in if smallest_in > 0 else 1.0
+                    ),
                 )
             )
             i = j + 1
@@ -203,7 +237,54 @@ def find_critical_cells(
     out = out[:max_marks]
     if sources:
         attribute_cells(out, sources)
+        _classify(out, requested_min)
+    _mark_accepted(out, accepted)
     return out
+
+
+def _classify(cells: Sequence[CriticalCell], requested_min: float) -> None:
+    """Name why each cell exists (needs the P2 attribution, so ``faces``).
+
+    * ``geometrie``  - both faces are authored coordinates: removing the cell
+      would remove a line the geometry needs (e.g. a 0.13 mm gap).
+    * ``wunschwert`` - the cell is below the requested ``min_cellsize``.
+    * ``artefakt``   - easyMesh made it (grading/smoothing, arc, PML); the only
+      class a repair pass can remove without touching the geometry.
+    """
+    for cell in cells:
+        if cell.kind == "engine_timestep":
+            cell.cause = "engine"
+        elif cell.faces >= 2:
+            cell.cause = "geometrie"
+        elif requested_min and cell.cell_size < float(requested_min):
+            cell.cause = "wunschwert"
+        else:
+            cell.cause = "artefakt"
+
+
+def _mark_accepted(
+    cells: Sequence[CriticalCell],
+    accepted: Sequence[Mapping[str, Any]] | None,
+) -> None:
+    """Flag the regions the user accepted (``MeshSpec.accepted_cells``)."""
+    if not accepted:
+        return
+    for cell in cells:
+        axis = "xyz"[cell.axis]
+        lo = float(cell.lo[cell.axis])
+        hi = float(cell.hi[cell.axis])
+        tol = max(1e-9, 0.01 * abs(hi - lo))
+        for spec in accepted:
+            try:
+                if str(spec.get("axis", "")) != axis:
+                    continue
+                a = float(spec.get("lo"))
+                b = float(spec.get("hi"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if lo >= min(a, b) - tol and hi <= max(a, b) + tol:
+                cell.accepted = True
+                break
 
 
 #: Tolerance for "this authored coordinate is the cell face", as a fraction of
@@ -232,6 +313,7 @@ def attribute_cells(
         width = abs(float(cell.hi[cell.axis]) - float(cell.lo[cell.axis]))
         tol = max(1e-9, float(fraction) * width)
         hits: list[str] = []
+        faces = 0
         for face in (cell.lo[cell.axis], cell.hi[cell.axis]):
             best: tuple[float, str] | None = None
             for value, tag in tagged:
@@ -241,8 +323,11 @@ def attribute_cells(
                     continue
                 if dist <= tol and (best is None or dist < best[0]):
                     best = (dist, str(tag))
-            if best is not None and best[1] not in hits:
-                hits.append(best[1])
+            if best is not None:
+                faces += 1
+                if best[1] not in hits:
+                    hits.append(best[1])
+        cell.faces = faces
         if hits:
             cell.source = " + ".join(hits)
     return list(cells)
@@ -295,15 +380,31 @@ def parse_engine_cell(
     except (TypeError, ValueError):
         detail = ""
     direction = int(match.group(2)) % 3
-    return CriticalCell("engine_timestep", direction, tuple(lo), tuple(hi), detail)
+    return CriticalCell(
+        "engine_timestep", direction, tuple(lo), tuple(hi), detail,
+        cause="engine",
+    )
 
 
 def summary_line(cells: Sequence[CriticalCell]) -> str:
     """One log line for the mesh report / status report."""
     if not cells:
         return "Critical cells: none"
+    open_cells = [c for c in cells if not c.accepted]
+    if not open_cells:
+        return f"Critical cells: 0 open ({len(cells)} accepted)"
     counts: dict[str, int] = {}
-    for c in cells:
+    for c in open_cells:
         counts[c.kind] = counts.get(c.kind, 0) + 1
     parts = ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
-    return f"Critical cells: {len(cells)} ({parts})"
+    line = f"Critical cells: {len(open_cells)} ({parts})"
+    causes: dict[str, int] = {}
+    for c in open_cells:
+        if c.cause:
+            causes[c.cause] = causes.get(c.cause, 0) + 1
+    if causes:
+        line += " · " + ", ".join(f"{k} {v}" for k, v in sorted(causes.items()))
+    accepted = len(cells) - len(open_cells)
+    if accepted:
+        line += f" · {accepted} accepted"
+    return line

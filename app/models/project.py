@@ -212,6 +212,21 @@ class MeshSpec:
     # x/y/z. Cartesian only; None/empty = plain automatic mesh.
     manual_mesh_lines: dict[str, list[float]] | None = None
     manual_mesh_lines_removed: dict[str, list[float]] | None = None
+    # Mesh repairs (app/meshing/repair.py): deterministic re-spacing rules for
+    # regions whose cells only cost runtime. Each entry is
+    # {"axis": "z", "lo": <coord>, "hi": <coord>, "floor": <min cell>,
+    #  "expand": 1}. Applied AFTER the manual lines in generate_mesh, so the
+    # preview and the solver script build the same grid. A rule never removes
+    # an authored coordinate (primitive/port/dump/NF2FF/manual line).
+    mesh_repairs: list[dict] | None = None
+    # Enforce the requested min_cellsize as a hard lower bound (V2, default
+    # off): every cell below it whose faces are not both authored coordinates
+    # is merged into its smaller neighbour. Off = easyMesh decides.
+    enforce_min_cellsize: bool = False
+    # Regions the user marked "do not repair" (e.g. a genuine hairpin gap):
+    # [{"axis": "z", "lo": ..., "hi": ..., "note": "geometry gap"}]. The marks
+    # stay visible but are reported as accepted instead of open findings.
+    accepted_cells: list[dict] | None = None
     # Graded refinement on the vacuum/dielectric side of metal (PEC) faces:
     # finest cell at the interface (min_cellsize), growing by max_grading_ratio
     # into the surrounding air/dielectric. Applied app-side after easyMesh
