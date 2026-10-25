@@ -340,7 +340,7 @@ Regel im Projekt), *Remove the offending line…* (eine Auto-Linie löschen),
 not repair)* (grau, zählt nicht mehr als offener Befund) und *Explain…* (Ursache,
 Quelle, Laufzeit-Strafe). Repariert wird nur, was nicht durch autorisierte
 Koordinaten geschützt ist; eine Zelle mit zwei Geometrie-Flächen bleibt und wird
-als `geometrie` berichtet. Die Reparatur läuft als letzter Schritt der
+als `geometry` berichtet. Die Reparatur läuft als letzter Schritt der
 Mesherzeugung — Vorschau und generiertes Solver-Skript erzeugen dasselbe Gitter.
 
 **Mindestzellgröße erzwingen (V2, Standard: aus).** In *Mesh Parameters* macht

@@ -415,7 +415,7 @@ def test_mesh_menu_repair_options() -> None:
     )
     mark = CriticalCell(
         "timestep_cell", 2, (0.0, 0.0, 1.6), (1.0, 1.0, 1.635),
-        min_cell=0.035, cause="artefakt", penalty=46.0,
+        min_cell=0.035, cause="artifact", penalty=46.0,
     )
     w.mesh_viewer.set_critical_cells([mark])
     w._sync_critical_menu()

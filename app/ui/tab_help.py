@@ -83,11 +83,11 @@ Views (tabs inside the plot area)
     ("Critical cells: …") and into the mesh report. The
     mark also names the geometry that forced it (e.g. `box:feed + manual`) while
     *Mesh Parameters → Attribute fine cells to their source* is on. Each mark
-    states its cause (`geometrie` = both faces authored, not repairable;
-    `wunschwert` = below the requested minimum; `artefakt` = easyMesh-made;
-    `engine` = reported by the solver), its penalty (axis median / cell) and
-    whether it is accepted. See Help → "Mesh Repair" for the preview, the
-    protection rules and the global floor.
+    states its cause (`geometry` = both faces authored, not repairable;
+    `requested` = below the minimum you set in Mesh Parameters; `artifact` =
+    easyMesh-made; `engine` = reported by the solver), its penalty (axis
+    median / cell) and whether it is accepted. See Help → "Mesh Repair" for
+    the preview, the protection rules and the global floor.
     Right-click a mark → "Critical cells (N open)": Repair this x/y/z region…
     (preview with the lines removed, the new smallest cell and dt before/after;
     OK stores the rule in MeshSpec.mesh_repairs and rebuilds), Remove the
@@ -95,7 +95,7 @@ Views (tabs inside the plot area)
     the neighbour line… (duplicate-scale slivers only), Accept region (do not
     repair) (stays grey, no longer an open finding) and Explain… (cause, source,
     penalty and what a repair would do). Repair is disabled for cause
-    `geometrie`: both faces are authored coordinates, the geometry needs that
+    `geometry`: both faces are authored coordinates, the geometry needs that
     cell. The Mesh menu has the same actions under *Critical cells (N open)*;
     without a cursor the target is the worst open finding.
 
@@ -453,10 +453,10 @@ Where to find it
 
 What a mark tells you
   label       axis, cell size, number of cells, smallest cell, penalty
-  cause       geometrie   both faces are authored coordinates — the geometry
+  cause       geometry    both faces are authored coordinates — the geometry
                           needs this cell; NOT repairable
-              wunschwert  the cell is below the Min cell size you asked for
-              artefakt    easyMesh made it (arc/circle detection, grading,
+              requested   the cell is below the Min cell size you asked for
+              artifact    easyMesh made it (arc/circle detection, grading,
                           PML transition); repairable
               engine      the solver reported this cell as the smallest
                           timestep (only after a run)
@@ -488,7 +488,7 @@ The five actions (per mark, and in the Mesh menu)
   Accept region (do not repair)
       Stores the region in MeshSpec.accepted_cells. The mark stays (grey) and
       the report counts it as accepted instead of an open finding. Use it when
-      the geometry genuinely needs the cell (cause geometrie) or when you accept
+      the geometry genuinely needs the cell (cause geometry) or when you accept
       the runtime cost.
   Explain…
       Cause, source, penalty and what the default repair would do (read-only).
@@ -497,7 +497,7 @@ What the repair may and may not touch
   Never removed: authored coordinates — domain edges, primitive faces
   (box/cylinder/polygon/STL), port/dump/NF2FF faces and manual mesh lines. They
   are passed to the repair as "protected" (computed once from
-  source_coordinates). A cell with BOTH faces authored is "geometrie" and is
+  source_coordinates). A cell with BOTH faces authored is "geometry" and is
   never merged; a cell with one auto face may be merged.
   The repair merges a too-small cell into its SMALLER neighbour (removes the
   inner line), re-spaces the grading only around the cells it created (max

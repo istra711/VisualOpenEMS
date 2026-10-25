@@ -334,7 +334,7 @@ the project), *Remove the offending line…* (delete one auto line), *Snap onto 
 neighbour line…* (duplicate-scale slivers only), *Accept region (do not repair)*
 (grey, no longer counted as an open finding) and *Explain…* (cause, source,
 runtime penalty). Only unprotected lines are touched; a cell with two geometry
-faces stays and is reported as `geometrie`. The repair runs as the last step of
+faces stays and is reported as `geometry`. The repair runs as the last step of
 the mesh build — the preview and the generated solver script produce the same
 grid.
 

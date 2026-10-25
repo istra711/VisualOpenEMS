@@ -345,28 +345,28 @@ def test_cause_geometry_when_both_faces_are_authored():
     marks = find_critical_cells(_lines(), _targets(), sources=sources)
     cell = [m for m in marks if m.axis == 2 and m.kind == "timestep_cell"][0]
     assert cell.faces == 2
-    assert cell.cause == "geometrie"
+    assert cell.cause == "geometry"
     assert cell.repairable is False
 
 
-def test_cause_artefact_when_a_face_is_generated():
+def test_cause_artifact_when_a_face_is_generated():
     sources = {"z": [(FILTER_HI, "box:b")]}
     marks = find_critical_cells(_lines(), _targets(), sources=sources)
     cell = [m for m in marks if m.axis == 2 and m.kind == "timestep_cell"][0]
     assert cell.faces == 1
-    assert cell.cause == "artefakt"
+    assert cell.cause == "artifact"
     assert cell.repairable is True
 
 
-def test_cause_wunschwert_below_the_requested_min():
-    # only one face authored + below the requested min -> wunschwert
+def test_cause_requested_below_the_min():
+    # only one face authored + below the requested min -> requested
     sources = {"z": [(FILTER_HI, "box:b")]}
     marks = find_critical_cells(
         _lines(), _targets(), min_cellsize=0.1, sources=sources
     )
     cell = marks[0]
     assert cell.kind == "cell_below_min"
-    assert cell.cause == "wunschwert"
+    assert cell.cause == "requested"
     assert cell.repairable is True
 
 
@@ -377,7 +377,7 @@ def test_cause_geometry_wins_over_wunschwert():
         _lines(), _targets(), min_cellsize=0.1, sources=sources
     )
     assert marks[0].faces == 2
-    assert marks[0].cause == "geometrie"
+    assert marks[0].cause == "geometry"
 
 
 def test_penalty_and_label():

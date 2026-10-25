@@ -1,6 +1,6 @@
 """Smoke: per-mark repair actions in the Mesh Viewer (V1-V3), offscreen.
 
-Checks the right-click menu enablement (a genuine `geometrie` cell must not be
+Checks the right-click menu enablement (a genuine `geometry` cell must not be
 repairable), the stored accept/remove rules and a full repair round-trip on a
 synthetic grid - no easyMesh, no solver.
 """
@@ -58,10 +58,10 @@ def main() -> int:
         lo = (0.0, 0.0, 0.53)
         hi = (1.0, 1.0, 0.54)
         mark = CriticalCell(
-            "timestep_cell", 2, lo, hi, min_cell=0.01, cause="artefakt", penalty=46.0
+            "timestep_cell", 2, lo, hi, min_cell=0.01, cause="artifact", penalty=46.0
         )
         genuine = CriticalCell(
-            "timestep_cell", 2, lo, hi, min_cell=0.01, cause="geometrie", penalty=46.0
+            "timestep_cell", 2, lo, hi, min_cell=0.01, cause="geometry", penalty=46.0
         )
 
         # the XZ slice shows z as the vertical axis
@@ -73,18 +73,18 @@ def main() -> int:
         menu = QMenu()  # keep alive: the actions belong to the menu
         acts = {v: k for k, v in viewer._critical_menu(menu, event).items()}
         assert set(acts) == {"repair", "remove", "snap", "accept", "explain"}, acts
-        assert acts["repair"].isEnabled(), "an artefakt cell must be repairable"
+        assert acts["repair"].isEnabled(), "an artifact cell must be repairable"
         assert acts["accept"].isEnabled()
         assert not acts["snap"].isEnabled(), "a real 10 um cell is not a duplicate"
-        print("  menu: artefakt -> repair enabled, snap disabled: OK")
+        print("  menu: artifact -> repair enabled, snap disabled: OK")
 
         viewer.set_critical_cells([genuine])
         menu2 = QMenu()
         acts = {v: k for k, v in viewer._critical_menu(menu2, event).items()}
-        assert not acts["repair"].isEnabled(), "geometrie must not be repairable"
+        assert not acts["repair"].isEnabled(), "geometry must not be repairable"
         assert not acts["snap"].isEnabled()
         assert acts["explain"].isEnabled()
-        print("  menu: geometrie -> repair disabled: OK")
+        print("  menu: geometry -> repair disabled: OK")
 
         # --- accept ----------------------------------------------------------
         viewer.set_critical_cells([mark])
@@ -112,7 +112,7 @@ def main() -> int:
         grid.SetLines("z", [0.0, 0.5, 0.53, 0.54, 1.0, 1.5])
         viewer._apply_editor_change()
         mark2 = CriticalCell(
-            "timestep_cell", 2, lo, hi, min_cell=0.01, cause="artefakt", penalty=46.0
+            "timestep_cell", 2, lo, hi, min_cell=0.01, cause="artifact", penalty=46.0
         )
         viewer.set_critical_cells([mark2])
         rules_before = len(getattr(project.mesh, "mesh_repairs", None) or [])

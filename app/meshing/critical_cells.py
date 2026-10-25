@@ -72,9 +72,9 @@ class CriticalCell:
     #: smallest cell inside the mark (a merged region holds many cells); 0 when
     #: the mark is a single cell, then :attr:`size` is the cell size
     min_cell: float = 0.0
-    #: why the cell exists: ``geometrie`` (both faces authored - cannot be
-    #: removed without touching the geometry), ``wunschwert`` (below the
-    #: requested min_cellsize), ``artefakt`` (easyMesh-made, repairable),
+    #: why the cell exists: ``geometry`` (both faces authored - cannot be
+    #: removed without touching the geometry), ``requested`` (below the
+    #: requested min_cellsize), ``artifact`` (easyMesh-made, repairable),
     #: ``engine`` (the cell the solver reported). "" when the attribution is off.
     cause: str = ""
     #: typical cell of this axis / this cell (the runtime penalty it imposes)
@@ -94,7 +94,7 @@ class CriticalCell:
     @property
     def repairable(self) -> bool:
         """A repair may remove this cell (false for genuine geometry)."""
-        return not self.accepted and self.cause != "geometrie"
+        return not self.accepted and self.cause != "geometry"
 
     @property
     def label(self) -> str:
@@ -161,7 +161,7 @@ def find_critical_cells(
     ``sources`` (optional) is ``{axis: [(coordinate, tag), …]}`` as returned by
     :func:`app.meshing.coord_diag.source_coordinates`: every mark is then
     attributed to the primitive / port / manual line that forced it (P2) and
-    classified (``geometrie`` / ``wunschwert`` / ``artefakt``). Pass ``None`` to
+    classified (``geometry`` / ``requested`` / ``artifact``). Pass ``None`` to
     skip the attribution (``MeshSpec.diagnose_cell_sources``).
 
     ``accepted`` holds the regions the user marked as "do not repair"
@@ -245,21 +245,21 @@ def find_critical_cells(
 def _classify(cells: Sequence[CriticalCell], requested_min: float) -> None:
     """Name why each cell exists (needs the P2 attribution, so ``faces``).
 
-    * ``geometrie``  - both faces are authored coordinates: removing the cell
+    * ``geometry``  - both faces are authored coordinates: removing the cell
       would remove a line the geometry needs (e.g. a 0.13 mm gap).
-    * ``wunschwert`` - the cell is below the requested ``min_cellsize``.
-    * ``artefakt``   - easyMesh made it (grading/smoothing, arc, PML); the only
+    * ``requested`` - the cell is below the requested ``min_cellsize``.
+    * ``artifact``   - easyMesh made it (grading/smoothing, arc, PML); the only
       class a repair pass can remove without touching the geometry.
     """
     for cell in cells:
         if cell.kind == "engine_timestep":
             cell.cause = "engine"
         elif cell.faces >= 2:
-            cell.cause = "geometrie"
+            cell.cause = "geometry"
         elif requested_min and cell.cell_size < float(requested_min):
-            cell.cause = "wunschwert"
+            cell.cause = "requested"
         else:
-            cell.cause = "artefakt"
+            cell.cause = "artifact"
 
 
 def _mark_accepted(

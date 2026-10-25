@@ -1518,7 +1518,7 @@ class MeshGeometryViewer(QWidget):
         act.setEnabled(state["repair"])
         if not repairable:
             act.setToolTip(
-                "Both faces are authored coordinates (cause: geometrie) - the\n"
+                "Both faces are authored coordinates (cause: geometry) - the\n"
                 "geometry needs this cell, a repair would remove a real line.\n"
                 "Use 'Accept region' to keep it out of the open findings."
             )
@@ -1634,7 +1634,7 @@ class MeshGeometryViewer(QWidget):
                 {ax: self._axis_grid_lines(ax) for ax in "xyz"},
                 unit_m,
             )
-            return rep.describe(unit_m) + "\n\n" + pv.text(), True
+            return pv.text(), True
 
         default = plan(None)
         default_floor = (
@@ -1810,10 +1810,10 @@ class MeshGeometryViewer(QWidget):
             rows.append("status          : accepted (not an open finding)")
         rows.append("")
         rows.append(
-            "geometrie = both faces are authored coordinates (the geometry needs\n"
+            "geometry  = both faces are authored coordinates (the geometry needs\n"
             "            the cell; a repair would remove a real line)\n"
-            "wunschwert = below the min cell size you requested\n"
-            "artefakt  = easyMesh made it (grading/smoothing/arc/PML); a repair\n"
+            "requested = below the min cell size you requested\n"
+            "artifact  = easyMesh made it (grading/smoothing/arc/PML); a repair\n"
             "            can remove it without touching the geometry\n"
             "engine    = the cell the solver reported as the timestep limit"
         )
@@ -1839,8 +1839,6 @@ class MeshGeometryViewer(QWidget):
                     [rep], {ax: self._axis_grid_lines(ax) for ax in "xyz"}, unit_m
                 )
                 rows.append("A repair would do this:")
-                rows.append(rep.describe(unit_m))
-                rows.append("")
                 rows.append(pv.text())
         box = QMessageBox(self)
         box.setWindowTitle("Critical cell")

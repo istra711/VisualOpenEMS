@@ -428,7 +428,7 @@ close the loop without making the diagnosis dishonest:
 * **V3 — per-mark actions.** The context submenu *Critical cells (N open)* now
   offers **Repair…**, **Remove the offending line…**, **Snap onto the neighbour
   line…**, **Accept region (do not repair)** and **Explain…**, each enabled only
-  where it is honest: repair is disabled for `geometrie` (both faces authored),
+  where it is honest: repair is disabled for `geometry` (both faces authored),
   snap only for duplicate-scale slivers (< 0.1 % of a normal cell), remove only
   when at least one face is an auto line. Accepted regions stay visible (grey)
   but count as accepted instead of open findings.
@@ -445,7 +445,7 @@ limits; the *Mesh Viewer* and *Mesh Parameters* topics link to it.
   **user-set** minimum only (`requested_min_cellsize`); the derived fallbacks
   (`refined_cellsize`, `target_cell_units`) previously flagged 162 ordinary
   cells / 5.08 mm in a project without `min_cellsize`. Every mark now names its
-  cause (`geometrie` > `wunschwert` > `artefakt`; `engine` for solver-reported
+  cause (`geometry` > `requested` > `artifact`; `engine` for solver-reported
   cells), its runtime penalty (axis median / cell) and whether it is accepted.
   The report lists, per axis, the requested floor and the achieved minimum, and
   says when the floor was not reached because the remaining cells are bounded by
@@ -454,7 +454,7 @@ limits; the *Mesh Viewer* and *Mesh Parameters* topics link to it.
 **Protection rule:** the repair never removes an authored line — domain edges,
 primitive/port/dump/NF2FF faces and manual lines are passed in as `protected`
 (computed once from `source_coordinates`). A cell with **both** faces authored
-is `geometrie` and not repairable; a cell with one auto face can be merged.
+is `geometry` and not repairable; a cell with one auto face can be merged.
 Same-line matching uses `_SAME_TOL = 1e-6` (drawing units): CSXCAD stores grid
 lines as float32 (`1.635` → `1.6349999904632568`) while authored coordinates are
 float64 — a 1e-12 tolerance let a repair delete the protected line 1.635 in
@@ -472,7 +472,7 @@ float64 — a 1e-12 tolerance let a repair delete the protected line 1.635 in
 | | V2 (min 0.5) | 1.2107 | 1 940 057 | **10.207** | 0.664 |
 
 * Filter V1 removes the 0.023781 mm artefact; the remaining z minimum is
-  0.035 mm at `1.635..1.670672` with cause `geometrie`
+  0.035 mm at `1.635..1.670672` with cause `geometry`
   (`box:substrate + box:msl_line`) — the finding is now genuine, and the report
   says so instead of claiming a repair.
 * Filter V2 cannot reach 0.1 mm on z for the same reason; the report line reads

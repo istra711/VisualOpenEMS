@@ -94,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   neighbour, relaxes the grading only around the merged cells and splits cells
   above the max-cell limit — deterministic, and it never removes an authored line
   (domain edges, primitive/port/dump/NF2FF faces, manual lines). A cell with both
-  faces authored is reported as `geometrie` and not repairable.
+  faces authored is reported as `geometry` and not repairable.
 - **Min cell size can be enforced by the repair pass (V2, default off)**
   (`MeshSpec.enforce_min_cellsize`, checkbox *Mesh Parameters → "Enforce min cell
   size (repair)"*): `Min cell size` becomes a hard floor on every axis,
@@ -108,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   right-click submenu *Critical cells (N open)* now offers **Repair…**,
   **Remove the offending line…**, **Snap onto the neighbour line…**,
   **Accept region (do not repair)** and **Explain…**, each enabled only where it
-  is honest (repair disabled for `geometrie`, snap only for duplicate-scale
+  is honest (repair disabled for `geometry`, snap only for duplicate-scale
   slivers, remove only when a face is an auto line). Accepted regions stay
   visible in grey but count as accepted instead of open findings.
 - **The same options in the Mesh menu** (`app/ui/main_window.py`): the
@@ -173,8 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `min_cellsize_z` only (`requested_min_cellsize`); the derived fallbacks
   (`refined_cellsize`, `target_cell_units`) are targets, and using them as a
   minimum flagged 162 ordinary cells / 5.08 mm in a real project without
-  `min_cellsize`. Every mark also names its cause (`geometrie` > `wunschwert` >
-  `artefakt`, `engine` for solver-reported cells), its runtime penalty (axis
+  `min_cellsize`. Every mark also names its cause (`geometry` > `requested` >
+  `artifact`, `engine` for solver-reported cells), its runtime penalty (axis
   median / cell) and whether it is accepted; the mesh report lists requested vs.
   achieved per axis and states when the remaining cells are bounded by authored
   coordinates instead of claiming a repair.

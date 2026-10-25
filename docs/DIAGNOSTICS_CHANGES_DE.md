@@ -443,7 +443,7 @@ Reparatur als letzter Schritt, Untergrenze nicht mehr an easyMesh),
 * **V3 — Aktionen pro Marke.** Das Kontext-Untermenü *Critical cells (N open)*
   bietet jetzt **Repair…**, **Remove the offending line…**, **Snap onto the
   neighbour line…**, **Accept region (do not repair)** und **Explain…** — jeweils
-  nur aktiv, wo es ehrlich ist: Repair ist bei `geometrie` (beide Flächen
+  nur aktiv, wo es ehrlich ist: Repair ist bei `geometry` (beide Flächen
   autorisiert) gesperrt, Snap nur bei Duplikat-Slivers (< 0,1 % einer normalen
   Zelle), Remove nur, wenn mindestens eine Fläche eine Auto-Linie ist.
   Akzeptierte Regionen bleiben sichtbar (grau), zählen aber als akzeptiert
@@ -462,7 +462,7 @@ Reparatur als letzter Schritt, Untergrenze nicht mehr an easyMesh),
   **vom Nutzer gesetzten** Mindestgröße (`requested_min_cellsize`); die
   abgeleiteten Fallbacks (`refined_cellsize`, `target_cell_units`) markierten
   vorher in einem Projekt ohne `min_cellsize` 162 normale Zellen / 5,08 mm.
-  Jede Marke nennt jetzt ihre Ursache (`geometrie` > `wunschwert` > `artefakt`;
+  Jede Marke nennt jetzt ihre Ursache (`geometry` > `requested` > `artifact`;
   `engine` für vom Solver gemeldete Zellen), ihre Laufzeit-Strafe (Achsen-Median
   / Zelle) und ob sie akzeptiert ist. Der Bericht listet je Achse die
   angeforderte Untergrenze und das erreichte Minimum — und sagt es, wenn die
@@ -472,7 +472,7 @@ Reparatur als letzter Schritt, Untergrenze nicht mehr an easyMesh),
 **Schutzregel:** Die Reparatur entfernt nie eine autorisierte Linie —
 Domänenkanten, Primitive-/Port-/Dump-/NF2FF-Flächen und manuelle Linien werden
 als `protected` übergeben (einmal aus `source_coordinates` berechnet). Eine
-Zelle mit **beiden** autorisierten Flächen ist `geometrie` und nicht
+Zelle mit **beiden** autorisierten Flächen ist `geometry` und nicht
 reparierbar; eine Zelle mit einer Auto-Fläche darf verschmolzen werden. Der
 Gleichheitsvergleich nutzt `_SAME_TOL = 1e-6` (Zeicheneinheiten): CSXCAD
 speichert Gitterlinien als float32 (`1.635` → `1.6349999904632568`), die
@@ -491,7 +491,7 @@ autorisierten Koordinaten sind float64 — mit 1e-12 löschte eine Reparatur in
 | | V2 (min 0.5) | 1.2107 | 1 940 057 | **10.207** | 0.664 |
 
 * Filter V1 entfernt das 0,023781-mm-Artefakt; das verbleibende z-Minimum ist
-  0,035 mm bei `1.635..1.670672` mit Ursache `geometrie`
+  0,035 mm bei `1.635..1.670672` mit Ursache `geometry`
   (`box:substrate + box:msl_line`) — der Befund ist jetzt echt, und der Bericht
   sagt das, statt eine Reparatur zu behaupten.
 * Filter V2 kann 0,1 mm auf z aus demselben Grund nicht erreichen; die
