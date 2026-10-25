@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Antenna tab: axial ratio and phase center** (`app/postproc/polarization.py`,
+  `app/ui/polarization_dialog.py`): both are derived from the complex
+  `E_theta`/`E_phi` already stored in `nf2ff.json` — no solver re-run. AR comes
+  from the Stokes parameters (with CP sense and ellipse tilt; linear
+  polarization is reported as "linear" instead of a fake 0 dB). The phase
+  center is a least-squares fit over the main beam (phi = 0/90 cuts) relative
+  to the NF2FF box centre, with a quality gate (phase residual / offset inside
+  the NF2FF sphere) so a meaningless fit is shown as "not well-defined" rather
+  than a number. Button "Polarization…" in the Antenna tab, a Help topic and
+  Copy-as-TSV.
+- Tests: `tests/test_polarization.py` — circular/linear/elliptical AR, a known
+  phase-center offset, the payload summary and the missing-field case.
+
 ### Changed
 
 - **Smaller Windows EXE** (`build_exe.py`): the frozen bundle no longer ships

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSlider,
     QSplitter,
@@ -360,6 +361,11 @@ class AntennaPatternViewer(QWidget):
             "List every nf2ff.json in the whole work directory\n"
             "(not only the current project)."
         )
+        self.btn_polar = QPushButton("Polarization…")
+        self.btn_polar.setToolTip(
+            "Axial ratio and phase center from the loaded NF2FF result\n"
+            "(post-processing from E_theta/E_phi — no re-run)."
+        )
         self.cmb_plot = QComboBox()
         self.cmb_plot.addItems(self.PLOT_TYPES)
         self.cmb_freq = QComboBox()
@@ -374,6 +380,7 @@ class AntennaPatternViewer(QWidget):
             self.btn_open,
             self.btn_reload,
             self.btn_scan,
+            self.btn_polar,
         ):
             bar.addWidget(w)
         bar.addWidget(QLabel("Plot"))
@@ -456,6 +463,7 @@ class AntennaPatternViewer(QWidget):
         self.btn_open.clicked.connect(self._on_open)
         self.btn_reload.clicked.connect(self._reload_current)
         self.btn_scan.clicked.connect(self._on_scan)
+        self.btn_polar.clicked.connect(self._on_polarization)
         self.btn_popout.clicked.connect(self.popout_graph)
         self.btn_clear_markers.clicked.connect(self._clear_markers)
         self.btn_hpbw.clicked.connect(self._on_hpbw)
@@ -767,6 +775,34 @@ class AntennaPatternViewer(QWidget):
             raw = current.data(Qt.ItemDataRole.UserRole) or current.text()
             self.load_path(Path(raw))
 
+    def _on_polarization(self) -> None:
+        """Show axial ratio / phase center of the loaded NF2FF result."""
+        from app.ui.polarization_dialog import PolarizationDialog
+
+        if not self.data:
+            QMessageBox.information(
+                self,
+                "Polarization",
+                "Load an NF2FF result first (Open… or a run with NF2FF enabled).",
+            )
+            return
+        payload = (self.data or {}).get("raw") or {}
+        if not payload:
+            QMessageBox.information(
+                self,
+                "Polarization",
+                "The loaded result carries no raw NF2FF payload.",
+            )
+            return
+        dlg = getattr(self, "_polar_dlg", None)
+        if dlg is None:
+            dlg = PolarizationDialog(self)
+            self._polar_dlg = dlg
+        dlg.refresh(payload)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
     def clear(self) -> None:
         """Drop the loaded NF2FF data (empty diagram) — project without results."""
         self.data = None
@@ -829,6 +865,10 @@ class AntennaPatternViewer(QWidget):
         self._update_details()
         self._init_dbi_sliders()
         self._redraw()
+        # keep an open polarization dialog in sync with the new file
+        dlg = getattr(self, "_polar_dlg", None)
+        if dlg is not None and dlg.isVisible():
+            dlg.refresh((self.data or {}).get("raw") or {})
 
     def _update_details(self) -> None:
         """Details block: file name in the header + Dmax/Gmax/eta/Prad/theta/phi.

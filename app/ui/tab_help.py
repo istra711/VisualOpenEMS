@@ -18,6 +18,7 @@ TAB_ORDER = [
     "Mesh Viewer",
     "S-Params",
     "Antenna",
+    "Polarization & Phase Center",
     "Antenna Simulation",
     "Cylindrical Mesh",
     "Field Viewer",
@@ -714,6 +715,8 @@ After a successful Run (with NF2FF enabled)
     nf2ff.json in the work dir (subpath + name, tooltip = full path).
   • Details — header shows the current file name in parentheses; below it
     Dmax, Gmax, eta, Prad and theta/phi points for the selected frequency.
+  • Polarization… — axial ratio and phase center from the same result (see
+    Help → "Polarization & Phase Center"); post-processing, no re-run.
   • Plots (combo): E-Plane (phi=90), H-Plane (phi=0), Azimuth (theta=90),
     Gain vs Frequency, Radiated Efficiency vs Frequency, 3D Pattern.
   • Radiated Efficiency vs Frequency — eta(f) in % from the exported
@@ -786,6 +789,54 @@ Tips
     nf2ff.center = (start+stop)/2. Re-run "Fit NF2FF to Geometry" (the run also
     warns and snaps a stale centre back). See Antenna Simulation → NF2FF box.
   • Summary PNG (nf2ff_summary.png) is written next to nf2ff.json.
+""",
+    "Polarization & Phase Center": """POLARIZATION & PHASE CENTER — derived from the NF2FF far field
+
+What it is
+  openEMS does not report axial ratio (AR) or phase center directly. The
+  Antenna tab derives both from the complex far field E_theta/E_phi that the
+  NF2FF post-processing stores in nf2ff.json — no solver run and no change to
+  the result. Open the dialog with "Polarization…" in the Antenna tab.
+
+Axial ratio (AR)
+  From the Stokes parameters per direction and frequency:
+      S0 = |Et|^2 + |Ep|^2,   S1 = |Et|^2 - |Ep|^2
+      S2 = 2 Re(Et Ep*),      S3 = 2 Im(Et Ep*)
+      L  = sqrt(S1^2 + S2^2)                 (linear part)
+      AR = sqrt((S0 + L) / (S0 - L))
+  AR >= 1, AR_dB = 20 log10(AR). A (nearly) linear polarization has an
+  infinite AR — the table says "linear" instead of printing a fake number.
+  S3 decides the handedness, it does not enter the AR. Tilt = 0.5*atan2(S2,S1)
+  is the polarization-ellipse angle (-90..90 deg).
+
+Handedness
+  "RHCP"/"LHCP" follows the sign of S3 with openEMS' exp(+jwt) convention.
+  Verify it once with a known circular antenna; if your convention is the
+  other one, the label flips (the AR magnitude does not change).
+
+Phase center
+  A displacement dr of the phase center shifts the far-field phase by
+  -k (r_hat . dr). The dialog fits
+      psi(theta) = psi0 + a*sin(theta) + b*cos(theta)
+  over the main beam (D within 10 dB of the cut peak) for the phi = 0 and
+  phi = 90 cuts:
+      dz = -b/k   (along theta = 0 / boresight)
+      dx = -a/k   (phi = 0 cut),   dy = -a/k   (phi = 90 cut)
+  The result is relative to the NF2FF reference point (the box centre openEMS
+  used); an off-centre box shows up here. It is an estimate for a well-defined
+  main beam, not a solver fact — the RMS of the phase residual is shown so you
+  can judge the fit. If a cut does not contain the main beam, the value stays
+  empty ("no main-beam fit").
+
+Limits
+  * AR is only meaningful for (nearly) circular polarization; for linear
+    antennas the table says "linear".
+  * Phase center needs phase unwrapping and one dominant main beam; multi-lobe
+    or broadband patterns give a frequency-dependent estimate.
+  * Everything is per frequency (f column; Freq combo in the Antenna tab).
+  * Old nf2ff.json files without E_theta/E_phi cannot be evaluated — re-run
+    the NF2FF post-processing.
+  * Copy puts the table on the clipboard as tab-separated text.
 """,
     "Field Viewer": """FIELD VIEWER — field dumps as a 3D VTK file (.vtr)
 

@@ -20,6 +20,9 @@ def main() -> int:
         assert name in TAB_HELP, name
         if name == "Geometry":
             assert "GEOMETRY" in text
+    pol = help_for("Polarization & Phase Center")
+    assert "AXIAL RATIO" in pol.upper(), pol[:200]
+    assert "PHASE CENTER" in pol.upper(), pol[:200]
     print("content ok:", list(TAB_HELP))
 
     from PySide6.QtWidgets import QApplication
