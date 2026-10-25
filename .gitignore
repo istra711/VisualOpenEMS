@@ -51,3 +51,5 @@ third_party/easyMesh4openEMS/*.so
 # Temporary
 *.tmp
 *.temp
+# CST reference data (removed from the repository history; keep it local)
+CST/
