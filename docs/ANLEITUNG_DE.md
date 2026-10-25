@@ -304,6 +304,34 @@ Mesh-Parameter (siehe §5.0):
 | drawing_unit | mm | mm |
 | max_timesteps | 150000+ | 25000 (Preset) |
 
+**Koordinaten-Ausrichtung (Standard: an).** In *Mesh Parameters* steht
+„Align coordinates (float32 grid)". Damit liegen **alle** Geometriekoordinaten
+auf demselben float32-Raster, auf dem CSXCAD Boxen/Ports/Dumps speichert — auch
+die Dreiecksnetze aus STEP/STL/FCStd. Ein Vertex und eine Boxfläche, die gleich
+sein sollen, sind dann bit-identisch (kein zweiter Gitterpunkt, keine
+Sliver-Zelle, die den Zeitschritt kollabieren lässt). Ausschalten stellt das
+alte Verhalten wieder her (Dreiecksnetze werden dezimal auf 0,1 µm gerundet);
+das ist nur für A/B-Vergleiche sinnvoll. Bereits gespeicherte `.npy`-Netze
+behalten ihre alte Rundung, bis sie neu importiert werden.
+
+**Zuordnung zu feiner Zellen (P2, Standard: an).** Die Checkbox „Attribute fine
+cells to their source" schreibt an jede vom Mesh-Bericht beanstandete Zelle die
+Geometrie, die sie erzwingt (z. B. `box:feed + manual`) — sichtbar in den Marken
+des Mesh-Viewers und im Bericht unter „Fine-cell sources". Zellen ohne
+Autoren-Quelle stammen aus easyMesh selbst (Kreis-/Bogenerkennung, Grading,
+PML-Übergang).
+
+**Kritische Zellen im Mesh-Viewer (Standard: aus).** Rechtsklick →
+„Mark critical cells (N)" blendet die Zellen ein, die Laufzeit kosten: die
+kleinsten Zellen jeder Achse (sie setzen den Zeitschritt), Zellen unter der
+geforderten Mindestgröße und — nach einem Lauf — die Zelle, die der Solver als
+kleinsten Zeitschritt meldet. Sie erscheinen als gestrichelte Umrisse in den
+Schnitten (das Netz bleibt sichtbar) und als Bänder in den *Cell sizes*-Plots;
+zusammenhängende Zellen werden zu einer Region zusammengefasst. Grading-Sprünge
+und zu große Zellen stehen weiterhin nur im Mesh-Bericht. Die Marken werden
+immer berechnet, aber erst auf Wunsch gezeichnet; die Zahl im Menüeintrag sagt
+vorher, ob es etwas zu sehen gibt.
+
 ### 5.2 Material / Assignment
 
 1. **Add Material…** — z. B. `substrate` (εr=4,4, tanδ=0,02), `copper`
@@ -383,7 +411,33 @@ Warning) — der Mesh Viewer umrahmt solche Primitive rot und schreibt
      `project_run_edited.py` gesichert — die GUI fragt, ob neu erzeugt oder dein
      bearbeitetes Skript so wie es ist ausgeführt werden soll
    - Manuell: `<python> work\<Projektname>\project_run.py`
-4. Ergebnis-Dateien unter `work\<Projektname>\` (u. a. `project_run.py`, Meshes, S-Params)
+4. Ergebnis-Dateien unter `work\<Projektname>\` (u. a. `project_run.py`, Meshes, S-Params)
+
+### 6.1 Mesh- und Simulationsdiagnose
+
+Zwei Berichte beantworten die Frage „ist dieser Lauf belastbar?" – noch bevor
+bzw. nachdem der Solver gelaufen ist:
+
+* **Mesh ➤ Mesh Timing / Feasibility…** (Inhalt steht direkt nach *Build Mesh*
+  auch im Tab **Mesh Report** und als eine Zeile im Log): kleinste Zelle je
+  Achse und das daraus folgende `dt` (Courant-Grenze im Vakuum plus untere
+  Schranke durch das dichteste Dielektrikum), Zellen pro Wellenlänge bei
+  `f_max`, der Laufzeit-Faktor einer überfeinerten Zelle gegenüber einer
+  typischen Zelle, die Timesteps für einen Durchlauf durch das Gebiet und die
+  Frequenzauflösung `1/(max_timesteps·dt)` im Verhältnis zum eingestellten
+  Sweep-Raster. Jede Warnung nennt die konkrete Abhilfe (z. B. „max_timesteps
+  auf ≥ 389 000 erhöhen" oder welche Zelle zu grob ist).
+* **Simulation ➤ Simulation Status…** (nach jedem Lauf, erfolgreich oder nicht;
+  derselbe Block wird an das Ende des Logs angehängt): Fehler und Warnungen aus
+  dem Solver-Log – einschließlich der Mesh-Validierung von vor dem Lauf –,
+  Konvergenz (Endkriterium erreicht oder max. Timesteps), die exakten
+  Engine-Werte (`dt`, Nyquist-Rate, Anregungslänge, Operator-/Feldgröße,
+  Schritte/Energie/Geschwindigkeit), der Abgleich der Mesh-Schätzung gegen den
+  Engine-Wert, die tatsächliche Auflösung des DFT-Fensters und die Passivität
+  der S-Parameter (`|S11|²+|S21|² ≤ 1`) über der Frequenz – getrennt nach
+  Kernband und Sweep-Rand (eine Überschreitung nur am Rand ist ein
+  DFT-Fensterartefakt und harmlos). Am Ende steht ein Fazit
+  (`OK` / `WARNING` / `ERROR`) mit „Trust: reliable / use with care / unusable".
 
 ---
 
@@ -405,6 +459,16 @@ Warning) — der Mesh Viewer umrahmt solche Primitive rot und schreibt
    Beispiel: `examples\run_pcb_filter_example.py`.
    Nicht gemessene Einträge bleiben leer (NaN) in `sparams.json`, die Touchstone-Datei
    (`.s2p`) entsteht erst, wenn die Matrix vollständig ist.
+5. **Field Viewer** — 3D-Ansicht der Felddumps (F1 für die Hilfe). Die
+   Vektor-Pfeile („Vectors") **ersetzen** die farbige Felddarstellung
+   (ParaView-Stil), damit keine opake Schnitt-/Oberflächenebene die Pfeile
+   verdeckt; mit „field underneath" läßt sich die Überlagerung wieder
+   einschalten. Beim manuellen Durchschalten einer Serie meldet die
+   Schritt-Anzeige, wie viele Pfeile sich gegenüber dem vorigen Schritt gedreht
+   haben — damit ist sofort sichtbar, ob die Pfeile dem Feld wirklich folgen.
+   Bei ausgeschaltetem „same length" zeigt die Pfeillänge die Amplitude; die
+   Referenz wird einmal über die ganze Serie gemessen, die Längen sind also
+   von Bild zu Bild vergleichbar.
 
 ---
 

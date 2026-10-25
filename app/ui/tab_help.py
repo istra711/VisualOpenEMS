@@ -69,6 +69,20 @@ Views (tabs inside the plot area)
   • XY / XZ / YZ — 2D slice with mesh grid, primitive AABBs, ports, NF2FF box.
   • Cell sizes — per-axis cell-size plots along the domain.
   • Domain overview — bounding box and mesh resolution summary.
+  • Critical cells (overlay, all views) — only the cells that cost runtime, i.e.
+    the ones that set the timestep: cells below the requested min cell size,
+    extremely small cells, the smallest cell of each graded axis, and — after a
+    simulation — the cell the FDTD operator reported as the smallest timestep.
+    Consecutive cells are merged into one region. Drawn as dashed outlines
+    without fill in the slices (the grid stays visible; a finding whose axis is
+    the slice normal is skipped) and as bands + markers in the Cell sizes plots.
+    Grading jumps and too-large cells stay in the mesh report. Right-click →
+    **"Mark critical cells (N)"** switches them on/off (default off — the
+    overlay is drawn only on request; the count in the entry shows beforehand
+    whether there is anything to see). The count also goes to the log
+    ("Critical cells: …") and into the mesh report. The
+    mark also names the geometry that forced it (e.g. `box:feed + manual`) while
+    *Mesh Parameters → Attribute fine cells to their source* is on.
 
 Navigation
   • Mouse wheel — zoom at cursor (works even without the toolbar zoom).
@@ -677,21 +691,29 @@ Buttons / controls
   • "Vectors" (ParaView "Glyph"): draws small arrows for the vector field
     (the exporter writes the real part of the dump as the 3-component point
     array "field"; a loaded VTK file may also bring its own vector array).
-    The arrows follow the current representation: Slice → arrows in the cut
-    plane, Surface/Wireframe → on the outside of the volume, Iso-surface → on
-    the contour. During playback the arrows move with the field, so rotating or
-    travelling fields become visible (much clearer than colour alone).
+    The arrows sit on the current representation: Slice → in the cut plane,
+    Surface/Wireframe → on the outside of the volume, Iso-surface → on the
+    contour. They replace the coloured field plot — an opaque slice, surface or
+    volume covers every arrow that points into it, which is what made the
+    vectors hard to read. Tick "field underneath" to get the overlay back
+    (off by default; the colour bar stays either way because it also explains
+    the arrow colours).
+    During playback the arrows rotate with the field, so travelling/oscillating
+    fields become visible; while stepping by hand the step label adds how many
+    arrows flipped relative to the previous step ("24% reversed …, median
+    cos …"), which tells you at a glance whether they really follow the field.
     "size" scales the arrow length (0.1–8 relative to the arrow spacing),
     "arrows" caps how many are drawn (uniform, deterministic decimation —
     every N-th point, so the pattern does not flicker between frames; default
     2000). "same length" (default ON) gives every arrow the same length, i.e.
     only the direction is shown — best for watching a field rotate. Untick it
-    to scale the length with |E| (the 99 % value maps to the "size" length, so
-    a single hot spot does not shrink all other arrows). The arrows are
-    coloured by the selected array with the same colour range. A dump without
-    a 3-component field array disables the checkbox. All vector settings are
-    remembered across sessions (also mirrored to the pop-out and to the
-    default in Settings → Field Viewer).
+    to scale the length with |E|: the reference magnitude is measured once over
+    the whole series, so the same field strength keeps the same arrow length in
+    every frame and the real amplitude change stays visible (99 % of the
+    reference maps to the "size" length). A dump without a 3-component field
+    array disables the checkbox. All vector settings are remembered across
+    sessions (also mirrored to the pop-out and to the default in
+    Settings → Field Viewer).
   • "View" (top row, right): standard view of the 3D pane — Isometric, From
     ±X / ±Y / ±Z, or "Fit (keep direction)" (only fits the camera, like the old
     Reset view). Picking one applies it immediately **and is remembered**: every

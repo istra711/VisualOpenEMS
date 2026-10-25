@@ -302,6 +302,31 @@ Mesh parameters (see §5.0):
 | drawing_unit | mm | mm |
 | max_timesteps | 150000+ | 25000 (preset) |
 
+**Coordinate alignment (default: on).** *Mesh Parameters* has "Align coordinates
+(float32 grid)": every geometry coordinate then sits on the same float32 grid
+CSXCAD uses for boxes/ports/dumps — triangle meshes from STEP/STL/FCStd included.
+A vertex and a box face that are meant to be equal are bit-identical (no second
+grid point, no sliver cell that collapses the timestep). Switching it off
+restores the old behaviour (triangle meshes rounded decimally to 0.1 µm), which
+is only useful for A/B comparisons. Stored `.npy` meshes keep their old rounding
+until they are re-imported.
+
+**Fine-cell attribution (P2, default: on).** The checkbox "Attribute fine cells
+to their source" writes the geometry that forces each flagged cell onto the mark
+(e.g. `box:feed + manual`) — visible in the Mesh Viewer marks and in the report
+under "Fine-cell sources". Cells without an authored source come from easyMesh
+itself (circle/arc detection, grading, PML transition).
+
+**Critical cells in the Mesh Viewer (default: off).** Right-click →
+"Mark critical cells (N)" shows the cells that cost runtime: the smallest
+cell of each axis (they set the timestep), cells below the requested minimum size
+and — after a run — the cell the solver reports as the smallest timestep. They
+appear as dashed outlines in the slices (the grid stays visible) and as bands in
+the *Cell sizes* plots; consecutive cells are merged into one region. Grading
+jumps and too-large cells stay in the mesh report only. The marks are always
+computed but drawn only on request; the count in the menu entry tells you
+beforehand whether there is anything to see.
+
 ### 5.2 Material / assignment
 
 1. **Add Material…** — e.g. `substrate` (εr=4.4, tanδ=0.02), `copper`
@@ -383,6 +408,31 @@ warning) — the mesh viewer outlines such primitives in red and writes
    - Manual: `<python> work\<project_name>\project_run.py`
 4. Result files under `work\<project_name>\` (among others `project_run.py`, meshes, S-params)
 
+### 6.1 Mesh and simulation diagnostics
+
+Two reports answer "is this run trustworthy?" — before and after the solver ran:
+
+* **Mesh ➤ Mesh Timing / Feasibility…** (the same content appears right after
+  *Build Mesh* in the **Mesh Report** tab and as one log line per build): the
+  smallest cell per axis and the resulting `dt` (vacuum Courant limit plus the
+  lower bound inside the densest dielectric), cells per wavelength at `f_max`,
+  the runtime penalty of an over-refined cell against a typical one, the
+  timesteps needed to cross the domain, and the frequency resolution
+  `1/(max_timesteps·dt)` versus the requested sweep step. Every warning names
+  the concrete remedy (e.g. "raise max_timesteps to >= 389000", or which cell is
+  too coarse).
+* **Simulation ➤ Simulation Status…** (after every run, successful or not; the
+  same block is appended to the end of the log): errors and warnings from the
+  solver log — including the mesh validation from before the run —, convergence
+  (end criteria reached or max timesteps hit), the engine's exact facts
+  (`dt`, Nyquist rate, excitation length, operator/field size,
+  steps/energy/speed), the mesh estimate cross-checked against the engine value,
+  the actual DFT window resolution, and the passivity of the S-parameters
+  (`|S11|²+|S21|² ≤ 1`) versus frequency — separated into the core band and the
+  sweep edge (a violation at the edge only is a DFT window artefact and
+  harmless). It ends in a verdict (`OK` / `WARNING` / `ERROR`) with a trust
+  rating ("reliable / use with care / unusable").
+
 ---
 
 ## 7. Evaluation
@@ -403,6 +453,15 @@ warning) — the mesh viewer outlines such primitives in red and writes
    example: `examples\run_pcb_filter_example.py`.
    Unmeasured entries stay empty (NaN) in `sparams.json`; the Touchstone file
    (`.s2p`) is only written once the matrix is complete.
+5. **Field Viewer** — 3D view of the field dumps (F1 for the in-app help). The
+   vector arrows ("Vectors") **replace** the coloured field representation
+   (ParaView style), so no opaque slice/surface covers the arrows that point
+   into it; tick "field underneath" to get the overlay back. While stepping
+   through a series by hand, the step label reports how many arrows flipped
+   compared to the previous step — that makes it obvious whether the arrows
+   really follow the field. With "same length" switched off the arrow length
+   shows the amplitude; the reference is measured once over the whole series,
+   so the lengths are comparable from frame to frame.
 
 ---
 

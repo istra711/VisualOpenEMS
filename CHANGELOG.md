@@ -7,6 +7,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mesh timing / feasibility report** (`app/meshing/timing.py`, Mesh menu
+  *Mesh Timing / Feasibility…*): right after *Build Mesh* the app reports the
+  smallest cell per axis and the Courant timestep it imposes (plus the lower
+  bound inside the densest dielectric), cells per wavelength at f_max, the
+  runtime penalty of an over-refined cell against a typical one, the timesteps
+  needed to cross the domain and the frequency resolution `1/(max_timesteps·dt)`
+  compared with the requested sweep step — each warning names the concrete
+  remedy (e.g. how many timesteps would be needed, or which cell to relax). The
+  block is part of the mesh report (log panel tab *Mesh Report*) and one
+  summary line is logged per build.
+- **Post-run simulation status report** (`app/simulation/report.py`, Simulation
+  menu *Simulation Status…*): parses the solver log for errors, warnings and the
+  engine's own facts (exact timestep, Nyquist rate, excitation length,
+  operator/field size, steps/energy/speed), keeps the mesh-validation warnings
+  from before the run, cross-checks the mesh timestep estimate against the engine
+  value, computes the actual DFT window resolution and the passivity
+  `sum_i |S_ij|^2 <= 1` per excitation versus frequency (core band vs. sweep
+  edge, where a violation is a DFT window artefact), and ends in a verdict
+  (`OK` / `WARNING` / `ERROR`) with a trust rating. The same block is appended to
+  the end of the run log; `app/ui/report_dialog.py` shows it with Copy/Save.
+- Tests: `tests/test_mesh_timing.py`, `tests/test_sim_report.py`.
+- **Field Viewer: arrow-motion readout**: while stepping through a series by
+  hand, the step label adds how many arrows flipped compared to the previous
+  step ("24% reversed vs. previous step, median cos …"), so "do the vectors
+  follow the field?" has a number instead of an impression.
+- **Mesh Viewer: critical cells marked (right-click toggle)**
+  (`app/meshing/critical_cells.py`, `app/ui/mesh_viewer.py`): only the cells that
+  **cost runtime** are drawn — the ones that set the FDTD timestep
+  (`cell_below_min`, `very_small_cell`, `timestep_cell` = smallest cell of a
+  graded axis) plus, after a run, the **engine's smallest-timestep cell** (parsed
+  from `… found at position: 1 : 39;14;0`). Grading jumps and too-large cells are
+  *not* marked any more: they are report findings, covered most of the domain and
+  hid the cells that matter. Consecutive cells are merged into one region and
+  drawn as dashed outlines (no fill) in the slices — a finding whose axis is the
+  slice normal is skipped — and as bands + markers in the *Cell sizes* plots.
+  Capped at 24 marks, sorted by severity. The overlay is **off by default**:
+  the right-click menu entry "Mark critical cells (N)" switches it on, the count
+  in the entry shows beforehand whether anything is flagged. One log line per
+  build and a block in the mesh report.
+- `tests/test_critical_cells.py` — 13 checks (thresholds, caps, engine-cell
+  parsing with clamping, labels, source attribution).
+- **Fine cells are attributed to their source (P2, switchable, default on)** —
+  `MeshSpec.diagnose_cell_sources`: every cell the report flags now names the
+  primitive / port / manual line at its faces (`box:feed + manual`), in the Mesh
+  Viewer marks and in the report section "Fine-cell sources"; cells without an
+  authored source are reported as easyMesh's own refinement (circle/arc
+  detection, graded interface, PML). Off = marks without a source and an explicit
+  "Fine-cell attribution off" line. Checkbox in *Mesh Parameters*.
+
+- `tests/vtk_vectors_smoke.py` — standalone check of the vector display
+  (exclusive mode, orientation from probe glyphs, series-wide length
+  reference).
+- Docs: `docs/DIAGNOSTICS_CHANGES_DE.md` / `docs/DIAGNOSTICS_CHANGES_EN.md` —
+  the detailed change log of all four packages (mesh timing, run status, Field
+  Viewer vectors, coordinate-quantization Phase 0 incl. the measurements over
+  the 15 real projects).
+
+- **Coordinate-quantization probe — plan Phase 0, read-only**
+  (`app/meshing/coord_diag.py`): the mesh report now *measures* what the
+  "Coordinate Quantization Plan" has to decide on, without changing anything —
+  near-duplicate grid lines bucketed by distance (1e-9 … 1e-3 units), authored
+  coordinate pairs below the planned lattice tolerance (tagged with their source:
+  box / cylinder / polygon / stl / port / dump / NF2FF / manual line), every
+  authored coordinate's distance to the next line **as a fraction of the local
+  cell** (ports above 15 % are flagged, NF2FF/dump corners stay informational)
+  and the smallest cell against the requested `min_cellsize`. One summary line
+  per build goes to the log; the block is part of the Mesh Report tab and of the
+  "Mesh Timing / Feasibility" window. The planned auto lattice is computed with
+  the *corrected* rule (`q <= c_min/1000`, i.e. `N = ceil(3 - log10(c_min))`) —
+  the plan's own formula contradicts its worked examples.
+  Measured over the 15 real projects in `work/`: **0 near-duplicate line pairs,
+  0 authored pairs below tolerance, 0 ports off the grid** (see CHANGELOG of the
+  Phase-0 report), which puts the plan's "micro cell" premise in perspective.
+- `tests/test_coord_diag.py` — 21 checks incl. the corrected auto-quantum rule
+  and the cell-fraction classification.
+
+### Fixed
+
+- **Field Viewer: the vector glyphs no longer fight with the field plot**: the
+  arrows were drawn on top of the coloured slice/surface/volume, which covered
+  every arrow pointing into the opaque part. The arrows now *are* the
+  representation (ParaView style); a new **"field underneath"** checkbox brings
+  the overlay back on request (`app/ui/vtk_viewer.py`,
+  `DEFAULT_VECTORS["overlay"]`).
+- **Field Viewer: arrow orientation is forced onto the glyph input**
+  (`SetActiveVectors`): when a filter chain or an older export had lost the
+  active-vector flag, `vtkGlyph3D` kept every arrow pointing in the same
+  direction while only the length followed the field.
+- **Field Viewer: arrow lengths are comparable across frames**: the reference
+  |field| is measured once over the whole series (sampled, cached) instead of
+  being recomputed per frame, so an arrow of the same strength keeps its length
+  and the real amplitude change over time stays visible instead of the arrows
+  "breathing" with each frame's own percentile.
+
+### Changed
+
+- **One coordinate grid for every geometry source (P1 of the quantization
+  plan; switchable, default on)** — `MeshSpec.align_coordinates`: triangle-mesh
+  vertices (STEP/STL/FCStd) now go through the same float32 rule that boxes,
+  ports, dumps and the NF2FF box already use (`quantize.align_coordinates()`)
+  instead of being rounded to a 0.1 µm decimal grid. A vertex and a box face
+  that are meant to be equal are now **bit-identical**, which removes the only
+  measured source inconsistency (up to 0.1 µm = 3× to 830× the float32
+  resolution) without touching the mesh. Off = legacy behaviour (0.1 µm
+  rounding); the switch is in *Mesh Parameters* → "Align coordinates (float32
+  grid)", persisted per project, and old project files load with the default
+  (on). Stored `.npy` meshes keep their historical rounding until re-imported.
+- **`dedupe_grid_lines` gets a float32-ULP floor** (`ulp_align`, 8 ULP of the
+  largest coordinate) so sub-resolution line pairs merge even where the
+  `frac·cell` rule stays below that noise; it never merges less than before and
+  is a no-op in all 15 measured projects. The function moved out of the
+  `SCRIPT_TEMPLATE` string into `app/simulation/grid_dedupe.py`, so the code
+  that actually runs is unit-testable; the generated script imports it like the
+  other `app.*` modules.
+- Tests: new `tests/test_dedupe_grid_lines.py`; `tests/test_quantize.py` and
+  `tests/test_axis_aligned_box.py` extended (bit-identity, legacy offset,
+  ULP tolerance).
+
 ## [0.5.10] - 2026-10-23
 
 ### Added
