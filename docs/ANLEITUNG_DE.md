@@ -480,7 +480,14 @@ bzw. nachdem der Solver gelaufen ist:
    3D-Polar des Gewinns, 2D-Polarschnitte (E/H-Ebene), Direktivität/Gain/η
    über Frequenz; **Pop-out Antenna Graph** = Extra-Fenster; Feld-Dumps
    weiterhin unter `work/<projekt>/fields/` (S-Parameter in
-   `work/<projekt>/sparams/`, NF2FF in `work/<projekt>/nf2ff/`)
+   `work/<projekt>/sparams/`, NF2FF in `work/<projekt>/nf2ff/`).
+   **Polarization…** (Button im Antenna-Tab) zeigt Größen aus demselben
+   NF2FF-Ergebnis — ohne neuen Lauf: **Axial Ratio** (dB, Drehsinn
+   RHCP/LHCP, Tilt; linear → „linear") und **Phase Center** (Δx/Δy/Δz in mm
+   plus RMS des Phasen-Fits) relativ zum NF2FF-Boxmittelpunkt. Der
+   Phase-Center-Wert ist eine Schätzung für einen klaren Hauptstrahl; passt
+   der Fit nicht, steht „—" mit „phase not well-defined". Details:
+   F1 → „Polarization & Phase Center".
 4. **2-Port (S2P)** — ein FDTD-Lauf misst **eine** Spalte der S-Matrix (für 2 Ports:
    S11 + S21). Weitere Spalten brauchen weitere Läufe mit anderem erregtem Port
    (`excite_port` umschalten); die JSON-Ergebnisse werden danach zusammengeführt —

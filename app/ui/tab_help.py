@@ -780,6 +780,19 @@ Values
     radiated (0..1, plotted as %); gain = Dmax + 10*log10(eta).
   • theta 0..180 deg, phi 0..360 deg; polar cuts are in dBi.
 
+Polarization / phase center (button "Polarization…")
+  • Axial ratio (AR) and phase center are derived from the complex
+    E_theta/E_phi of the loaded result — no re-run.
+  • AR columns: AR [dB], sense (RHCP/LHCP/linear), ellipse tilt and the peak
+    direction. Linear polarization shows "linear" (AR is infinite, not 0 dB).
+  • Phase center: least-squares phase fit over the main beam (phi = 0/90
+    cuts), relative to the NF2FF box centre: dx/dy/dz in mm plus the RMS of
+    the phase residual. It is an estimate for a well-defined main beam; a fit
+    that leaves the NF2FF sphere or has a large residual shows "—" /
+    "not well-defined".
+  • Copy puts the table on the clipboard as TSV; Help opens the full topic
+    "Polarization & Phase Center" (formulas, conventions, limits).
+
 Tips
   • No data → run the simulation first with NF2FF enabled.
   • If Prad ~ 0 or Dmax looks wrong, the NF2FF box is likely clamped outside

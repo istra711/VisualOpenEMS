@@ -86,6 +86,7 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("View"), "Project / Geometry Panel").shortcut().toString() == "Ctrl+B"
     assert _find(_menu("Help"), "Help for Current Tab").shortcut().toString() == "F1"
     assert _find(_menu("Help"), "Mesh repair (critical cells)\u2026") is not None
+    assert _find(_menu("Help"), "Polarization / phase center\u2026") is not None
     assert _find(_menu("Geometry"), "Delete Selected").shortcut().toString() == "Del"
     assert _find(_menu("Geometry"), "Duplicate Selected").shortcut().toString() == "Ctrl+D"
 

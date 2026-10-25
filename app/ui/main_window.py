@@ -1167,6 +1167,11 @@ class MainWindow(QMainWindow):
             "Mesh repair (critical cells)…",
             slot=lambda: show_tab_help(self, "Mesh Repair"),
         )
+        add_action(
+            hmenu,
+            "Polarization / phase center…",
+            slot=lambda: show_tab_help(self, "Polarization & Phase Center"),
+        )
         hmenu.addSeparator()
         add_action(hmenu, "Open ANLEITUNG_DE.md", slot=lambda: self._open_doc("docs/ANLEITUNG_DE.md"))
         add_action(hmenu, "Open FreeCAD Workflow (Geometry → Import)", slot=lambda: self._open_doc("docs/FREECAD_WORKFLOW_DE.md"))

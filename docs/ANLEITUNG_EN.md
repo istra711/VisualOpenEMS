@@ -473,7 +473,13 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
    3D polar gain plot, 2D polar cuts (E/H plane), directivity/gain/η vs
    frequency; **Pop-out Antenna Graph** = separate window; field dumps remain
    under `work/<project>/fields/` (S-parameters in
-   `work/<project>/sparams/`, NF2FF in `work/<project>/nf2ff/`)
+   `work/<project>/sparams/`, NF2FF in `work/<project>/nf2ff/`).
+   **Polarization…** (button in the Antenna tab) shows quantities derived from
+   the same NF2FF result — no new run: **axial ratio** (dB, RHCP/LHCP sense,
+   tilt; linear → "linear") and **phase center** (Δx/Δy/Δz in mm plus the RMS
+   of the phase fit) relative to the NF2FF box centre. The phase center is an
+   estimate for a well-defined main beam; a fit that does not qualify shows
+   "—" / "phase not well-defined". Details: F1 → "Polarization & Phase Center".
 4. **2-port (S2P)** — one FDTD run measures **one** column of the S-matrix (for 2 ports:
    S11 + S21). Further columns need further runs with the other excited port
    (`excite_port` switched); the JSON results are merged afterwards —
