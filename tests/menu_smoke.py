@@ -442,6 +442,22 @@ def test_mesh_menu_repair_options() -> None:
     print("MESH MENU REPAIR OPTIONS OK")
 
 
+def test_new_project_starts_empty() -> None:
+    """File -> New Project must not resurrect a leftover work/untitled/csx.xml."""
+    w = _win()
+    w._on_new()
+    assert w.project.name == "untitled"
+    assert not w.primitives
+    assert w.mesh_viewer._csx is None
+    assert w.antenna_viewer.data is None
+    # the Mesh Viewer would load a recorded CSX from the work dir; an unsaved,
+    # empty project must not (work/untitled/csx.xml can be left by a session)
+    assert w._load_recorded_csx() is False
+    w._show_mesh_viewer()
+    assert w.mesh_viewer._csx is None, "new project must not show an old mesh"
+    print("NEW PROJECT STARTS EMPTY OK")
+
+
 def test_pcb_hairpin_preset() -> None:
     """Presets → PCB Hairpin Bandpass loads the 2.4 GHz RT/duroid project."""
     from PySide6.QtCore import Qt
@@ -482,6 +498,7 @@ def main() -> int:
         test_log_mesh_report_tab,
         test_mesh_viewer_scene_info_tab,
         test_mesh_menu_repair_options,
+        test_new_project_starts_empty,
         test_pcb_hairpin_preset,
     ):
         try:

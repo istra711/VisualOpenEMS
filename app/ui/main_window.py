@@ -2691,6 +2691,11 @@ class MainWindow(QMainWindow):
         self.project = Project.new_default("untitled")
         self.primitives = []
         self._current_file_path = None
+        # forget the previous project's mesh signature: a new project starts
+        # empty and must not reuse a leftover work/untitled/csx.xml
+        self._mesh_sig = None
+        self._viewer_geometry_sig = None
+        self._mesh_deleted = False
         self._clear_result_viewers("new project")
         self.tree.clear()
         self.geom_info.clear()
@@ -2938,6 +2943,13 @@ class MainWindow(QMainWindow):
         mesh built by *Build Mesh* (``mesh_xml``).
         """
         rec = self.project.results or {}
+        # A never-saved "untitled" project must not inherit a mesh from
+        # work/untitled/csx.xml left behind by an earlier session.
+        if self._current_file_path is None and not rec:
+            return False
+        # An empty project has nothing to draw, even if a csx.xml exists.
+        if not (self.primitives or self.project.geometry_files):
+            return False
         # recorded mesh -> fixed locations (new project folder, legacy
         # simulation/ folder)
         candidates = [rec.get("csx_xml"), rec.get("mesh_xml")]
