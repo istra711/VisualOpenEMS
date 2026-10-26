@@ -29,9 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **easyMesh on NumPy 2** (`app/meshing/easy_wrapper.py`): the removed
-  `np.atan` alias is provided (`np.arctan`); without it any polygon with 45°
-  edges aborts the mesh build.
+- **easyMesh on NumPy 1.x** (`app/meshing/easy_wrapper.py`): the bundled
+  easyMesh calls `np.atan`, an alias that only exists from NumPy 2.0 on; on
+  NumPy 1.26 the missing alias is provided (`np.arctan`), without which any
+  polygon with 45° edges aborts the mesh build.
 
 ### Changed
 
