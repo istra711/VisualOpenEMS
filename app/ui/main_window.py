@@ -137,6 +137,30 @@ class MainWindow(QMainWindow):
             return QtCore.QRect(0, 0, 1280, 800)
         return screen.availableGeometry()
 
+    def _dialog_size(self, key: str) -> tuple[int, int] | None:
+        """Remembered size of a resizable dialog (``None`` -> its default)."""
+        try:
+            w, h = (int(v) for v in (self.settings.dialog_sizes or {}).get(key, []))
+        except Exception:  # noqa: BLE001 — corrupt/old entry: use the default
+            return None
+        return (w, h) if w >= 320 and h >= 260 else None
+
+    def _remember_dialog_size(self, key: str, dlg) -> None:
+        """Remember a resizable dialog's size for the next open (clamped)."""
+        avail = self._screen_avail()
+        size = dlg.size()
+        w = max(320, min(int(size.width()), max(320, avail.width() - 40)))
+        h = max(260, min(int(size.height()), max(260, avail.height() - 40)))
+        sizes = dict(self.settings.dialog_sizes or {})
+        if list(sizes.get(key) or []) == [w, h]:
+            return
+        sizes[key] = [w, h]
+        self.settings.dialog_sizes = sizes
+        try:
+            self.settings.save()
+        except Exception as e:  # noqa: BLE001 — never block a dialog close
+            print("save dialog size failed:", e)
+
     def _apply_window_geometry(self) -> None:
         """Restore saved geometry, else fit on the primary available screen."""
         avail = self._screen_avail()
@@ -4094,8 +4118,11 @@ class MainWindow(QMainWindow):
             self,
             coord_system=self.project.mesh.coord_system,
             unit=self.project.mesh.drawing_unit,
+            size=self._dialog_size("primitive_polygon"),
         )
-        if dlg.exec() and dlg.result:
+        ok = dlg.exec()
+        self._remember_dialog_size("primitive_polygon", dlg)
+        if ok and dlg.result:
             pr = dlg.result
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
             self.primitives.append(pr)
@@ -4818,8 +4845,12 @@ class MainWindow(QMainWindow):
                 if ptype == "polygon":
                     # only the polygon dialog has a live preview that labels units
                     kwargs["unit"] = self.project.mesh.drawing_unit
+                    kwargs["size"] = self._dialog_size("primitive_polygon")
                 dlg = dialog_cls(self, **kwargs)
-                if dlg.exec() and dlg.result:
+                ok = dlg.exec()
+                if ptype == "polygon":
+                    self._remember_dialog_size("primitive_polygon", dlg)
+                if ok and dlg.result:
                     old_name = pr.get("name")
                     self.primitives[idx] = dlg.result
                     new_name = dlg.result.get("name")

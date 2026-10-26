@@ -35,6 +35,8 @@ class AppSettings:
     #: most-recently-opened project files, newest first (File → Recent projects)
     recent_projects: list[str] = field(default_factory=list)
     window_geometry: str = ""  # base64 QByteArray from QMainWindow.saveGeometry()
+    #: remembered sizes of resizable dialogs {key: [width, height]}
+    dialog_sizes: dict = field(default_factory=dict)
     log_panel_visible: bool = True  # simulator log panel under the tabs
     #: left "Project / Geometry" pane (View menu / its right-click menu)
     project_panel_visible: bool = True

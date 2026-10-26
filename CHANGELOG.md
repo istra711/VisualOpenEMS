@@ -69,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Polygon dialog opens compact and remembers its size**
+  (`app/ui/geometry_editors.py`, `app/ui/primitive_preview.py`): it used to open
+  at a fixed 900×640 on every screen, which covered most of a 1200×760 desktop.
+  The default is now 760×520, clamped to the available screen, the live preview
+  may shrink to 200×140, and the size the user drags it to is remembered in the
+  settings (`dialog_sizes`) and restored the next time the dialog opens.
 - **Smaller Windows EXE** (`build_exe.py`): the frozen bundle no longer ships
   the bundled ffmpeg (MP4 export now asks for `imageio-ffmpeg` / an ffmpeg on
   `PATH`), the Qt Quick/Qml/Pdf/Network DLLs and plugins, the software-OpenGL

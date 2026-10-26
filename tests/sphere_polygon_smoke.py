@@ -156,6 +156,17 @@ def _test_dialogs() -> None:
     _assert(pr["stop"] == [20.0, 10.0, 0.0], f"bbox stop: {pr['stop']}")
     print("[dialog] polygon sheet OK")
 
+    # --- compact default size + remembered size ----------------------------
+    pd_size = PrimitivePolygonDialog()
+    _assert(pd_size.size().height() <= 620, f"polygon dialog too tall: {pd_size.size()}")
+    _assert(pd_size.size().width() <= 820, f"polygon dialog too wide: {pd_size.size()}")
+    pd_size.close()
+    pd_small = PrimitivePolygonDialog(size=(640, 470))
+    _assert(pd_small.size().width() <= 640, f"remembered width: {pd_small.size()}")
+    _assert(pd_small.size().height() <= 500, f"remembered height: {pd_small.size()}")
+    pd_small.close()
+    print("[dialog] polygon compact size OK")
+
     # --- polygon (extruded, axis y — cyclic point mapping) -----------------
     pd2 = PrimitivePolygonDialog()
     pd2.cmb_axis.setCurrentText("y")

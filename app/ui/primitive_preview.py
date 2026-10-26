@@ -65,7 +65,7 @@ class PolygonPreview(QWidget):
         self._coord = 0.0
         self._length = 0.0
         self._unit = "mm"
-        self.setMinimumSize(220, 180)
+        self.setMinimumSize(200, 140)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setToolTip(
             "Live preview of the polygon in its plane.\n"

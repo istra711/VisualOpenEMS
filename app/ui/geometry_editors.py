@@ -8,6 +8,7 @@ from typing import Any
 
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -38,6 +39,32 @@ def _axis_suffixes(coord_system: str) -> tuple[str, str, str]:
     if coord_system == "cylindrical":
         return "ρ", "φ", "z"
     return "x", "y", "z"
+
+
+def _fit_dialog(
+    dlg: QDialog,
+    want: tuple[int, int],
+    minimum: tuple[int, int] = (520, 360),
+    margin: int = 80,
+) -> None:
+    """Size a dialog for the screen it opens on.
+
+    ``want`` is the comfortable size; the dialog is clamped to the available
+    screen (minus ``margin`` px) so it never opens larger than the display, and
+    it can be shrunk down to ``minimum``. A size remembered by the caller
+    (``want`` = last size) simply wins as long as it still fits.
+    """
+    screen = dlg.screen() or QApplication.primaryScreen()
+    avail = screen.availableGeometry() if screen is not None else None
+    max_w = (avail.width() if avail else 1280) - margin
+    max_h = (avail.height() if avail else 800) - margin
+    min_w = max(320, min(int(minimum[0]), max_w))
+    min_h = max(260, min(int(minimum[1]), max_h))
+    dlg.setMinimumSize(min_w, min_h)
+    dlg.resize(
+        max(min_w, min(int(want[0]), max_w)),
+        max(min_h, min(int(want[1]), max_h)),
+    )
 
 
 def _vec3_row(
@@ -585,10 +612,12 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         coord_system: str = "cartesian",
         display: dict | None = None,
         unit: str = "mm",
+        size: tuple[int, int] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Polygon primitive")
-        self.resize(900, 640)
+        # compact default; a size the user picked before (``size``) wins
+        _fit_dialog(self, tuple(size) if size else (760, 520))
         self._coord_system = coord_system
         self._unit = unit or "mm"
         p = prim or {
@@ -644,9 +673,10 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
             )
         )
         self.ed_points.setPlaceholderText("x, y  (one point per line, >= 3 points)")
+        self.ed_points.setMinimumHeight(110)
         # live preview: polygon in its plane, repainted while typing
         self.preview = PolygonPreview(self)
-        self.preview.setMinimumWidth(300)
+        self.preview.setMinimumWidth(240)
         pts_row = QWidget(self)
         pts_lay = QHBoxLayout(pts_row)
         pts_lay.setContentsMargins(0, 0, 0, 0)
