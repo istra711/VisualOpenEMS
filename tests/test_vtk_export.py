@@ -12,6 +12,8 @@ from app.postproc.vtk_export import (
     export_dumps_to_vtk,
     read_dump_arrays,
     read_dump_series,
+    write_pvd,
+    write_series_pvd,
 )
 
 
@@ -363,3 +365,70 @@ def test_series_cancel_leaves_no_trusted_sidecar(tmp_path):
     paths, labels = dump_series_to_vtr(h5, vtk_dir)
     assert labels == ["t0", "t62", "t124"]
     assert (vtk_dir / "Et-H.series.json").exists()
+
+
+# --- ParaView .pvd collection ------------------------------------------------
+
+
+def test_write_pvd_is_valid_collection(tmp_path):
+    out = write_pvd(
+        tmp_path / "x.pvd",
+        [(0.0, "a_0000.vtr"), (1.5e-9, "a 0001.vtr")],
+    )
+    text = out.read_text(encoding="utf-8")
+    assert 'type="Collection"' in text
+    assert 'timestep="0"' in text
+    assert 'timestep="1.5e-09"' in text
+    assert 'file="a_0000.vtr"' in text
+    # file names are escaped, not injected into the XML
+    assert 'file="a 0001.vtr"' in text
+
+
+def test_write_pvd_escapes_file_names(tmp_path):
+    out = write_pvd(tmp_path / "x.pvd", [(0.0, 'a&b<c>.vtr')])
+    text = out.read_text(encoding="utf-8")
+    assert "a&amp;b&lt;c&gt;.vtr" in text
+
+
+def test_series_writes_pvd_with_physical_times(tmp_path):
+    h5 = tmp_path / "Et-E.h5"
+    _make_td_dump(h5, 3)
+    out = tmp_path / "out"
+    dump_series_to_vtr(h5, out)
+
+    pvd = out / "Et-E.pvd"
+    assert pvd.exists()
+    text = pvd.read_text(encoding="utf-8")
+    # one DataSet per written step, in order
+    assert text.count("<DataSet") == 3
+    assert "Et-E_0000.vtr" in text and "Et-E_0002.vtr" in text
+    # timesteps come from the dump's time attribute, not the step index
+    assert 'timestep="0"' in text
+    assert '[0, 0, 0]' not in text
+
+
+def test_series_pvd_rebuilt_for_old_series(tmp_path):
+    """A series exported before .pvd existed gets its collection on re-export."""
+    h5 = tmp_path / "Et-H.h5"
+    _make_td_dump(h5, 2)
+    out = tmp_path / "out"
+    dump_series_to_vtr(h5, out)
+    pvd = out / "Et-H.pvd"
+    assert pvd.exists()
+    pvd.unlink()
+
+    # reuse path: series is up to date, only the collection is missing
+    sim = tmp_path / "simulation"
+    sim.mkdir()
+    (sim / "Et-H.h5").write_bytes(h5.read_bytes())
+    import os
+
+    now = (out / "Et-H.series.json").stat().st_mtime
+    os.utime(sim / "Et-H.h5", (now - 60, now - 60))  # sidecar stays newer
+    export_dumps_to_vtk(sim, out, per_step=True)
+    assert pvd.exists()
+    assert pvd.read_text(encoding="utf-8").count("<DataSet") == 2
+
+
+def test_write_series_pvd_without_sidecar_returns_none(tmp_path):
+    assert write_series_pvd(tmp_path, tmp_path / "nope.h5") is None

@@ -1094,6 +1094,13 @@ class MainWindow(QMainWindow):
         add_action(mmenu, "Show Mesh Viewer", slot=self._show_mesh_viewer)
         mmenu.addSeparator()
         add_action(mmenu, "Export CSX XML\u2026", btn=self.mesh_viewer.btn_export_xml)
+        add_action(
+            mmenu,
+            "Export grid (JSON)\u2026",
+            slot=self._on_export_grid,
+            tip="Write the current mesh lines (x/y/z, in mm) as JSON so another "
+            "solver (e.g. CST) can use identical cell boundaries",
+        )
         add_action(mmenu, "Open in AppCSXCAD (3D)\u2026", btn=self.mesh_viewer.btn_appcsxcad)
 
         smenu = bar.addMenu("&Simulation")
@@ -3451,6 +3458,55 @@ class MainWindow(QMainWindow):
                 self._log(
                     f"Export ready (import skipped). Use Import Geometry… for: {src}"
                 )
+
+    def _on_export_grid(self) -> None:
+        """Write the current FDTD grid lines as JSON (mm) for another solver.
+
+        The Mesh Viewer holds the mesh that was actually built, so exporting from
+        there means the file matches what openEMS would run — not a re-derived
+        estimate.
+        """
+        from app.meshing.grid_export import export_grid_json
+        from app.meshing.preview import get_sim_area, mesh_lines_from_csx
+
+        csx = self.mesh_viewer.current_csx()
+        if csx is None:
+            QMessageBox.information(
+                self, "Export grid", "No mesh loaded — build the mesh first."
+            )
+            return
+        lines = mesh_lines_from_csx(csx)
+        if not any(len(v) for v in lines.values()):
+            QMessageBox.information(
+                self, "Export grid", "The grid has no lines yet — build the mesh first."
+            )
+            return
+
+        default = self._project_work_dir() / f"{self.project.name or 'project'}_grid.json"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export grid (JSON)", str(default), "JSON (*.json)"
+        )
+        if not path:
+            return
+        out = Path(path)
+        if out.suffix.lower() != ".json":
+            out = out.with_suffix(".json")
+        try:
+            written = export_grid_json(
+                lines,
+                out,
+                unit=self.project.mesh.drawing_unit,
+                coord_system=(
+                    "cylindrical" if self.project.mesh.is_cylindrical else "cartesian"
+                ),
+                domain=get_sim_area(csx),
+            )
+        except Exception as e:  # noqa: BLE001 — an export must never kill the app
+            self._log(f"Grid export failed: {e}")
+            QMessageBox.warning(self, "Export grid", f"Export failed:\n{e}")
+            return
+        cells = " x ".join(str(max(0, len(lines.get(k, [])) - 1)) for k in "xyz")
+        self._log(f"Grid written: {written} ({cells} cells, mm)")
 
     def _on_export_step(self) -> None:
         """Export the current geometry as a STEP file in mm for CAD / CST.

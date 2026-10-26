@@ -90,7 +90,9 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   size and a numeric coordinate ruler; ParaView-style vector glyphs: small
   arrows on the slice/surface/iso-surface that make the field motion visible
   during playback; export the sequence as an MP4 video with the current view
-  settings); the `.vtr` files open in ParaView too
+  settings); the `.vtr` files open in ParaView too. A per-step export also
+  writes a ParaView collection (`<dump>.pvd`) with the physical time (TD) or
+  frequency (FD) of every step, so ParaView plays the whole series from one file
 - All viewers support export to PNG
 
 ### Workflow Automation
@@ -103,6 +105,10 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   the solids arrive in CST Studio Suite under the same names as in the Mesh
   Viewer. Zero-thickness metal sheets (e.g. the patch preset) become planar
   faces, and meshes become shells (solids when watertight).
+- **Grid export (JSON)** (Mesh → Export grid (JSON)…): writes the built mesh
+  lines per axis in mm (plus cell counts, min/max cell size and the FDTD
+  domain) so another FDTD solver — e.g. CST — can run on identical cell
+  boundaries.
 - Simulation script editor with regenerate/revert workflow
 - Project save/load (`.fcsim.json`) with backward-compatible deserialization
 
@@ -133,6 +139,7 @@ VisualOpenEMS/
 │   │   └── stl_import.py          # STL file parsing and bounds
 │   ├── meshing/
 │   │   ├── easy_wrapper.py        # easyMesh Python integration
+│   │   ├── grid_export.py         # Mesh lines → JSON (mm) for external solvers
 │   │   ├── preview.py             # Mesh preview generation
 │   │   ├── rules.py               # Mesh validation rules
 │   │   └── validators.py          # Mesh quality checks

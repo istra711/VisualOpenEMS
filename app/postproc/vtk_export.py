@@ -280,6 +280,73 @@ def _is_fresh(out_path: Path, src: Path) -> bool:
         return False
 
 
+def write_pvd(out_path: Path | str, entries: list[tuple[float, str]]) -> Path:
+    """Write a ParaView ``.pvd`` time collection.
+
+    ``entries`` is ``[(timestep, file_name), ...]``. ParaView loads the file as
+    *one* dataset with an animation slider, which is the reason to prefer it
+    over the ``.series.json`` sidecar (that one only the built-in viewer reads).
+
+    ``timestep`` doubles as the frequency axis for frequency-domain dumps:
+    ParaView only needs a monotonic scalar, and for an FD dump the frequency is
+    the meaningful slider value.
+    """
+    from xml.sax.saxutils import quoteattr
+
+    path = Path(out_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        '<?xml version="1.0"?>',
+        '<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">',
+        "  <Collection>",
+    ]
+    for step, name in entries:
+        lines.append(
+            f"    <DataSet timestep={quoteattr(f'{float(step):.12g}')} "
+            f'group="" part="0" file={quoteattr(str(name))}/>'
+        )
+    lines += ["  </Collection>", "</VTKFile>", ""]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def _pvd_steps(labels: list[str], times: list, freqs: list) -> list[float]:
+    """Slider positions for a series: time (TD) > frequency (FD) > index."""
+    out: list[float] = []
+    for i in range(len(labels)):
+        time = times[i] if i < len(times) else None
+        freq = freqs[i] if i < len(freqs) else None
+        value = time if time is not None else freq
+        out.append(float(value) if value is not None else float(i))
+    return out
+
+
+def write_series_pvd(out_dir: Path | str, h5_path: Path | str) -> Path | None:
+    """(Re)write ``<stem>.pvd`` from an existing series sidecar.
+
+    Reads the ``.series.json`` that :func:`dump_series_to_vtr` writes, so the
+    collection can be rebuilt for series exported by an older version (and a
+    ParaView collection never goes stale after a re-export).
+    """
+    import json
+
+    out_dir = Path(out_dir)
+    stem = Path(h5_path).stem
+    sidecar = out_dir / f"{stem}.series.json"
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    files = [str(name) for name in data.get("files") or []]
+    labels = [str(lab) for lab in data.get("labels") or []]
+    if not files or len(files) != len(labels):
+        return None
+    times = list(data.get("times") or [])
+    freqs = list(data.get("frequencies") or [])
+    steps = _pvd_steps(labels, times, freqs)
+    return write_pvd(out_dir / f"{stem}.pvd", list(zip(steps, files)))
+
+
 def _load_series_state(
     h5_path: Path, out_dir: Path, step_stride: int = 1
 ) -> tuple[list[Path] | None, list[str]]:
@@ -409,6 +476,9 @@ def dump_series_to_vtr(
             ),
             encoding="utf-8",
         )
+        # ParaView collection (animation in ParaView); the .series.json stays the
+        # sidecar for the built-in viewer.
+        write_series_pvd(out_dir, h5_path)
     return paths, labels
 
 
@@ -482,6 +552,8 @@ def export_dumps_to_vtk(
                 continue
             if series is not None:
                 written.extend(series)
+                # the .pvd collection may come from an older export (or be missing)
+                write_series_pvd(out_dir, h5)
                 _advance(len(series), f"{h5.name}: {len(series)} step files up to date")
                 continue
             series, labels = dump_series_to_vtr(

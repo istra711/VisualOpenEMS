@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Grid export (JSON)** (`app/meshing/grid_export.py`, Mesh → Export grid
+  (JSON)…): writes the built mesh lines per axis in millimetres — plus cell
+  counts, min/max cell size and the FDTD domain — so a second FDTD solver
+  (CST) can run on identical cell boundaries instead of an independently
+  meshed model. Read from the Mesh Viewer's CSX, i.e. the grid that was
+  actually built. Handles cartesian and cylindrical (rho/phi/z) meshes.
+- **ParaView collection (`.pvd`) for field series**
+  (`app/postproc/vtk_export.py`): the per-step VTK export now also writes
+  `<dump>.pvd`, so ParaView plays a full time/frequency series from one file.
+  The slider value is the physical step position from the dump attributes
+  (time for TD, frequency for FD), not the step index. The collection is
+  rebuilt from the existing `.series.json` when a series is reused, so older
+  exports and re-exports stay consistent.
+- Units: `UNIT_TO_METERS` / `mm_per_unit()` in `app/models/project.py` are now
+  the single source for drawing-unit conversions (CSXCAD delta unit, STEP
+  export, grid JSON).
+- Tests: `tests/test_grid_export.py` (sorting, dedupe, mm conversion, cell
+  statistics, cylindrical axes, invalid unit) and new `.pvd` cases in
+  `tests/test_vtk_export.py`.
 - **STEP export for CAD / CST Studio Suite** (`app/freecad_io/step_export.py`,
   `app/freecad_io/freecad_step_runner.py`, File → Export STEP…): writes the
   effective project geometry — analytic boxes, cylinders, spheres and extruded

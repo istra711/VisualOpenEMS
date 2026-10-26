@@ -12,6 +12,20 @@ from app import PROJECT_EXT
 MaterialKind = Literal["pec", "dielectric", "conducting_sheet", "lumped_rlc", "ignore"]
 PortType = Literal["lumped", "msl", "rect_waveguide", "waveguide", "probe"]
 DumpType = Literal["E", "H", "J", "Jtot", "D", "B", "SAR", "custom"]
+
+#: Metres per drawing unit — the single source for every unit conversion
+#: (CSXCAD delta unit, STEP export, grid JSON).
+UNIT_TO_METERS = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "um": 1e-6}
+
+
+def mm_per_unit(unit: str) -> float:
+    """Millimetres per drawing unit (``m``/``cm``/``mm``/``um``)."""
+    try:
+        return UNIT_TO_METERS[str(unit or "mm").lower()] * 1000.0
+    except KeyError:
+        raise ValueError(
+            f"unsupported unit {unit!r} (expected m, cm, mm or um)"
+        ) from None
 MeshPreset = Literal["low", "medium", "high", "very_high", "extreme", "custom"]
 BoundaryKind = Literal["PEC", "PMC", "MUR", "PML"]
 
@@ -252,7 +266,7 @@ class MeshSpec:
         return self.coord_system == "cylindrical"
 
     def unit_to_meters(self) -> float:
-        return {"m": 1.0, "mm": 1e-3, "um": 1e-6, "cm": 1e-2}[self.drawing_unit]
+        return UNIT_TO_METERS[self.drawing_unit]
 
     def effective_max_grading_ratio(self) -> float:
         """``max_grading_ratio`` clamped to a workable range (1.05 .. 10).

@@ -2588,6 +2588,10 @@ class MeshGeometryViewer(QWidget):
         self._update_plane_info()
         self._redraw()
 
+    def current_csx(self):
+        """The CSX currently shown (``None`` when no mesh has been built)."""
+        return self._csx
+
     def _on_export_xml(self) -> None:
         if self._csx is None:
             QMessageBox.information(self, "Export", "No CSX loaded — build mesh first.")

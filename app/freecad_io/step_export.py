@@ -31,6 +31,7 @@ from typing import Any
 
 from app.paths import app_root
 from app.winproc import hidden_console_kwargs
+from app.models.project import mm_per_unit
 
 APP_ROOT = app_root()
 RUNNER_SCRIPT = APP_ROOT / "app" / "freecad_io" / "freecad_step_runner.py"
@@ -42,11 +43,6 @@ AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 #: A box/primitive thinner than this (relative to its size) counts as flat.
 #: Matches the "zero thickness" metal sheets openEMS inflates after meshing.
 _FLAT_EPS = 1e-12
-
-
-def mm_per_unit(unit: str) -> float:
-    """Millimetres per drawing unit (mirrors ``MeshSpec.unit_to_meters``)."""
-    return {"m": 1.0, "mm": 1e-3, "um": 1e-6, "cm": 1e-2}[str(unit or "mm")] * 1000.0
 
 
 def _scaled(vec, scale: float) -> list[float]:
