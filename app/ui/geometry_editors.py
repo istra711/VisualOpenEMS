@@ -6,6 +6,7 @@ import math
 import re
 from typing import Any
 
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from app.models.project import DumpDef, GeomAssignment, MaterialDef, PortDef
 from app.ui.object_display import DisplayOptionsWidget
+from app.ui.primitive_preview import PolygonPreview
 
 MATERIAL_KINDS = ["pec", "dielectric", "conducting_sheet", "lumped_rlc", "ignore"]
 PORT_TYPES = ["lumped", "msl", "rect_waveguide"]
@@ -582,11 +584,13 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
         display: dict | None = None,
+        unit: str = "mm",
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Polygon primitive")
-        self.resize(420, 560)
+        self.resize(900, 640)
         self._coord_system = coord_system
+        self._unit = unit or "mm"
         p = prim or {
             "name": "poly1",
             "material": "copper",
@@ -628,6 +632,9 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         form.addRow("Coordinate (plane)", self.spn_coord)
         form.addRow("Length (0 = sheet)", self.spn_length)
         self.ed_points = QPlainTextEdit()
+        self.ed_points.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         pts = p.get("points") or []
         self.ed_points.setPlainText(
             "\n".join(
@@ -637,7 +644,15 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
             )
         )
         self.ed_points.setPlaceholderText("x, y  (one point per line, >= 3 points)")
-        form.addRow("Points", self.ed_points)
+        # live preview: polygon in its plane, repainted while typing
+        self.preview = PolygonPreview(self)
+        self.preview.setMinimumWidth(300)
+        pts_row = QWidget(self)
+        pts_lay = QHBoxLayout(pts_row)
+        pts_lay.setContentsMargins(0, 0, 0, 0)
+        pts_lay.addWidget(self.ed_points, 3)
+        pts_lay.addWidget(self.preview, 2)
+        form.addRow("Points", pts_row)
         self._add_display(form, display)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -645,6 +660,21 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         form.addRow(bb)
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
+        self.ed_points.textChanged.connect(self._refresh_preview)
+        self.cmb_axis.currentTextChanged.connect(self._refresh_preview)
+        self.spn_coord.valueChanged.connect(self._refresh_preview)
+        self.spn_length.valueChanged.connect(self._refresh_preview)
+        self._refresh_preview()
+
+    def _refresh_preview(self) -> None:
+        """Feed the current dialog state to the live polygon preview."""
+        self.preview.set_polygon(
+            self._parse_points(self.ed_points.toPlainText()),
+            axis=self.cmb_axis.currentText(),
+            coord=float(self.spn_coord.value()),
+            length=float(self.spn_length.value()),
+            unit=self._unit,
+        )
 
     @staticmethod
     def _parse_points(text: str) -> list[list[float]]:

@@ -191,6 +191,27 @@ def _test_dialogs() -> None:
         geometry_editors.QMessageBox = real_mb
     print("[dialog] polygon validation OK")
 
+    # --- live preview follows the typed data -------------------------------
+    pv = PrimitivePolygonDialog(unit="mm")
+    _assert(pv.preview.point_count() == 4, "preview must start with the default points")
+    pv.ed_points.setPlainText("-15, -10\n15, -10\n15, 0\n5, 10\n-5, 10\n-15, 0")
+    _assert(pv.preview.point_count() == 6, f"preview points: {pv.preview.point_count()}")
+    _assert("plane z = 0 mm" in pv.preview.summary(), pv.preview.summary())
+    pv.cmb_axis.setCurrentText("y")
+    _assert(pv.preview.plane_axes() == ("z", "x"), f"plane: {pv.preview.plane_axes()}")
+    pv.spn_coord.setValue(5.0)
+    _assert("plane y = 5 mm" in pv.preview.summary(), pv.preview.summary())
+    pv.spn_length.setValue(2.0)
+    _assert(pv.preview.is_extruded(), "length > 0 must mark the preview extruded")
+    _assert("extruded 2 mm along y" in pv.preview.summary(), pv.preview.summary())
+    # non-finite input must not reach the paint code
+    pv.ed_points.setPlainText("0, 0\nnan, 10\n20, 20\n0, 20")
+    _assert(pv.preview.point_count() == 3, f"nan point must be dropped: {pv.preview.point_count()}")
+    # offscreen render (paintEvent must not raise)
+    pv.preview.resize(320, 240)
+    _assert(not pv.preview.grab().isNull(), "preview must render offscreen")
+    print("[dialog] polygon live preview OK")
+
 
 def _test_gui_gate() -> None:
     from PySide6.QtWidgets import QApplication

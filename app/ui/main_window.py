@@ -4090,7 +4090,11 @@ class MainWindow(QMainWindow):
 
         if self._polar_prim_blocked("polygon"):
             return
-        dlg = PrimitivePolygonDialog(self, coord_system=self.project.mesh.coord_system)
+        dlg = PrimitivePolygonDialog(
+            self,
+            coord_system=self.project.mesh.coord_system,
+            unit=self.project.mesh.drawing_unit,
+        )
         if dlg.exec() and dlg.result:
             pr = dlg.result
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
@@ -4806,12 +4810,15 @@ class MainWindow(QMainWindow):
                     "sphere": PrimitiveSphereDialog,
                     "polygon": PrimitivePolygonDialog,
                 }[ptype]
-                dlg = dialog_cls(
-                    self,
-                    prim=pr,
-                    coord_system=self.project.mesh.coord_system,
-                    display=self._object_display(str(pr.get("name") or "")),
-                )
+                kwargs: dict[str, object] = {
+                    "prim": pr,
+                    "coord_system": self.project.mesh.coord_system,
+                    "display": self._object_display(str(pr.get("name") or "")),
+                }
+                if ptype == "polygon":
+                    # only the polygon dialog has a live preview that labels units
+                    kwargs["unit"] = self.project.mesh.drawing_unit
+                dlg = dialog_cls(self, **kwargs)
                 if dlg.exec() and dlg.result:
                     old_name = pr.get("name")
                     self.primitives[idx] = dlg.result

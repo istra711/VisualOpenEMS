@@ -34,6 +34,8 @@ Left panel (can be hidden)
     (also View → Project / Geometry Panel, Ctrl+B — that shows it again too).
   • Add Box / Cylinder / Sphere / Polygon Primitive — openEMS primitives in
     mm (project units). Polygon/sphere need the cartesian coordinate system.
+    The polygon dialog previews the outline live while you type the points
+    (grid in project units, numbered vertices, extruded prisms offset).
   • Add Assignment — bind FreeCAD mesh names to materials / boundary roles.
   • Add Material — PEC, dielectric, conducting sheet, lumped RLC, or ignore.
   • Add Port — lumped / MSL / waveguide port (also in the Ports / Dumps window).

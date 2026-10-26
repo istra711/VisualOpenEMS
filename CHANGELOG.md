@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Live preview in the polygon dialog** (`app/ui/primitive_preview.py`): while
+  the point list is typed, the dialog draws the polygon in its own plane with
+  equal aspect (a 45° edge looks like 45°), numbered vertices, a grid with tick
+  values in the project unit and an offset outline for extruded prisms
+  (`length > 0`). It repaints on every keystroke and on axis / coordinate /
+  length changes; incomplete input (< 3 points) shows the open outline plus a
+  hint instead of a broken picture.
 - **Antenna tab: axial ratio and phase center** (`app/postproc/polarization.py`,
   `app/ui/polarization_dialog.py`): both are derived from the complex
   `E_theta`/`E_phi` already stored in `nf2ff.json` — no solver re-run. AR comes
