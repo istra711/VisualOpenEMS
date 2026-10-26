@@ -97,7 +97,6 @@ def test_menu_structure_and_shortcuts() -> None:
         "Preset: PCB Filter\u2026",
         "Preset: PCB Bandpass (5.6 GHz)\u2026",
         "Preset: PCB Hairpin Bandpass (2.4 GHz)\u2026",
-        "Preset: GPS L1 Patch (circular, 1.575 GHz)\u2026",
     ], presets
     tabs = [_strip(a.text()) for a in _menu("View").actions()]
     for name in ("Geometry", "Mesh Viewer", "S-Params"):
@@ -493,26 +492,6 @@ def test_pcb_hairpin_preset() -> None:
     print("PCB HAIRPIN PRESET OK")
 
 
-def test_gps_patch_preset() -> None:
-    """Presets → GPS L1 Patch loads the circularly polarized FR4 patch."""
-    w = _win()
-    w._on_load_gps_patch()
-    assert w.project.name == "gps_patch"
-    assert len(w.project.ports) == 1 and w.project.ports[0].excite_port
-    names = [str(p.get("name")) for p in w.primitives]
-    assert {"ground", "substrate", "patch", "patch_left", "patch_right"} <= set(
-        names
-    ), names
-    assert abs(float(w.project.mesh.target_frequency) - 1.57542e9) < 1.0
-    assert w.project.nf2ff.enabled
-    assert abs(float(w.project.nf2ff.frequencies[0]) - 1.57542e9) < 1.0
-    from app.settings import AppSettings
-
-    saved = AppSettings.load().work_path() / "gps_patch" / "gps_patch.fcsim.json"
-    assert saved.exists(), saved
-    print("GPS PATCH PRESET OK")
-
-
 def test_tree_selection_highlights_only_objects() -> None:
     """Only Prim/Port rows highlight the viewer — not materials or others."""
     from PySide6.QtCore import Qt
@@ -578,7 +557,6 @@ def main() -> int:
         test_mesh_menu_repair_options,
         test_new_project_starts_empty,
         test_pcb_hairpin_preset,
-        test_gps_patch_preset,
         test_tree_selection_highlights_only_objects,
     ):
         try:

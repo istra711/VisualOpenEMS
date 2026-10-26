@@ -9,14 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **GPS L1 circularly polarized patch preset** (`app/csxcad_builder/gps_patch.py`,
-  Presets → *GPS L1 Patch (circular, 1.575 GHz)…*): square FR4 1.6 mm patch
-  (44.5 mm, two 5.5 mm corner notches, 10.9 mm inset probe feed, 75 mm
-  ground/substrate). Simulated with openEMS: **S11 -10.8 dB** and **axial
-  ratio 2.4 dB (RHCP)** at 1.57542 GHz, Dmax ~7.3 dBi; NF2FF at L1 is enabled.
-  Help topic and Help-menu entry included.
-- `easy_wrapper`: NumPy 2 compatibility alias (`np.atan`) for easyMesh's
-  diagonal-edge handler (polygons with 45 deg edges).
 - **Antenna tab: axial ratio and phase center** (`app/postproc/polarization.py`,
   `app/ui/polarization_dialog.py`): both are derived from the complex
   `E_theta`/`E_phi` already stored in `nf2ff.json` — no solver re-run. AR comes
@@ -29,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Help-menu entry ("Polarization / phase center…") and Copy-as-TSV.
 - Tests: `tests/test_polarization.py` — circular/linear/elliptical AR, a known
   phase-center offset, the payload summary and the missing-field case.
+- `app/csxcad_builder/gps_patch.py` — design study for a GPS L1 single-feed
+  circularly polarized patch. Converged openEMS runs reached S11 -10.1 dB at
+  1.57542 GHz, but the best axial ratio was 4.6 dB (at 1.56 GHz) and 7.9 dB at
+  L1, so it is **not** offered as a preset; a dual-feed patch with a 90° hybrid
+  is the reliable route.
+
+### Fixed
+
+- **easyMesh on NumPy 2** (`app/meshing/easy_wrapper.py`): the removed
+  `np.atan` alias is provided (`np.arctan`); without it any polygon with 45°
+  edges aborts the mesh build.
 
 ### Changed
 

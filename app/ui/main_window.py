@@ -909,13 +909,6 @@ class MainWindow(QMainWindow):
             "Preset: PCB Hairpin Bandpass (2.4 GHz)\u2026",
             btn=self.btn_pcb_hairpin,
         )
-        add_action(
-            pmenu,
-            "Preset: GPS L1 Patch (circular, 1.575 GHz)\u2026",
-            slot=self._on_load_gps_patch,
-            tip="Square FR4 patch with two corner notches and one probe feed; "
-            "simulated S11 -10.8 dB and axial ratio 2.4 dB at 1.57542 GHz.",
-        )
 
         gmenu = bar.addMenu("&Geometry")
         add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
@@ -1178,11 +1171,6 @@ class MainWindow(QMainWindow):
             hmenu,
             "Polarization / phase center…",
             slot=lambda: show_tab_help(self, "Polarization & Phase Center"),
-        )
-        add_action(
-            hmenu,
-            "GPS patch preset…",
-            slot=lambda: show_tab_help(self, "GPS Patch Preset"),
         )
         hmenu.addSeparator()
         add_action(hmenu, "Open ANLEITUNG_DE.md", slot=lambda: self._open_doc("docs/ANLEITUNG_DE.md"))
@@ -4000,44 +3988,6 @@ class MainWindow(QMainWindow):
         self.geom_info.setPlainText("\n".join(lines))
         self._update_window_title()
         self._log("PCB hairpin band-pass preset loaded")
-        for ln in lines:
-            self._log(ln)
-        self._log_computed_summary()
-
-    def _on_load_gps_patch(self) -> None:
-        """Load the GPS L1 circularly polarized patch preset (FR4)."""
-        from app.csxcad_builder.gps_patch import gps_patch_primitives
-
-        self._current_file_path = None
-        work = self.settings.work_path() / "gps_patch"
-        work.mkdir(parents=True, exist_ok=True)
-
-        project, prims = gps_patch_primitives()
-        self.project = project
-        self.primitives = prims
-        self.project.primitives = list(prims)
-        if hasattr(self.sim_params, "set_patch_group_visible"):
-            self.sim_params.set_patch_group_visible(False)
-        self._sync_form_from_project()
-        self._refresh_tree()
-        self._refresh_ports()
-        self._refresh_materials()
-
-        saved = project.save(work / "gps_patch.fcsim.json")
-        lines = [
-            "GPS L1 circularly polarized patch PRESET loaded: 1.57542 GHz, "
-            "FR4 1.6 mm (eps_r 4.4).",
-            "Square patch with two corner notches, single 50 ohm probe feed; "
-            "the notches split the modes into a CP pair.",
-            "Simulated (tuned): S11 -10.8 dB and axial ratio 2.4 dB (RHCP) at "
-            "1.57542 GHz; NF2FF is enabled at that frequency.",
-            "Build Mesh, then Run. The Antenna tab -> Polarization… shows the "
-            "axial ratio and phase center of the result.",
-            f"Project: {saved}",
-        ]
-        self.geom_info.setPlainText("\n".join(lines))
-        self._update_window_title()
-        self._log("GPS L1 patch preset loaded")
         for ln in lines:
             self._log(ln)
         self._log_computed_summary()

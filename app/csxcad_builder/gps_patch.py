@@ -1,15 +1,18 @@
-"""GPS L1 (1575.42 MHz) circularly polarized patch antenna on FR4.
+"""GPS L1 (1575.42 MHz) circularly polarized patch — design study (not a preset).
 
 A square patch with two opposite corners truncated is the classic single-feed
 CP patch: the truncation splits the two degenerate modes and makes them
-orthogonal with a 90 deg phase difference, so the far field is circularly
-polarized around boresight. One 50 ohm probe feed (vertical lumped port from
-the ground plane to the patch) keeps the preset usable with the GUI's port
-model (no external 90 deg hybrid / no second phase-shifted source).
+orthogonal with a 90 deg phase difference. One 50 ohm probe feed (vertical
+lumped port from the ground plane to the patch) keeps the geometry usable with
+the GUI's port model (no external 90 deg hybrid / no second phase-shifted
+source).
 
-The dimensions are first-order estimates (Balanis patch formulas); the preset
-is only shipped after the simulated S11 and axial ratio were checked — see
-``examples/run_gps_patch_example.py``.
+**Status: not shipped as a preset.** Converged openEMS runs of the tuned
+geometry (44.5 mm patch, 5.5 mm corner notches, 10.9 mm inset, 75 mm board)
+reached S11 -10.1 dB at 1.57542 GHz, but the best axial ratio was 4.6 dB (at
+1.56 GHz) and 7.9 dB at 1.57542 GHz — the single-feed corner-notch geometry
+does not meet the AR < 3 dB target. A dual-feed patch with a 90 deg hybrid (or
+a proper CP optimizer) is the reliable route.
 """
 
 from __future__ import annotations
@@ -136,9 +139,10 @@ def gps_patch_primitives(
         field_dumps_enabled=False,
     )
     p.notes = (
-        f"GPS L1 CP patch on FR4 {h:g} mm (eps_r {eps_r:g}, tan_d {tand:g}); "
+        f"GPS L1 CP patch design study on FR4 {h:g} mm (eps_r {eps_r:g}, tan_d {tand:g}); "
         f"patch {a:.2f} mm square, corners {cut:.2f} mm, feed inset {inset:.2f} mm. "
-        "First-order design, verify S11 and AR after a run."
+        "Converged run: S11 -10.1 dB at 1.57542 GHz, but AR 4.6 dB at best (1.56 GHz) "
+        "- not shipped as a preset (AR target not met)."
     )
 
     # Square patch with two opposite c x c corner notches, built from three

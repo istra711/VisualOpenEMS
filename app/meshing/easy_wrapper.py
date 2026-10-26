@@ -122,8 +122,8 @@ def generate_mesh(
     from easyMesh import GenerateMesh
 
     # NumPy 2 removed the ``np.atan`` alias that easyMesh's diagonal-edge
-    # handler uses (polygons with 45 deg edges, e.g. the corner-cut GPS patch).
-    # ``np.arctan`` is the canonical name, so provide the alias when missing.
+    # handler uses (polygons with 45 deg edges). ``np.arctan`` is the canonical
+    # name, so provide the alias when missing.
     try:
         import numpy as _np
 
