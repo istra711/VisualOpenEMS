@@ -36,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **easyMesh aborted on polygons with two parallel 45° edges**
+  (`third_party/easyMesh4openEMS/easyMesh/geometryUtils.py`): the bundled copy
+  had lost `distance_between_segments`, the helper `handle_diagonal_edges`
+  calls to grade the mesh between two diagonal edges. Every chamfered,
+  hexagonal or otherwise 45° outline therefore died with
+  `AttributeError: module 'easyMesh.geometryUtils' has no attribute
+  'distance_between_segments'` and could not be meshed at all. The helper is
+  restored verbatim from the upstream package
+  (`github.com/MustafaAlchalabi/easyMesh4openEMS`), so such patches build now
+  and keep every vertex coordinate on the grid. The GPS patch study keeps its
+  three-box geometry because its documented results were computed with it.
+  Tests: `tests/test_easymesh_diagonal.py` (helper contract + hexagon build).
 - **Mesh Viewer drew every polygon as a rectangle** (`app/meshing/polygon_geometry.py`,
   `app/ui/mesh_viewer.py`): a polygon / extruded polyline primitive was drawn
   from its bounding box, so a hexagon patch, a triangle or a chamfered corner
@@ -45,7 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Overview. Works for project primitives and for the CSX infos after a
   mesh build (`PrimitiveInfo.poly_points/poly_axis/poly_coord/poly_length`),
   and the yellow selection highlight follows the outline too. The AABB is
-  still used for the domain / outside checks. Tests:
+  still used for the domain / outside checks. Objects are drawn in ascending
+  CSX priority, so a metal patch (100) stays visible on top of the dielectric
+  (10) it sits on instead of disappearing behind it. Tests:
   `tests/test_mesh_viewer_polygon.py` (geometry + CSX introspection) and
   `tests/polygon_viewer_smoke.py` (offscreen render, hexagon + edge-on).
 - **easyMesh on NumPy 1.x** (`app/meshing/easy_wrapper.py`): the bundled

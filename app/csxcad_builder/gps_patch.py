@@ -146,10 +146,12 @@ def gps_patch_primitives(
     )
 
     # Square patch with two opposite c x c corner notches, built from three
-    # axis-aligned boxes: easyMesh's diagonal-edge handler is broken in the
-    # bundled version (missing geometryUtils.distance_between_segments), so a
-    # polygon with 45 deg edges cannot be meshed. Three touching boxes give the
-    # same truncated-square metal area without diagonal edges.
+    # axis-aligned boxes: the documented S11 / axial-ratio numbers of this
+    # design study were produced with this geometry, so it is kept as-is.
+    # A chamfered polygon (45 deg edges) meshes as well now - the bundled
+    # easyMesh used to abort on two parallel diagonal edges (missing
+    # geometryUtils.distance_between_segments, restored from upstream), so a
+    # future study can use the textbook outline directly.
     primitives: list[dict[str, Any]] = [
         {
             "kind": "box",

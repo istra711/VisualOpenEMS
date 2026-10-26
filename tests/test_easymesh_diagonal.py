@@ -1,38 +1,23 @@
-"""easyMesh cannot mesh polygons with parallel 45 deg edges (bundled copy).
+"""Polygons with 45 deg edges mesh correctly (restored easyMesh helper).
 
 The bundled third-party easyMesh routes polygons with non-axis-aligned edges
-through ``meshingUtils.handle_diagonal_edges``.  For a pair of *parallel*
+through ``meshingUtils.handle_diagonal_edges``. For a pair of *parallel*
 diagonal edges that function calls
-``geometryUtils.distance_between_segments(p1, p2, q1, q2)`` - a helper that
-does not exist in the bundled ``geometryUtils.py`` (the name occurs exactly
-once in the whole bundle: at that call site).  The mesh build therefore aborts
-with ``AttributeError``.
+``geometryUtils.distance_between_segments(p1, p2, q1, q2)`` — a helper the
+bundled copy had lost during its refactor (the name occurred exactly once in
+the whole bundle: at that call site), so any polygon with two parallel 45 deg
+edges aborted the build with ``AttributeError``.
 
-Call chain (verified):
+The helper is now restored verbatim from the upstream package
+(github.com/MustafaAlchalabi/easyMesh4openEMS, ``easyMesh/geometryUtils.py``).
+These tests pin both the helper contract (the caller indexes the records) and
+the end-to-end build of a chamfered hexagon, so the three-box workaround in
+``app/csxcad_builder/gps_patch.py`` is no longer required for meshing.
 
-    easyMesher.GenMesh
-      -> collect_mesh_data
-        -> get_mesh_data
-          -> meshingUtils.adjust_mesh_parameters   (line 176)
-            -> meshingUtils.check_max_resolution   (line 742)
-              -> meshingUtils.handle_diagonal_edges (line 360)
-
-A single 45 deg edge does *not* trigger it: the pairwise loop only compares
-edge pairs, and perpendicular pairs are skipped, so the crash needs two
-parallel diagonals (e.g. two opposite corner chamfers - exactly the geometry of
-a corner-truncated circularly polarized patch).
-
-Consequence for this project: the textbook CP patch cannot be meshed, so
-``app/csxcad_builder/gps_patch.py`` builds the same copper area from three
-axis-aligned boxes (square notches instead of 45 deg chamfers).  The two tests
-below pin both halves of that decision:
-
-* an axis-aligned rectangle meshes fine (the workaround direction is sound),
-* the same outline with 45 deg chamfers raises the AttributeError.
-
-When a future easyMesh update provides ``distance_between_segments``, the
-second test fails on purpose - that is the signal to drop the three-box
-workaround and offer the textbook chamfered patch again.
+Known limitation of the upstream heuristic (not this fix): a hexagon still
+gets a pair of ~0.2 mm sliver cells next to its flat y edges, because
+``handle_diagonal_edges`` grades the lines between the diagonals. It is a
+quality warning, not a build error.
 """
 
 from __future__ import annotations
@@ -41,6 +26,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +41,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 RECT_XS, RECT_YS = [0.0, 20.0, 20.0, 0.0], [0.0, 0.0, 20.0, 20.0]
 
 # Same size hexagon: (10,0)-(20,10) and (0,20)-(-10,10) are parallel 45 deg
-# edges -> handle_diagonal_edges reaches the missing helper.
+# edges -> handle_diagonal_edges reaches distance_between_segments.
 CHAMFER_XS = [0.0, 10.0, 20.0, 10.0, 0.0, -10.0]
 CHAMFER_YS = [0.0, 0.0, 10.0, 20.0, 20.0, 10.0]
 
@@ -103,6 +89,27 @@ def _mesh_polygon(xs: list[float], ys: list[float]) -> tuple[dict, object]:
     return result, csx
 
 
+def test_distance_between_segments_returns_the_caller_contract():
+    """``handle_diagonal_edges`` indexes ``(dist, point, p1, p2, q1, q2)``."""
+    from easyMesh import geometryUtils
+
+    p1, p2 = np.array([0.0, 0.0]), np.array([10.0, 0.0])
+    q1, q2 = np.array([0.0, 2.0]), np.array([10.0, 2.0])  # parallel, 2 mm apart
+    records = geometryUtils.distance_between_segments(p1, p2, q1, q2)
+
+    assert len(records) == 10, "one record per sample point on p1-p2"
+    for rec in records:
+        assert len(rec) == 6, rec
+        dist, point, rp1, rp2, rq1, rq2 = rec
+        assert dist == pytest.approx(2.0, abs=1e-9)
+        assert np.asarray(point).shape == (2,)
+        assert np.allclose(rp1, p1) and np.allclose(rp2, p2)
+        assert np.allclose(rq1, q1) and np.allclose(rq2, q2)
+    # the samples span the first segment (the caller uses them as a range)
+    xs = [float(rec[1][0]) for rec in records]
+    assert min(xs) == pytest.approx(0.0) and max(xs) == pytest.approx(10.0)
+
+
 def test_axis_aligned_polygon_meshes():
     """Control: the workaround direction (no diagonal edges) builds a mesh."""
     result, csx = _mesh_polygon(RECT_XS, RECT_YS)
@@ -115,12 +122,23 @@ def test_axis_aligned_polygon_meshes():
     assert min(y_lines) <= 0.0 and max(y_lines) >= 20.0, (min(y_lines), max(y_lines))
 
 
-def test_parallel_45deg_edges_abort_the_mesh():
-    """Documented limitation: two parallel 45 deg edges crash the mesher.
+def test_parallel_45deg_edges_mesh():
+    """Regression: two parallel 45 deg edges used to abort the build.
 
-    When this starts failing, the bundled easyMesh gained
-    ``geometryUtils.distance_between_segments`` - drop the three-box workaround
-    in ``app/csxcad_builder/gps_patch.py`` and retry the chamfered patch.
+    A hexagon (three pairs of parallel edges, two of them diagonal) is the
+    geometry of a chamfered CP patch - it must build and keep every vertex
+    coordinate on the grid, otherwise the staircase would cut the corners.
     """
-    with pytest.raises(AttributeError, match="distance_between_segments"):
-        _mesh_polygon(CHAMFER_XS, CHAMFER_YS)
+    result, csx = _mesh_polygon(CHAMFER_XS, CHAMFER_YS)
+    assert "auto_mesh_lines" in result
+
+    grid = csx.GetGrid()
+    x_lines = np.asarray(grid.GetLines(0), dtype=float)
+    y_lines = np.asarray(grid.GetLines(1), dtype=float)
+    for v in sorted(set(CHAMFER_XS)):
+        assert np.isclose(x_lines, v, atol=1e-6).any(), (v, x_lines.tolist())
+    for v in sorted(set(CHAMFER_YS)):
+        assert np.isclose(y_lines, v, atol=1e-6).any(), (v, y_lines.tolist())
+    # the mesh must cover the whole outline
+    assert x_lines.min() <= min(CHAMFER_XS) and x_lines.max() >= max(CHAMFER_XS)
+    assert y_lines.min() <= min(CHAMFER_YS) and y_lines.max() >= max(CHAMFER_YS)
