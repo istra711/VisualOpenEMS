@@ -22,6 +22,7 @@ TAB_ORDER = [
     "Antenna Simulation",
     "Cylindrical Mesh",
     "Field Viewer",
+    "Export & Interchange",
     "Solver Parameters",
 ]
 
@@ -994,6 +995,93 @@ Notes
   • The files are plain .vtr — they open in ParaView too.
   • Needs a working OpenGL (a normal desktop session); in a headless/remote
     session the 3D view may be unavailable but the .vtr files are still written.
+""",
+    "Export & Interchange": """EXPORT & INTERCHANGE — what leaves the app, in which format
+
+Overview of every export path and what the file is good for. The three
+"exchange" formats are STEP (geometry), grid JSON (mesh lines) and Touchstone
+(network results) — those are the ones another solver such as CST Studio Suite
+reads directly. VTK is the neutral format for field data.
+
+Geometry → CAD / CST
+  • File → **Export STEP…** writes the *effective* geometry — the same
+    primitives the simulation builds: analytic boxes, cylinders, spheres and
+    extruded polygons plus every imported triangle mesh (tessellated, not the
+    original BREP). Output is AP214 STEP in millimetres.
+    - Object names are kept as STEP product names, so the solids appear in CST
+      under the same names as in the Mesh Viewer / project tree.
+    - A zero-thickness metal sheet (e.g. the "patch" of the patch preset) is
+      written as a planar face, not as a degenerate solid: openEMS only inflates
+      it after meshing (2 nm), which is useless as CAD.
+    - Closed meshes become solids, open shells stay shells (both are valid and
+      either can be assigned a material in CST).
+    - Geometry that cannot be represented (a point, a line, a missing mesh) is
+      listed in the log and skipped — the rest of the file is still written.
+    - Needs FreeCADCmd (same executable as STEP import), set in Settings.
+    Reads the live primitive list, so what you see in the Mesh Viewer is what
+    you get.
+  • FreeCAD… → **Export CAD…** is the opposite direction (FCStd/STEP → per-object
+    STL + openems_export.json for the importer). Use it to bring CAD in, not to
+    hand geometry out.
+
+Mesh → another FDTD solver
+  • Mesh → **Export grid (JSON)…** writes the built mesh lines per axis in mm
+    plus cell count, min/max cell size and the FDTD domain. Both openEMS and the
+    CST time-domain solver use a rectilinear grid, so feeding the same line
+    positions into CST (Mesh.SetLines) makes a comparison run on identical
+    cells instead of two independently meshed models.
+    Read from the Mesh Viewer's CSX, i.e. the grid that was actually built (not a
+    re-derived estimate); build the mesh first. Cylindrical meshes export
+    rho/phi/z. JSON layout:
+      { "format": "visualopenems-grid", "version": 1, "unit": "mm",
+        "axes": [ { "name": "x", "lines": [...], "cells": N,
+                    "cell_size_min": …, "cell_size_max": … }, … ],
+        "shape": [nx, ny, nz], "domain": { "start": [...], "stop": [...] } }
+  • Mesh → **Export CSX XML…** writes the CSXCAD model for AppCSXCAD / ParaView
+    (full geometry + grid, no field data).
+
+Results → field data (VTK)
+  • Simulation → **Export field dumps to VTK…** converts every HDF5 dump in
+    <project>/simulation into <project>/vtk/.
+    - One static <dump>.vtr per dump, plus one <dump>_0000.vtr … per stored step
+      (for animation) and a <dump>.series.json sidecar (labels, files, physical
+      times/frequencies, stride) that the built-in viewer reads.
+    - A ParaView collection <dump>.pvd is written too: open it in ParaView and the
+      whole series plays from one file. Its slider value is the physical step
+      position (time for TD dumps, frequency for FD dumps), not the step index.
+      The .pvd is rebuilt from the sidecar when an up-to-date series is reused,
+      so older exports end up complete as well.
+    - Incremental: an output newer than its dump is reused, so clicking again is
+      instant. The per-step checkbox writes the series (many files); step_stride
+      keeps only every N-th step.
+    - Point data: the scalar "magnitude" (active) and, for xyz dumps, the vector
+      "field" (real part). Values are raw openEMS SI units (E in V/m …).
+  • Simulation → **Export field video (MP4)…** renders the loaded series with the
+    current Field Viewer view (fps from Settings).
+
+Results → network data
+  • The S-Params viewer exports **Touchstone** (.s1p / .s2p / …) — the standard
+    both CST and openEMS read. One FDTD run measures one S-matrix column; the
+    Touchstone file is only written once the matrix is complete (partial
+    matrices stay in sparams.json), so a 2-port needs both excitations.
+  • Every viewer (S-Params, Antenna, Field Viewer) exports **PNG**.
+
+Quick reference
+  data                    format            direction        consumer
+  geometry                STEP (mm)         out              CAD, CST, FreeCAD
+  mesh lines              grid JSON (mm)    out              CST FDTD
+  S-parameters            Touchstone .sNp   out / in         CST, VNA, skrf
+  E/H field volumes       VTK .vtr + .pvd   out              ParaView
+  full model (CSX)        CSX XML           out              AppCSXCAD
+
+Limits
+  • STEP carries geometry only — no materials, no ports, no boundaries. Assign
+    them in CST by the preserved object names.
+  • There is no field-data *import*: openEMS dumps are HDF5, CST exports its own
+    formats. Compare solvers via S-parameters / far fields or via VTK in
+    ParaView.
+  • Units are converted to mm on export (STEP and grid JSON); Touchstone keeps
+    Hz. The project's Drawing unit (Mesh) is the source unit.
 """,
     "Solver Parameters": """SOLVER PARAMETERS — openEMS FDTD init + Run() options
 

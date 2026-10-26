@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests: `tests/test_grid_export.py` (sorting, dedupe, mm conversion, cell
   statistics, cylindrical axes, invalid unit) and new `.pvd` cases in
   `tests/test_vtk_export.py`.
+- Docs: new help topic **“Export & Interchange”** (Help menu, also in the F1
+  dialog) covering every export path — STEP, grid JSON, CSX XML, VTK/`.pvd`/MP4,
+  Touchstone, PNG — with a data/format/consumer table and the limits, plus
+  cross-references from the Geometry, Mesh Viewer and Field Viewer topics.
+  Section 12 of `docs/ANLEITUNG_DE.md` and `docs/ANLEITUNG_EN.md` carries the
+  same content in prose.
 - **STEP export for CAD / CST Studio Suite** (`app/freecad_io/step_export.py`,
   `app/freecad_io/freecad_step_runner.py`, File → Export STEP…): writes the
   effective project geometry — analytic boxes, cylinders, spheres and extruded

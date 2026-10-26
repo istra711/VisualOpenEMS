@@ -504,6 +504,9 @@ bzw. nachdem der Solver gelaufen ist:
    Bei ausgeschaltetem „same length" zeigt die Pfeillänge die Amplitude; die
    Referenz wird einmal über die ganze Serie gemessen, die Längen sind also
    von Bild zu Bild vergleichbar.
+   Der Export schreibt zusätzlich eine ParaView-Collection (`<dump>.pvd`) neben
+   die Schritt-Dateien, damit die ganze Serie in ParaView aus einer Datei läuft
+   — siehe §12.4.
 
 ---
 
@@ -583,3 +586,126 @@ bzw. nachdem der Solver gelaufen ist:
 | FreeCAD-Port-Anleitung | `docs\FREECAD_PORTS_DE.md` |
 | Yagi-Beispiel | `examples\freecad_yagi_model.py`, `work\yagi_antenna\` |
 | Smoke-Tests | `tests\freecad_gui_smoke.py`, `tests\freecad_mesh_smoke.py`, `tests\port_marks_smoke.py`, `tests\dipole_ports_smoke.py` |
+
+---
+
+## 12. Export & Austausch (CAD, CST, ParaView)
+
+Vier Ausgabewege sind für den Datenaustausch gedacht: **STEP** (Geometrie),
+**Gitter-JSON** (Mesh-Linien), **Touchstone** (S-Parameter) und **VTK**
+(Felddaten). Die ersten drei liest ein anderer Solver wie CST Studio Suite
+direkt; VTK ist das neutrale Format für Felder.
+
+### 12.1 STEP — Geometrie nach CAD / CST
+
+**File → Export STEP…**
+
+- Exportiert wird die *effektive* Geometrie, also genau die Primitives, aus
+  denen auch das Simulationsskript gebaut wird: analytische Boxen, Zylinder,
+  Kugeln und extrudierte Polygone sowie alle importierten Dreiecksnetze.
+  Importiertes STEP/FCStd kommt dabei **tesselliert** an (nicht als originales
+  BREP) — der Export zeigt, was openEMS tatsächlich rechnet.
+- Ausgabe: **AP214 STEP in Millimetern**. Die Zeichnungseinheit aus
+  *Mesh → Drawing unit* wird umgerechnet, es gibt also keine Einheiten-Raterei.
+- **Objektnamen bleiben erhalten**: jedes Solid kommt in CST unter dem Namen an,
+  den es im Mesh Viewer / Projektbaum hat (STEP-`PRODUCT`).
+- Eine **null-dicke Metallfläche** (z. B. das `patch` des Patch-Presets) wird
+  als **planare Fläche** geschrieben, nicht als degenerierter Solid — openEMS
+  bläht sie erst nach dem Meshing auf 2 nm auf, was als CAD unbrauchbar wäre.
+- **Geschlossene Netze** werden Solids, **offene Hüllen** bleiben Hüllen. Beides
+  ist gültiges STEP und in CST materialisierbar.
+- Nicht darstellbare Geometrie (Punkt, Linie, fehlendes Mesh) landet als Warnung
+  im Log und wird übersprungen; der Rest der Datei entsteht trotzdem.
+- Voraussetzung: **FreeCADCmd** (wie beim STEP-Import), Pfad unter *Settings*.
+
+> Der FreeCAD-Dialog „Export CAD…“ ist die **Gegenrichtung** (FCStd/STEP →
+> per-Object-STL + `openems_export.json` für den Importer), kein Geometrie-Export.
+
+### 12.2 Gitter-JSON — identische Zellen in CST
+
+**Mesh → Export grid (JSON)…**
+
+Sowohl openEMS als auch der CST-Zeitbereichslöser rechnen auf einem
+rechtwinkligen (hexaedrischen) Gitter. Gibt man CST dieselben Linienpositionen
+(z. B. per `Mesh.SetLines`), laufen beide auf **identischen Zellen** — statt auf
+zwei unabhängig vermaschten Modellen. Genau dort würden sich die Solver sonst
+unterscheiden.
+
+- Quelle ist die CSX des **Mesh Viewers**, also das Gitter, das wirklich gebaut
+  wurde (keine Neuberechnung). Vorher „Build Mesh“.
+- Alles in **mm**, plus Zellzahl, minimale/maximale Zellgröße und die
+  FDTD-Domain. Zylindrische Netze exportieren `rho/phi/z`.
+
+```json
+{
+  "format": "visualopenems-grid", "version": 1,
+  "unit": "mm", "source_unit": "mm", "coord_system": "cartesian",
+  "axes": [
+    {"name": "x", "lines": [0.0, 0.5, 1.0, 2.0],
+     "cells": 3, "cell_size_min": 0.5, "cell_size_max": 1.0}
+  ],
+  "shape": [3, 2, 2],
+  "domain": {"start": [0, 0, 0], "stop": [2, 3, 1.6]}
+}
+```
+
+### 12.3 CSX XML
+
+**Mesh → Export CSX XML…** bzw. **Open in AppCSXCAD (3D)…**
+
+Schreibt das komplette CSXCAD-Modell (Geometrie + Gitter, ohne Felddaten) für
+AppCSXCAD oder ParaView — nützlich zur Kontrolle und zur Übergabe des Modells.
+
+### 12.4 Felddaten — VTK, `.pvd`, MP4
+
+**Simulation → Export field dumps to VTK…**
+
+- Pro Dump eine statische Datei `<dump>.vtr` und — bei Zeitreihen — pro
+  gespeichertem Schritt `<dump>_0000.vtr` … plus `<dump>.series.json`
+  (Labels, Dateien, Zeiten/Frequenzen, Stride) für den eingebauten Viewer.
+- Zusätzlich eine **ParaView-Collection `<dump>.pvd`**: in ParaView öffnen und
+  die ganze Serie aus *einer* Datei abspielen. Der Slider-Wert ist die
+  **physikalische** Schrittposition (Zeit bei TD-Dumps, Frequenz bei FD-Dumps),
+  nicht der Schritt-Index. Die `.pvd` wird aus dem Sidecar neu erzeugt, wenn eine
+  aktuelle Serie wiederverwendet wird — ältere Exporte werden so vollständig.
+- **Inkrementell**: Ausgaben, die neuer als ihr Dump sind, werden
+  wiederverwendet; ein zweiter Klick ist sofort fertig. Der Per-Step-Schalter
+  schreibt die Serie (viele Dateien), `step_stride` behält nur jeden N-ten
+  Schritt.
+- Punktdaten: Skalar `magnitude` (aktiv) und bei xyz-Dumps der Vektor `field`
+  (Realteil), in rohen openEMS-SI-Einheiten (E in V/m …).
+
+**Simulation → Export field video (MP4)…** rendert die geladene Serie mit der
+aktuellen Field-Viewer-Ansicht (fps aus *Settings*).
+
+### 12.5 Netzwerkdaten — Touchstone
+
+Der S-Params-Viewer schreibt **Touchstone** (`.s1p`, `.s2p`, …) — den Standard,
+den CST und openEMS beide lesen. Ein FDTD-Lauf misst **eine** Spalte der
+S-Matrix; die Touchstone-Datei entsteht erst, wenn die Matrix vollständig ist
+(Teilmatrizen stehen nur in `sparams.json`). Für ein 2-Tor sind also beide
+Erregungen nötig (`excite_port` umschalten, Ergebnisse werden zusammengeführt).
+
+### 12.6 Bilder
+
+Jeder Viewer (S-Params, Antenna, Field Viewer) exportiert **PNG**.
+
+### 12.7 Übersicht
+
+| Daten | Format | Richtung | Empfänger |
+|---|---|---|---|
+| Geometrie | STEP (mm) | raus | CAD, CST, FreeCAD |
+| Gitterlinien | grid JSON (mm) | raus | CST-FDTD (Mesh.SetLines) |
+| S-Parameter | Touchstone `.sNp` | raus / rein | CST, VNA, scikit-rf |
+| E/H-Feldvolumen | VTK `.vtr` + `.pvd` | raus | ParaView |
+| Vollmodell (CSX) | CSX XML | raus | AppCSXCAD |
+
+### 12.8 Grenzen
+
+- **STEP transportiert nur Geometrie** — keine Materialien, Ports oder
+  Randbedingungen. Diese in CST über die erhaltenen Objektnamen zuweisen.
+- **Kein Felddaten-Import**: openEMS-Dumps sind HDF5, CST exportiert eigene
+  Formate. Verglichen wird über S-Parameter / Fernfeld oder über VTK in
+  ParaView.
+- Einheiten werden beim Export nach **mm** umgerechnet (STEP und Gitter-JSON);
+  Touchstone bleibt in Hz. Quelle ist die Zeichnungseinheit aus *Mesh*.

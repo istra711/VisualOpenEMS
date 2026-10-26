@@ -1219,6 +1219,14 @@ class MainWindow(QMainWindow):
             "Polarization / phase center…",
             slot=lambda: show_tab_help(self, "Polarization & Phase Center"),
         )
+        add_action(
+            hmenu,
+            "Export / interchange (STEP, grid, VTK)\u2026",
+            slot=lambda: show_tab_help(self, "Export & Interchange"),
+            tip="All export paths and their formats: STEP for CAD/CST, grid JSON "
+            "for another FDTD solver, VTK/.pvd for fields, Touchstone for "
+            "S-parameters",
+        )
         hmenu.addSeparator()
         add_action(hmenu, "Open ANLEITUNG_DE.md", slot=lambda: self._open_doc("docs/ANLEITUNG_DE.md"))
         add_action(hmenu, "Open FreeCAD Workflow (Geometry → Import)", slot=lambda: self._open_doc("docs/FREECAD_WORKFLOW_DE.md"))
