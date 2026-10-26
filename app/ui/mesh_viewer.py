@@ -3073,7 +3073,10 @@ class MeshGeometryViewer(QWidget):
         # Geometry primitives: draw 2D footprint when the box intersects the slice plane
         if self.chk_geom.isChecked():
             eps = 1e-9
-            for info in infos:
+            # Low priority first: a metal patch (priority 100) must stay
+            # visible on top of the dielectric (10) it sits on — CSXCAD
+            # resolves overlapping objects by priority as well.
+            for info in sorted(infos, key=lambda i: int(getattr(i, "priority", 0) or 0)):
                 if self._is_port_artifact(info.kind):
                     continue  # ports are drawn by the "Show ports" block below
                 if self._info_hidden(info):
@@ -3322,7 +3325,7 @@ class MeshGeometryViewer(QWidget):
                         fill=False, edgecolor="black", linestyle="--", linewidth=1.0,
                     )
                 )
-            for info in infos:
+            for info in sorted(infos, key=lambda i: int(getattr(i, "priority", 0) or 0)):
                 if self._info_hidden(info):
                     continue  # object switched invisible in the Geometry dialog
                 color = self._object_color(info.kind, info.name, self._info_display(info))
