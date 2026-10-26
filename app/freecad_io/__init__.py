@@ -22,6 +22,7 @@ from app.freecad_io.port_marks import (
     parse_ports_payload,
     ports_to_port_defs,
 )
+from app.freecad_io.step_export import build_shape_specs, export_step, mm_per_unit
 from app.freecad_io.stl_import import (
     StlImportResult,
     is_stl_manifest,
@@ -46,6 +47,9 @@ __all__ = [
     "find_manifest_ports",
     "parse_ports_payload",
     "ports_to_port_defs",
+    "build_shape_specs",
+    "export_step",
+    "mm_per_unit",
     "StlImportResult",
     "is_stl_manifest",
     "load_stl_meshes",

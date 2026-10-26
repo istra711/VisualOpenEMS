@@ -67,6 +67,7 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("File"), "Save").shortcut().toString() == "Ctrl+S"
     assert _find(_menu("File"), "Save As\u2026").shortcut().toString() == "Ctrl+Shift+S"
     assert _find(_menu("File"), "Exit").shortcut().toString() == "Ctrl+Q"
+    assert _find(_menu("File"), "Export STEP\u2026") is not None
     assert _find(_menu("Mesh"), "Build Mesh").shortcut().toString() == "Ctrl+M"
     assert _find(_menu("Mesh"), "Rebuild from scratch\u2026") is not None
     assert _find(_menu("Mesh"), "Delete Mesh\u2026") is not None

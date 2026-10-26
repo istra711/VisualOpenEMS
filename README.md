@@ -97,6 +97,12 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 
 - Preset generators: **Patch Antenna**, **Dipole**, **PCB Filter**, **Yagi Antenna**
 - FreeCAD CAD export dialog (STEP or per-object STL)
+- **STEP export for CAD / CST** (File → Export STEP…): writes the effective
+  geometry (analytic boxes/cylinders/spheres/polygons + imported meshes) as an
+  AP214 STEP file in mm. Object names are preserved as STEP product names, so
+  the solids arrive in CST Studio Suite under the same names as in the Mesh
+  Viewer. Zero-thickness metal sheets (e.g. the patch preset) become planar
+  faces, and meshes become shells (solids when watertight).
 - Simulation script editor with regenerate/revert workflow
 - Project save/load (`.fcsim.json`) with backward-compatible deserialization
 
@@ -120,8 +126,10 @@ VisualOpenEMS/
 │   ├── freecad_io/
 │   │   ├── freecad_launcher.py    # FreeCADCmd subprocess management
 │   │   ├── freecad_mesh.py        # FCStd → per-object STL tessellation
+│   │   ├── freecad_step_runner.py # Builds STEP shapes inside FreeCADCmd
 │   │   ├── importer.py            # Unified geometry import (STEP/STL/OBJ/FCStd)
 │   │   ├── port_marks.py          # PORT_* point → PortDef extraction
+│   │   ├── step_export.py         # Geometry → STEP (mm, named products) for CST
 │   │   └── stl_import.py          # STL file parsing and bounds
 │   ├── meshing/
 │   │   ├── easy_wrapper.py        # easyMesh Python integration

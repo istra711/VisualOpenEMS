@@ -924,6 +924,14 @@ class MainWindow(QMainWindow):
         fmenu.addSeparator()
         add_action(fmenu, "Import Geometry\u2026", btn=self.btn_import)
         add_action(fmenu, "FreeCAD\u2026", btn=self.btn_freecad)
+        add_action(
+            fmenu,
+            "Export STEP\u2026",
+            slot=self._on_export_step,
+            tip="Write the current geometry (analytic primitives + meshes) as a "
+            "STEP file in mm for CAD / CST Studio Suite. Object names are kept "
+            "as STEP product names.",
+        )
         fmenu.addSeparator()
         add_action(fmenu, "Open Work Folder", slot=self._open_work_folder)
         fmenu.addSeparator()
@@ -3443,6 +3451,64 @@ class MainWindow(QMainWindow):
                 self._log(
                     f"Export ready (import skipped). Use Import Geometry… for: {src}"
                 )
+
+    def _on_export_step(self) -> None:
+        """Export the current geometry as a STEP file in mm for CAD / CST.
+
+        The geometry is the *effective* primitive list — the same one the
+        simulation script builds — so the STEP file shows exactly what openEMS
+        would simulate: boxes, cylinders, spheres, extruded polygons and
+        imported meshes, with the project's drawing unit converted to mm.
+        """
+        from app.freecad_io.step_export import export_step
+
+        work = self.settings.work_path()
+        self._prepare_run_state(work)  # patch-preset fallback + "no geometry" warning
+        prims = self.primitives or (self.project.primitives or [])
+        if not prims:
+            QMessageBox.information(
+                self,
+                "Export STEP",
+                "No geometry to export.\n\n"
+                "Import a CAD file (Import Geometry… / FreeCAD…) or add "
+                "primitives first.",
+            )
+            return
+
+        default = work / f"{self.project.name or 'project'}.step"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export STEP", str(default), "STEP (*.step *.stp)"
+        )
+        if not path:
+            return
+        out = Path(path)
+        if out.suffix.lower() not in {".step", ".stp"}:
+            out = out.with_suffix(".step")
+
+        self._log(f"Exporting STEP (FreeCADCmd): {out}")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            ok, log, warnings = export_step(
+                prims,
+                out,
+                unit=self.project.mesh.drawing_unit,
+                freecad_cmd=self.settings.freecad_cmd,
+            )
+        except Exception as e:  # noqa: BLE001 — an export must never kill the app
+            ok, log, warnings = False, f"{type(e).__name__}: {e}", []
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        for w in warnings:
+            self._log(f"STEP export: {w}")
+        if ok:
+            self._log(f"STEP written: {out} ({out.stat().st_size} bytes)")
+            return
+        self._log(f"STEP export failed:\n{log[-1500:]}")
+        QMessageBox.warning(
+            self, "Export STEP", f"Export failed:\n\n{log[-1500:] or 'unknown error'}"
+        )
 
     def _import_geometry_path(self, path: str) -> None:
         import json as _json

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **STEP export for CAD / CST Studio Suite** (`app/freecad_io/step_export.py`,
+  `app/freecad_io/freecad_step_runner.py`, File → Export STEP…): writes the
+  effective project geometry — analytic boxes, cylinders, spheres and extruded
+  polygons plus imported triangle meshes — as an AP214 STEP file in
+  **millimetres**, so it opens in CST without a unit guess. Object names are
+  preserved as STEP `PRODUCT` names (`Import.export`, not `Part.export`), so the
+  solids keep the names they have in the Mesh Viewer. Zero-thickness metal
+  sheets (e.g. the patch preset) become planar faces instead of a degenerate
+  solid; meshes become shells (solids when watertight). Geometry that cannot be
+  represented (points, lines, missing meshes) is reported in the log instead of
+  aborting the export.
+- Tests: `tests/test_step_export.py` (25 pure tests for units, sheet/prism
+  detection, cyclic polygon axes and mesh scaling) and
+  `tests/step_export_smoke.py` (FreeCADCmd round-trip: names, mm unit, volumes,
+  open-shell preservation, GUI handler, cm → mm).
 - **Live preview in the polygon dialog** (`app/ui/primitive_preview.py`): while
   the point list is typed, the dialog draws the polygon in its own plane with
   equal aspect (a 45° edge looks like 45°), numbered vertices, a grid with tick
