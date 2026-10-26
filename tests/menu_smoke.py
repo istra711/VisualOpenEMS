@@ -97,6 +97,7 @@ def test_menu_structure_and_shortcuts() -> None:
         "Preset: PCB Filter\u2026",
         "Preset: PCB Bandpass (5.6 GHz)\u2026",
         "Preset: PCB Hairpin Bandpass (2.4 GHz)\u2026",
+        "Preset: GPS L1 Patch (1.57542 GHz)\u2026",
     ], presets
     tabs = [_strip(a.text()) for a in _menu("View").actions()]
     for name in ("Geometry", "Mesh Viewer", "S-Params"):

@@ -280,6 +280,11 @@ class MainWindow(QMainWindow):
             "2.4 GHz compact 5-pole hairpin band-pass on RT/duroid 6010, "
             "10 % bandwidth, no vias (2 ports) under work/pcb_hairpin"
         )
+        self.btn_gps = QPushButton("Preset: GPS Patch…")
+        self.btn_gps.setToolTip(
+            "1.57542 GHz GPS L1 circularly polarised patch on FR4 1.6 mm "
+            "(chamfered polygon, one probe feed) under work/gps_patch"
+        )
         self.btn_run = QPushButton("Run Simulation")
         self.btn_abort = QPushButton("Abort")
         self.btn_script = QPushButton("Script…")
@@ -317,6 +322,7 @@ class MainWindow(QMainWindow):
             self.btn_pcb,
             self.btn_pcb_bp,
             self.btn_pcb_hairpin,
+            self.btn_gps,
             self.btn_run,
             self.btn_abort,
             self.btn_script,
@@ -836,6 +842,7 @@ class MainWindow(QMainWindow):
         self.btn_pcb.clicked.connect(self._on_load_pcb)
         self.btn_pcb_bp.clicked.connect(self._on_load_pcb_bandpass)
         self.btn_pcb_hairpin.clicked.connect(self._on_load_pcb_hairpin)
+        self.btn_gps.clicked.connect(self._on_load_gps_patch)
         self.btn_build_mesh.clicked.connect(self._on_build_mesh)
         self.btn_run.clicked.connect(self._on_run)
         self.btn_abort.clicked.connect(self._on_abort)
@@ -933,6 +940,7 @@ class MainWindow(QMainWindow):
             "Preset: PCB Hairpin Bandpass (2.4 GHz)\u2026",
             btn=self.btn_pcb_hairpin,
         )
+        add_action(pmenu, "Preset: GPS L1 Patch (1.57542 GHz)\u2026", btn=self.btn_gps)
 
         gmenu = bar.addMenu("&Geometry")
         add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
@@ -4012,6 +4020,52 @@ class MainWindow(QMainWindow):
         self.geom_info.setPlainText("\n".join(lines))
         self._update_window_title()
         self._log("PCB hairpin band-pass preset loaded")
+        for ln in lines:
+            self._log(ln)
+        self._log_computed_summary()
+
+    def _on_load_gps_patch(self) -> None:
+        """Load the 1.57542 GHz GPS L1 circularly polarised patch preset."""
+        from app.csxcad_builder.gps_patch import gps_patch_primitives
+
+        self._current_file_path = None
+        work = self.settings.work_path() / "gps_patch"
+        work.mkdir(parents=True, exist_ok=True)
+
+        project, prims = gps_patch_primitives()
+        self.project = project
+        self.primitives = prims
+        self.project.primitives = list(prims)
+        if hasattr(self.sim_params, "set_patch_group_visible"):
+            self.sim_params.set_patch_group_visible(False)
+        self._sync_form_from_project()
+        self._refresh_tree()
+        self._refresh_ports()
+        self._refresh_materials()
+
+        saved = project.save(work / "gps_patch.fcsim.json")
+        poly = next(p for p in prims if p["kind"] == "polygon")
+        pts = poly["points"]
+        lines = [
+            "GPS L1 circularly polarised patch PRESET loaded: 1.57542 GHz, "
+            "one 50 ohm probe feed, RHCP.",
+            "FR4 1.6 mm (eps_r 4.4, tan_d 0.02), 75 mm ground; patch 44.10 mm "
+            "square with two opposite 5.0 mm corner chamfers.",
+            f"Chamfer as a {len(pts)}-point polygon (1.0 mm staircase): CSXCAD "
+            "rasterises polygons at the cell centre, a 45 deg edge would be "
+            "all-metal or all-air inside one 5 mm cell.",
+            "Probe on the patch centre line, 10.9 mm inset - the centre line "
+            "excites both split modes with equal amplitude (a diagonal feed is "
+            "linear).",
+            "Converged run: S11 -12.4 dB, axial ratio 1.70 dB at 1.57542 GHz, "
+            "D 7.29 dBi, efficiency 26.2 % (pattern peak ~22 deg off boresight).",
+            "Set NF2FF to a frequency list (e.g. 1.55 ... 1.60 GHz) to see the "
+            "axial-ratio dip; the CP bandwidth is only ~1 %.",
+            f"Project: {saved}",
+        ]
+        self.geom_info.setPlainText("\n".join(lines))
+        self._update_window_title()
+        self._log("GPS L1 patch preset loaded")
         for ln in lines:
             self._log(ln)
         self._log_computed_summary()
