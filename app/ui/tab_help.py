@@ -117,6 +117,12 @@ Navigation
     slice; the % next to it is the current strength. Only active while
     "Mesh grid" is ticked (next to Geometry / Ports / NF2FF, which show or hide
     those overlays in the slice plots).
+  • Objects keep their real shape in every view: boxes as rectangles, cylinders
+    as circles, and **polygons / extruded polylines with their own outline** — a
+    hexagon patch stays a hexagon instead of turning into its bounding box. A
+    polygon seen edge-on is drawn as a line (flat sheet) or a filled band
+    (extruded prism); the Overview shows the outline face-on and the silhouette
+    edge-on. The thick yellow selection outline follows the same shape.
   • Appearance of the objects — colour, transparency and visibility are set
     **per object** where the object is edited: select a "Prim:" / "Assign:"
     entry in the Project / Geometry list and press Enter (or double-click),

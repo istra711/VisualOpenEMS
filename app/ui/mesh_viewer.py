@@ -1,7 +1,9 @@
 """Interactive mesh + geometry viewer for the openEMS workflow.
 
 Shows:
-  - 2D slices (XY / XZ / YZ) with mesh grid + primitive AABBs + ports + NF2FF
+  - 2D slices (XY / XZ / YZ) with mesh grid + primitives + ports + NF2FF
+    (boxes as rectangles, cylinders as circles, polygons with their real
+    outline — never the bounding box of a polygon)
   - Per-axis cell-size plots
   - Domain overview
   - One-click export to AppCSXCAD for true 3D review
@@ -46,7 +48,10 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle, FancyBboxPatch, Rectangle
+from matplotlib.patches import Polygon as MplPolygon
 
+from app.meshing.polygon_geometry import polygon_bbox as _polygon_bbox
+from app.meshing.polygon_geometry import polygon_cut_paths as _polygon_cut_paths
 from app.meshing.preview import (
     default_color_for,
     export_csx_xml,
@@ -133,6 +138,52 @@ def _slice_key(view: str) -> str | None:
     """
     key = str(view).split(" ", 1)[0]
     return key if key in _SLICE_AXES else None
+
+
+def _draw_polygon_paths(
+    ax,
+    paths,
+    *,
+    facecolor,
+    edgecolor,
+    linewidth: float,
+    linestyle: str = "-",
+    label: str | None = None,
+    zorder=None,
+) -> None:
+    """Draw :func:`polygon_cut_paths` output (outlines / segments / quads).
+
+    A polygon primitive must not be drawn as its bounding box: the helpers in
+    :mod:`app.meshing.polygon_geometry` derive the real cut per slice, this
+    wrapper turns the paths into matplotlib patches / lines.
+    """
+    for k, path in enumerate(paths):
+        kw = {}
+        if zorder is not None:
+            kw["zorder"] = zorder
+        if len(path) >= 3:
+            ax.add_patch(
+                MplPolygon(
+                    path,
+                    closed=True,
+                    facecolor=facecolor,
+                    edgecolor=edgecolor,
+                    linewidth=linewidth,
+                    linestyle=linestyle,
+                    label=label if k == 0 else None,
+                    **kw,
+                )
+            )
+        else:
+            ax.plot(
+                [p[0] for p in path],
+                [p[1] for p in path],
+                color=edgecolor,
+                linewidth=linewidth,
+                linestyle=linestyle,
+                label=label if k == 0 else None,
+                **kw,
+            )
 
 
 def _circle_in_slice(
@@ -1885,11 +1936,16 @@ class MeshGeometryViewer(QWidget):
             self._redraw()
         return True
 
-    def _highlight_boxes(self) -> list[tuple[tuple, tuple]]:
-        """``(start, stop)`` of every drawn element matching the highlight."""
-        out: list[tuple[tuple, tuple]] = []
+    def _highlight_boxes(self) -> list[tuple[tuple, tuple, object]]:
+        """``(start, stop, poly)`` of every drawn element matching the highlight.
 
-        def _add(st, sp, name: str) -> None:
+        ``poly`` is the :class:`~app.meshing.preview.PrimitiveInfo` of a
+        polygon primitive (so the highlight can follow its real outline) or
+        ``None`` for everything else.
+        """
+        out: list[tuple[tuple, tuple, object]] = []
+
+        def _add(st, sp, name: str, poly=None) -> None:
             if st is None or sp is None:
                 return
             try:
@@ -1898,13 +1954,14 @@ class MeshGeometryViewer(QWidget):
             except (TypeError, ValueError):
                 return
             if self._is_highlighted(st, sp, name):
-                out.append((st, sp))
+                out.append((st, sp, poly))
 
         for info in self._grid_infos():
             _add(
                 getattr(info, "start", None),
                 getattr(info, "stop", None),
                 str(getattr(info, "name", "") or ""),
+                info if getattr(info, "poly_points", ()) else None,
             )
         for p in self._ports or []:
             st = getattr(p, "start", None) or (
@@ -1963,7 +2020,8 @@ class MeshGeometryViewer(QWidget):
         )
         mesh = self._grid_mesh()
         drawn = False
-        for st, sp in self._highlight_boxes():
+        for st, sp, poly in self._highlight_boxes():
+            tol = eps
             if plane is not None:
                 lo_n, hi_n = min(st[inorm], sp[inorm]), max(st[inorm], sp[inorm])
                 # an element in the neighbouring cell counts as well (like the
@@ -1971,6 +2029,31 @@ class MeshGeometryViewer(QWidget):
                 tol = self._cell_span(mesh, _axis_letter(inorm), (lo_n + hi_n) / 2.0)
                 if plane < lo_n - tol or plane > hi_n + tol:
                     continue
+            if poly is not None:
+                # polygon: highlight the real outline, not the bounding box
+                paths = _polygon_cut_paths(
+                    poly.poly_points,
+                    poly.poly_axis,
+                    poly.poly_coord,
+                    poly.poly_length,
+                    ia,
+                    ib,
+                    inorm,
+                    plane,
+                    tol,
+                )
+                if paths:
+                    _draw_polygon_paths(
+                        ax,
+                        paths,
+                        facecolor="none",
+                        edgecolor="#ffd400",
+                        linewidth=3.0,
+                        label="selected",
+                        zorder=8,
+                    )
+                    drawn = True
+                continue
             x0, x1 = min(st[ia], sp[ia]), max(st[ia], sp[ia])
             y0, y1 = min(st[ib], sp[ib]), max(st[ib], sp[ib])
             if abs(x1 - x0) < eps and abs(y1 - y0) < eps:
@@ -3018,6 +3101,19 @@ class MeshGeometryViewer(QWidget):
                         )
                     )
                     continue
+                if getattr(info, "poly_points", ()):  # polygon: true outline
+                    _draw_polygon_paths(
+                        ax,
+                        _polygon_cut_paths(
+                            info.poly_points, info.poly_axis, info.poly_coord,
+                            info.poly_length, ia, ib, inorm, plane, tol,
+                        ),
+                        facecolor=color,
+                        edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else self._object_edge(color),
+                        linewidth=2.0 if bad else 1.0,
+                        label=info.name,
+                    )
+                    continue
                 ax.add_patch(
                     Rectangle(
                         (x0, y0), x1 - x0, y1 - y0,
@@ -3035,8 +3131,20 @@ class MeshGeometryViewer(QWidget):
                 disp = self._object_display(str(pr.get("name") or ""))
                 if not display_visible(disp):
                     continue  # object switched invisible in the Geometry dialog
+                kind = str(pr.get("kind") or "box")
                 st = pr.get("start", [0, 0, 0])
                 sp = pr.get("stop", [0, 0, 0])
+                if kind == "polygon":
+                    # the dict's start/stop can be stale after the points were
+                    # edited -> derive the AABB from the outline itself
+                    bb = _polygon_bbox(
+                        pr.get("points") or [],
+                        pr.get("axis") or "z",
+                        float(pr.get("coord") or 0.0),
+                        float(pr.get("length") or 0.0),
+                    )
+                    if bb is not None:
+                        st, sp = bb
                 tol = _plane_tol(st[inorm], sp[inorm])
                 if plane < st[inorm] - tol or plane > sp[inorm] + tol:
                     continue
@@ -3049,6 +3157,22 @@ class MeshGeometryViewer(QWidget):
                     disp,
                 )
                 edge = color[:3] + (max(0.9, color[3]),)
+                if kind == "polygon":
+                    _draw_polygon_paths(
+                        ax,
+                        _polygon_cut_paths(
+                            pr.get("points") or [],
+                            pr.get("axis") or "z",
+                            float(pr.get("coord") or 0.0),
+                            float(pr.get("length") or 0.0),
+                            ia, ib, inorm, plane, tol,
+                        ),
+                        facecolor="none",
+                        edgecolor=edge,
+                        linewidth=1.5,
+                        linestyle=":",
+                    )
+                    continue
                 circle = None
                 if str(pr.get("kind")) == "cylinder":
                     # dict start/stop are the AXIS endpoints -> build the AABB
@@ -3215,6 +3339,18 @@ class MeshGeometryViewer(QWidget):
                             edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else self._object_edge(color, 0.8),
                             linewidth=2.0 if bad else 0.8,
                         )
+                    )
+                    continue
+                if getattr(info, "poly_points", ()):  # polygon: true outline
+                    _draw_polygon_paths(
+                        ax,
+                        _polygon_cut_paths(
+                            info.poly_points, info.poly_axis, info.poly_coord,
+                            info.poly_length, ia, ib, inorm, None, 0.0,
+                        ),
+                        facecolor=color,
+                        edgecolor=(1.0, 0.0, 0.0, 1.0) if bad else self._object_edge(color, 0.8),
+                        linewidth=2.0 if bad else 0.8,
                     )
                     continue
                 ax.add_patch(

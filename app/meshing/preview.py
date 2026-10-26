@@ -44,6 +44,15 @@ class PrimitiveInfo:
     radius: float = 0.0
     #: relative permittivity of the property (1.0 for metals / air boxes)
     epsilon: float = 1.0
+    #: polygon / linpoly only: the in-plane outline points, the normal axis
+    #: ("x" | "y" | "z"), the elevation of the polygon plane and — for an
+    #: extruded ``AddLinPoly`` — the extrusion length. Viewers use these to
+    #: draw the true outline instead of the AABB (a hexagon used to appear as
+    #: a rectangle).
+    poly_points: tuple[tuple[float, float], ...] = ()
+    poly_axis: str = ""
+    poly_coord: float = 0.0
+    poly_length: float = 0.0
 
 
 def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[PrimitiveInfo]:
@@ -127,6 +136,26 @@ def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[Primitive
                         eps_val = float(prop_obj.GetMaterialProperty("epsilon"))
                 except Exception:  # noqa: BLE001
                     eps_val = 1.0
+                # Polygon (7) / LinPoly (8): keep the outline so the Mesh
+                # Viewer can draw the real shape instead of its bounding box.
+                poly_points: tuple[tuple[float, float], ...] = ()
+                poly_axis = ""
+                poly_coord = 0.0
+                poly_length = 0.0
+                if ptype_id in (7, 8):
+                    try:
+                        xs, ys = prim.GetCoords()
+                        pts = tuple(
+                            (float(u), float(v)) for u, v in zip(xs, ys)
+                        )
+                        if len(pts) >= 3:
+                            poly_points = pts
+                            poly_axis = "xyz"[int(prim.GetNormDir())]
+                            poly_coord = float(prim.GetElevation())
+                            if ptype_id == 8 and hasattr(prim, "GetLength"):
+                                poly_length = max(0.0, float(prim.GetLength()))
+                    except Exception:  # noqa: BLE001
+                        poly_points = ()
             except Exception:  # noqa: BLE001
                 continue
             infos.append(
@@ -139,6 +168,10 @@ def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[Primitive
                     prim_type=ptype_id,
                     radius=radius,
                     epsilon=eps_val,
+                    poly_points=poly_points,
+                    poly_axis=poly_axis,
+                    poly_coord=poly_coord,
+                    poly_length=poly_length,
                 )
             )
     return infos

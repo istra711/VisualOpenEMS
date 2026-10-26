@@ -36,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mesh Viewer drew every polygon as a rectangle** (`app/meshing/polygon_geometry.py`,
+  `app/ui/mesh_viewer.py`): a polygon / extruded polyline primitive was drawn
+  from its bounding box, so a hexagon patch, a triangle or a chamfered corner
+  looked like a rectangular patch. The viewer now derives the real cut per
+  slice — the polygon outline face-on (sheet and prism), a line for an edge-on
+  sheet, a filled band for an edge-on prism, and the outline / silhouette in
+  the Overview. Works for project primitives and for the CSX infos after a
+  mesh build (`PrimitiveInfo.poly_points/poly_axis/poly_coord/poly_length`),
+  and the yellow selection highlight follows the outline too. The AABB is
+  still used for the domain / outside checks. Tests:
+  `tests/test_mesh_viewer_polygon.py` (geometry + CSX introspection) and
+  `tests/polygon_viewer_smoke.py` (offscreen render, hexagon + edge-on).
 - **easyMesh on NumPy 1.x** (`app/meshing/easy_wrapper.py`): the bundled
   easyMesh calls `np.atan`, an alias that only exists from NumPy 2.0 on; on
   NumPy 1.26 the missing alias is provided (`np.arctan`), without which any
