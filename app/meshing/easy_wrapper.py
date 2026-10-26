@@ -121,6 +121,17 @@ def generate_mesh(
 
     from easyMesh import GenerateMesh
 
+    # NumPy 2 removed the ``np.atan`` alias that easyMesh's diagonal-edge
+    # handler uses (polygons with 45 deg edges, e.g. the corner-cut GPS patch).
+    # ``np.arctan`` is the canonical name, so provide the alias when missing.
+    try:
+        import numpy as _np
+
+        if not hasattr(_np, "atan"):
+            _np.atan = _np.arctan  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — never fail a build on the shim
+        pass
+
     # easyMesh tutorial uses start_frequency 0 or f_min; keep project values
     GenerateMesh(
         CSX,

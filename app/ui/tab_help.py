@@ -18,6 +18,7 @@ TAB_ORDER = [
     "Mesh Viewer",
     "S-Params",
     "Antenna",
+    "GPS Patch Preset",
     "Polarization & Phase Center",
     "Antenna Simulation",
     "Cylindrical Mesh",
@@ -802,6 +803,44 @@ Tips
     nf2ff.center = (start+stop)/2. Re-run "Fit NF2FF to Geometry" (the run also
     warns and snaps a stale centre back). See Antenna Simulation → NF2FF box.
   • Summary PNG (nf2ff_summary.png) is written next to nf2ff.json.
+""",
+    "GPS Patch Preset": """GPS L1 PATCH (circular polarization) — preset
+
+What it is
+  A square FR4 patch (1.6 mm, eps_r 4.4) at 1.57542 GHz with two corner
+  notches and one 50 ohm probe feed. The notches split the two degenerate
+  patch modes into an orthogonal pair with a 90 deg phase difference, so the
+  far field is circularly polarized (RHCP) around boresight.
+
+Dimensions (tuned)
+  Patch 44.5 mm square, corner notches 5.5 mm, feed inset 10.9 mm from the
+  bottom edge, ground/substrate 75 mm square. One lumped port "feed" from the
+  ground to the patch (vertical, 50 ohm).
+
+Simulated (openEMS, FR4 1.6 mm)
+  S11 -10.8 dB and axial ratio 2.4 dB (RHCP) at 1.57542 GHz, Dmax ~7.3 dBi.
+  These are simulation results of this geometry, not a measured antenna.
+  The pattern peak sits ~20 deg off boresight (finite ground + probe feed);
+  boresight gain ~6.2 dBi.
+
+How to use
+  Presets -> "Preset: GPS L1 Patch (circular, 1.575 GHz)…", then Build Mesh
+  (Ctrl+M) and Run (Ctrl+R). NF2FF is enabled at 1.57542 GHz, so the Antenna
+  tab shows the pattern and "Polarization…" the AR / phase center.
+
+Tuning (if you change the substrate)
+  • patch side sets the resonant frequency (~60-80 MHz per mm on 1.6 mm FR4);
+  • corner notch sets the axial ratio (larger notch = larger mode split);
+  • feed inset sets the input match.
+  Check S11 (S-Params) and AR (Polarization dialog) after each change.
+
+Limits
+  • Single-feed CP has a narrow AR bandwidth (~1-2 %); the preset is tuned for
+    L1, not for the whole GPS band.
+  • FR4 (tan_d 0.02) costs ~1.5-2 dB gain versus a ceramic patch; it is a
+    cheap prototype, not a production GPS antenna.
+  • The 75 mm ground is small (0.4 lambda); enlarge it to reduce the pattern
+    tilt, at the cost of a larger mesh.
 """,
     "Polarization & Phase Center": """POLARIZATION & PHASE CENTER — derived from the NF2FF far field
 
