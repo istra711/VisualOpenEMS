@@ -64,6 +64,19 @@ def write_synthetic_nf2ff(path: Path) -> dict:
         ],
         "out_file": str(path),
     }
+    # complex CP field for the axial-ratio cut: E_theta = 1,
+    # E_phi = -j * cos(theta/2) * (1.5 - 0.5*cos(phi))  ->  AR = 0 dB at
+    # theta = 0 / phi = 0 and 6 dB at phi = 180 (phi-dependent, so the cut
+    # combo is exercised), linear towards theta = 180 (clipping path).
+    eth = np.ones((theta.size, phi.size), dtype=float)
+    amp = (1.5 - 0.5 * np.cos(np.deg2rad(phi)))[None, :]
+    eph_im = -np.cos(np.deg2rad(theta) / 2.0)[:, None] * amp
+    payload["E_theta"] = [
+        {"real": eth.tolist(), "imag": np.zeros_like(eth).tolist()} for _ in range(2)
+    ]
+    payload["E_phi"] = [
+        {"real": np.zeros_like(eth).tolist(), "imag": eph_im.tolist()} for _ in range(2)
+    ]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return payload
@@ -128,6 +141,58 @@ def main() -> int:
         if n_axes < 1:
             print("FAIL: no axes for", plot)
             return 5
+
+    # --- axial-ratio cut: AR vs theta at a chosen azimuth -------------------
+    if "Axial Ratio (theta cut)" not in AntennaPatternViewer.PLOT_TYPES:
+        print("FAIL: AR cut missing from PLOT_TYPES")
+        return 24
+    viewer.cmb_freq.setCurrentIndex(0)
+    viewer.cmb_ar_phi.setCurrentText("0°")
+    viewer.cmb_plot.setCurrentText("Axial Ratio (theta cut)")
+    viewer._redraw()
+    ax = viewer.figure.axes[0]
+    labels = [ln.get_label() for ln in ax.lines]
+    labels_ascii = [lbl.encode("ascii", "replace").decode() for lbl in labels]
+    print(
+        "[AR] labels:", labels_ascii,
+        "| title:", ax.get_title().encode("ascii", "replace").decode(),
+    )
+    if not any(lbl.startswith("AR at") for lbl in labels) or "3 dB limit" not in labels:
+        print("FAIL: AR curve / 3 dB line missing", labels)
+        return 24
+    if viewer.ar_controls.isHidden() or viewer.cmb_ar_phi.isHidden():
+        print("FAIL: AR azimuth selector hidden on the AR plot")
+        return 24
+    ar_curve = next(ln for ln in ax.lines if ln.get_label().startswith("AR at"))
+    ar0 = float(np.asarray(ar_curve.get_ydata(), dtype=float)[0])
+    print(f"[AR] phi=0 AR(theta=0) = {ar0:.2f} dB (expect 0.00)")
+    if abs(ar0) > 0.05:
+        print("FAIL: AR at boresight", ar0)
+        return 24
+    texts = [t.get_text() for t in ax.texts]
+    print("[AR] annotations:", [t.encode("ascii", "replace").decode() for t in texts])
+    if not any("AR" in t and "3 dB" in t for t in texts):
+        print("FAIL: AR <= 3 dB annotation missing", texts)
+        return 24
+    # phi-dependent fixture: 6.02 dB at phi = 180 -> no 3 dB annotation
+    viewer.cmb_ar_phi.setCurrentText("180°")
+    viewer._redraw()
+    ax = viewer.figure.axes[0]
+    ar_curve = next(ln for ln in ax.lines if ln.get_label().startswith("AR at"))
+    ar180 = float(np.asarray(ar_curve.get_ydata(), dtype=float)[0])
+    print(f"[AR] phi=180 AR(theta=0) = {ar180:.2f} dB (expect 6.02)")
+    if abs(ar180 - 6.02) > 0.1:
+        print("FAIL: AR at phi=180", ar180)
+        return 24
+    if any("3 dB" in t.get_text() for t in ax.texts):
+        print("FAIL: 3 dB annotation shown although AR(0) > 3 dB")
+        return 24
+    viewer.cmb_plot.setCurrentText("E-Plane (phi=90)")
+    viewer._redraw()
+    if not viewer.ar_controls.isHidden():
+        print("FAIL: AR azimuth selector still visible on a polar cut")
+        return 24
+    print("[AR] axial-ratio cut OK")
 
     # radiated efficiency plot: fixture eta = 0.85 -> 85 %
     def _line_ys():

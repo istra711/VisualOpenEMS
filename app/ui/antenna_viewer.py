@@ -325,6 +325,7 @@ class AntennaPatternViewer(QWidget):
         "E-Plane (phi=90)",
         "H-Plane (phi=0)",
         "Azimuth (theta=90)",
+        "Axial Ratio (theta cut)",
         "Gain vs Frequency",
         "Radiated Efficiency vs Frequency",
         "3D Pattern",
@@ -454,6 +455,28 @@ class AntennaPatternViewer(QWidget):
         ):
             dv.addWidget(w)
         self.toolbar.addWidget(self.dbi_controls)
+        # AR cut controls live in the plot toolbar as well, so the pop-out
+        # window (which reparents this panel) gets them without sync code.
+        self.lbl_ar_phi = QLabel("AR φ")
+        self.cmb_ar_phi = QComboBox()
+        self.cmb_ar_phi.addItems(
+            ["0°", "45°", "90°", "135°", "180°", "225°", "270°", "315°"]
+        )
+        self.cmb_ar_phi.setToolTip(
+            "Azimuth of the axial-ratio cut.\n"
+            "Uses the nearest stored φ of the NF2FF grid (no re-run)."
+        )
+        self.cmb_ar_phi.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
+        )
+        self.toolbar.addSeparator()
+        self.ar_controls = QWidget()
+        av = QHBoxLayout(self.ar_controls)
+        av.setContentsMargins(6, 0, 6, 0)
+        av.setSpacing(8)
+        for w in (self.lbl_ar_phi, self.cmb_ar_phi):
+            av.addWidget(w)
+        self.toolbar.addWidget(self.ar_controls)
         rv.addWidget(self.toolbar)
         rv.addWidget(self.canvas)
         self.right_panel = right
@@ -479,6 +502,7 @@ class AntennaPatternViewer(QWidget):
         self._radial_dlg.accepted.connect(self._redraw)
         self.slider_dbi_min.valueChanged.connect(self._on_dbi_slider)
         self.cmb_3d_field.currentTextChanged.connect(self._on_3d_field_changed)
+        self.cmb_ar_phi.currentTextChanged.connect(lambda *_: self._redraw())
         self.cmb_cmap.currentTextChanged.connect(self._on_cmap_changed)
         self.file_list.currentItemChanged.connect(self._on_file_selected)
         self.canvas.mpl_connect("button_press_event", self._on_click)
@@ -490,6 +514,7 @@ class AntennaPatternViewer(QWidget):
         self._dbi_data_min = -1.0
         self._dbi_data_max = 1.0
         self._set_dbi_controls_visible(False)
+        self._set_ar_controls_visible(False)
         # The "Loaded files" list stays EMPTY until the user clicks
         # "Scan work dir" (or opens a file explicitly).
 
@@ -619,6 +644,12 @@ class AntennaPatternViewer(QWidget):
         if gw is not None and hasattr(gw, "cmb_cmap"):
             gw.lbl_cmap.setVisible(visible)
             gw.cmb_cmap.setVisible(visible)
+
+    def _set_ar_controls_visible(self, visible: bool) -> None:
+        """Show the AR azimuth selector only on the axial-ratio cut."""
+        self.ar_controls.setVisible(visible)
+        self.lbl_ar_phi.setVisible(visible)
+        self.cmb_ar_phi.setVisible(visible)
 
     def _update_dbi_labels(self) -> None:
         self.lbl_dbi_min.setText(f"{self.slider_dbi_min.value() / 10.0:.1f}")
@@ -1044,10 +1075,13 @@ class AntennaPatternViewer(QWidget):
         self._polar_active = polar
         self._set_analysis_mode(polar)
         self._set_dbi_controls_visible(plot == "3D Pattern")
+        self._set_ar_controls_visible(plot == "Axial Ratio (theta cut)")
         if plot == "Gain vs Frequency":
             self._plot_gain_vs_freq()
         elif plot == "Radiated Efficiency vs Frequency":
             self._plot_eff_vs_freq()
+        elif plot == "Axial Ratio (theta cut)":
+            self._plot_ar_cut()
         elif plot == "3D Pattern":
             self._plot_3d()
         else:
@@ -1604,6 +1638,132 @@ class AntennaPatternViewer(QWidget):
         if yf.size and float(np.nanmax(yf)) <= 105.0:
             ax.set_ylim(0.0, 105.0)
         self._register_marker_ax(ax, "xy", "GHz" if "GHz" in xlabel else "", "%")
+
+    def _plot_ar_cut(self) -> None:
+        """Axial ratio vs theta at one azimuth (post-processing, no re-run).
+
+        The AR comes from the Stokes parameters of the stored complex
+        E_theta/E_phi (:mod:`app.postproc.polarization`), so the result needs a
+        complex NF2FF payload. 'Linear' directions (AR > 40 dB) are clipped for
+        the plot. This is the same quantity the Polarization… table reports at
+        the pattern peak, resolved over theta.
+        """
+        from app.postproc import polarization
+
+        ax = self.figure.add_subplot(111)
+        payload = (self.data or {}).get("raw") or {}
+        e_theta, e_phi, theta, phi, _d = polarization.fields(
+            payload, self._freq_index()
+        )
+        if e_theta is None or e_phi is None:
+            ax.text(
+                0.5,
+                0.5,
+                "This NF2FF result carries no complex E_theta/E_phi.\n"
+                "Re-run the NF2FF post-processing to get the axial ratio.",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=9,
+            )
+            ax.set_axis_off()
+            return
+
+        _ar, ar_db, _tilt, sense = polarization.axial_ratio(e_theta, e_phi)
+        th = np.asarray(theta, dtype=float).reshape(-1)
+        ph = np.asarray(phi, dtype=float).reshape(-1)
+        ar_map = np.asarray(ar_db, dtype=float)
+        if th.size == 0 or ph.size == 0 or ar_map.ndim != 2:
+            ax.text(
+                0.5,
+                0.5,
+                "No theta/phi grid in this result",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=9,
+            )
+            ax.set_axis_off()
+            return
+
+        # nearest stored azimuth (wrap-safe), so any phi choice works
+        want = self._ar_phi_deg()
+        diff = np.abs((ph - want + 180.0) % 360.0 - 180.0)
+        j = int(np.argmin(diff))
+        phi_sel = float(ph[j])
+
+        clip = 30.0
+        ar_col = ar_map[:, j]
+        finite = np.isfinite(ar_col)
+        ar_plot = np.where(finite, np.minimum(ar_col, clip), clip)
+
+        ax.axhspan(0.0, 3.0, color="tab:green", alpha=0.10, lw=0)
+        ax.plot(
+            th,
+            ar_plot,
+            "o-",
+            ms=3.5,
+            lw=1.4,
+            color="tab:blue",
+            label=f"AR at φ = {phi_sel:.0f}°",
+        )
+        ax.axhline(3.0, color="tab:green", ls="--", lw=1.1, label="3 dB limit")
+
+        # widest theta that still meets 3 dB, counted outward from boresight
+        # (stop at the first failure: a later low-AR lobe is not the main beam)
+        lim = None
+        for i in range(th.size):
+            if finite[i] and ar_col[i] <= 3.0:
+                lim = float(th[i])
+            else:
+                break
+        if lim is not None:
+            ax.axvline(lim, color="tab:green", lw=0.9, ls=":")
+            # label on the side with more room, so it does not sit on the curve
+            left = lim >= 45.0
+            ax.annotate(
+                f"AR ≤ 3 dB to θ = {lim:.0f}°",
+                xy=(lim, 3.0),
+                xytext=(lim - 3.0 if left else lim + 3.0, 10.0),
+                ha="right" if left else "left",
+                fontsize=8,
+                color="tab:green",
+            )
+
+        sense_sel = str(np.asarray(sense, dtype=object)[0, j])
+        freq_txt = self.cmb_freq.currentText()
+        title = f"Axial ratio vs θ at φ = {phi_sel:.0f}°"
+        if freq_txt:
+            title += f"  ·  {freq_txt}"
+        if sense_sel and sense_sel != "linear":
+            title += f"  ·  {sense_sel}"
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel("θ [°]")
+        ax.set_ylabel("AR [dB]")
+        ax.set_xlim(float(th.min()), float(th.max()))
+        ax.set_ylim(0.0, clip)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper left", fontsize=8)
+        if np.any(ar_col > clip) or np.any(~finite):
+            ax.text(
+                0.99,
+                0.02,
+                f"values above {clip:.0f} dB clipped",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=7,
+                color="0.4",
+            )
+        self._register_marker_ax(ax, "xy", "°", "dB")
+
+    def _ar_phi_deg(self) -> float:
+        """Azimuth selected in the AR cut combo, in degrees."""
+        txt = str(self.cmb_ar_phi.currentText()).strip().rstrip("°")
+        try:
+            return float(txt)
+        except ValueError:
+            return 0.0
 
     def _plot_3d(self) -> None:
         field = self._selected_3d_field()
