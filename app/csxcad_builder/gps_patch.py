@@ -34,7 +34,7 @@ quantity                    value
 axial ratio @ 1575.42 MHz   1.70 dB (RHCP)
 axial ratio minimum         0.93 dB @ 1570.0 MHz
 directivity                 7.29 dBi
-radiation efficiency        26.2 %
+radiation efficiency        27.3 %
 S11 minimum                 -19.1 dB @ 1597.5 MHz
 ==========================  =====================
 
@@ -206,7 +206,7 @@ def gps_patch_primitives(
         f"{a:.2f} mm square, {cut:.2f} mm chamfer on two opposite corners "
         f"({stair_step:g} mm staircase), centre-line probe feed {inset:.2f} mm "
         "inset. Converged run: S11 -12.4 dB, AR 1.70 dB (RHCP) at 1.57542 GHz, "
-        "D 7.29 dBi, efficiency 26.2 %."
+        "D 7.29 dBi, efficiency 27.3 %."
     )
 
     # Chamfered outline as a polygon (staircase, see module docstring).
