@@ -4188,7 +4188,8 @@ class MainWindow(QMainWindow):
             "excites both split modes with equal amplitude (a diagonal feed is "
             "linear).",
             "Converged run: S11 -12.4 dB, axial ratio 1.70 dB at 1.57542 GHz, "
-            "D 7.29 dBi, efficiency 27.3 % (pattern peak ~22 deg off boresight).",
+            "D 7.3-7.9 dBi, gain 1.7-3.2 dBi, efficiency 27-34 % (pattern peak "
+            "~22 deg off boresight; the far-field spread is the NF2FF box size).",
             "Set NF2FF to a frequency list (e.g. 1.55 ... 1.60 GHz) to see the "
             "axial-ratio dip; the CP bandwidth is only ~1 %.",
             f"Project: {saved}",

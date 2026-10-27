@@ -33,13 +33,19 @@ quantity                    value
 |S11| @ 1575.42 MHz         -12.4 dB
 axial ratio @ 1575.42 MHz   1.70 dB (RHCP)
 axial ratio minimum         0.93 dB @ 1570.0 MHz
-directivity                 7.29 dBi
-radiation efficiency        27.3 %
+directivity                 7.3 - 7.9 dBi
+realised gain               1.7 - 3.2 dBi
+radiation efficiency        27 - 34 %
 S11 minimum                 -19.1 dB @ 1597.5 MHz
 ==========================  =====================
 
+The ranges are not tolerance: they are the spread between two far-field box
+sizes (NF2FF +/-55 mm and +/-68 mm) on the identical geometry. S11 and axial
+ratio are stable to 0.03 dB, the far-field numbers are not - the larger box
+gives the upper end. The range is reported rather than a point value.
+
 The pattern peak sits at theta ~ 22 deg (the single feed tilts the beam);
-directivity at boresight is 6.12 dBi.
+directivity at boresight is 6.1 - 6.5 dBi.
 """
 
 from __future__ import annotations
@@ -206,7 +212,8 @@ def gps_patch_primitives(
         f"{a:.2f} mm square, {cut:.2f} mm chamfer on two opposite corners "
         f"({stair_step:g} mm staircase), centre-line probe feed {inset:.2f} mm "
         "inset. Converged run: S11 -12.4 dB, AR 1.70 dB (RHCP) at 1.57542 GHz, "
-        "D 7.29 dBi, efficiency 27.3 %."
+        "D 7.3-7.9 dBi, gain 1.7-3.2 dBi, efficiency 27-34 % (spread = NF2FF "
+        "box size, see module docstring)."
     )
 
     # Chamfered outline as a polygon (staircase, see module docstring).
