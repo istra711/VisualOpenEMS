@@ -1829,10 +1829,14 @@ class AntennaPatternViewer(QWidget):
         ax.set_ylim(-1, 1)
         ax.set_zlim(-1, 1)
         ax.set_box_aspect((1, 1, 1))
-        # no numbers on the 3D axes (the colorbar carries the dBi scale)
+        # no numbers on the 3D axes (the colorbar carries the dBi scale), but the
+        # three spatial directions stay labelled
         ax.set_xticklabels([])
         ax.set_yticklabels([])
         ax.set_zticklabels([])
+        ax.set_xlabel("x", labelpad=-10)
+        ax.set_ylabel("y", labelpad=-10)
+        ax.set_zlabel("z", labelpad=-10)
         ax.set_title(f"3D {field_name} [dBi]  ({dmin:.1f} .. {dmax:.1f})", fontsize=10)
         extend = "neither"
         if data_min < dmin and data_max > dmax:
