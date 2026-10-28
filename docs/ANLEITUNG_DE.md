@@ -508,6 +508,24 @@ bzw. nachdem der Solver gelaufen ist:
    die Schritt-Dateien, damit die ganze Serie in ParaView aus einer Datei läuft
    — siehe §12.4.
 
+### 7.1 Antenna-Tab in Bildern
+
+![Antenna-Tab, H-Ebene](images/antenna_tab_polar.png)
+
+**Abb. 1 — Antenna-Tab, H-Ebene.** Links die gefundenen NF2FF-Ergebnisse und der Details-Block (Dmax, Gmax, η, Prad, Raster), rechts der Polarschnitt mit dBi-Ringen. Rechtsklick auf den Plot öffnet das Analyse-Menü (HPBW, Vor-Rück-Verhältnis, Marker, Pop-out). Beispiel: der 2,45-GHz-Patch aus §2.2.
+
+![Axial-Ratio-Schnitt](images/antenna_ar_cut.png)
+
+**Abb. 2 — Plottyp „Axial Ratio (theta cut)".** AR über θ bei wählbarem Azimut (Wähler „AR φ" in der Plot-Toolbar, 0…315°). Das grüne Band ist der Bereich AR ≤ 3 dB; Punktlinie und Text nennen die größte Auslenkung ab Boresight, die diese Grenze noch einhält. Beispiel: GPS-L1-Patch bei 1,57542 GHz — 1,70 dB bei θ = 0°, ≤ 3 dB bis θ = 62°. Beim linear polarisierten 2,45-GHz-Beispiel liegt der AR durchgehend über 10 dB; dort taugt der Schnitt nur als Kontrolle.
+
+![3D-Muster](images/antenna_3d_pattern.png)
+
+**Abb. 3 — 3D-Muster.** Die drei Raumrichtungen sind mit x/y/z beschriftet. Der Radius ist auf das dBi-Fenster normiert (Regler „dBi min" in der Toolbar), die absoluten Werte liefert die Farbskala rechts.
+
+![Polarization-Dialog](images/polarization_dialog.png)
+
+**Abb. 4 — Dialog „Polarization…".** Eine Zeile pro Frequenz mit AR am Strahlmaximum, Drehsinn, Tilt, Peak-Richtung und Phasenzentrum (Δx/Δy/Δz, RMS). Die Kopfzeile nennt Anzahl der Punkte, Anteil mit AR ≤ 3 dB und die vorkommenden Drehsinne. „phase not well-defined" heißt: der Phasen-Fit ist für dieses Muster nicht belastbar.
+
 ---
 
 ## 8. Workflow-Checkliste (Antenne 2,45 GHz)

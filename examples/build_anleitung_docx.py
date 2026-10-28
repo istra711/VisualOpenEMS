@@ -116,6 +116,19 @@ def build() -> Path:
             p.paragraph_format.left_indent = Inches(0.25)
             continue
 
+        # Image: ![alt](relative/path) -> centred picture, caption line follows
+        m_img = re.match(r"^!\[[^\]]*\]\(([^)]+)\)$", stripped)
+        if m_img:
+            img_path = (MD_PATH.parent / m_img.group(1)).resolve()
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if img_path.exists():
+                p.add_run().add_picture(str(img_path), width=Inches(6.2))
+            else:
+                p.add_run(f"[missing image: {m_img.group(1)}]")
+            i += 1
+            continue
+
         # Headings
         m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if m:
