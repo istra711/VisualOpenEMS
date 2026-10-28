@@ -114,6 +114,26 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 
 ---
 
+## Screenshots
+
+![Antenna tab](docs/images/antenna_tab_polar.png)
+
+*Antenna tab: polar cut with dBi rings, the NF2FF results found in the work
+directory and the details block (Dmax, Gmax, η).*
+
+![Mesh viewer](docs/images/mesh_viewer.png)
+
+*Mesh viewer: XY slice at the patch plane — the grid refines over the patch and
+coarsens towards the λ/10 limit; grid, geometry, ports and the NF2FF box toggle
+separately, a right click on a marked cell opens the repair actions.*
+
+![3D pattern](docs/images/antenna_3d_pattern.png)
+
+*3D gain pattern with the spatial axes labelled x/y/z; the radius follows the
+"dBi min" window, the colour bar carries the absolute values.*
+
+---
+
 ## Architecture
 
 ```
@@ -358,6 +378,22 @@ python app\main.py
 *Axial ratio against θ for the GPS L1 preset at 1.57542 GHz (φ = 0°): 1.70 dB at
 boresight, ≤ 3 dB out to θ = 62°. The selector in the plot toolbar chooses the
 azimuth; the data comes from the `nf2ff.json` of the last run.*
+
+### Field Viewer
+
+- **Slices and iso-surfaces** of the field dumps, per-axis navigation
+- **Vector glyphs** ("Vectors") that replace the coloured surface, so the arrows
+  stay visible; "field underneath" brings the overlay back
+- **Series playback** over the time or frequency steps, with an arrow-motion
+  readout per step
+- **Export** — VTK rectilinear grids (`.vtr`) plus a ParaView collection
+  (`<dump>.pvd`), or MP4 with the current view settings
+
+![E field](docs/images/e_field_slice.png)
+
+*|Et| in the substrate of the 2.45 GHz example, sliced from the field dump. The
+post-processing writes such slices as PNG next to the dump; the interactive 3D
+view with the vector glyphs lives in the Field Viewer tab.*
 
 ---
 
