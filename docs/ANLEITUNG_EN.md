@@ -123,6 +123,10 @@ menu sits on the status bar at the bottom edge.
 
 ### Variant B — FreeCAD tools in the GUI
 
+![FreeCAD tools](images/dialog_freecad_tools.png)
+
+**FreeCAD tools.** Paths to FreeCADCmd and the FreeCAD GUI (example), work directory, deflection and import format. **Launch FreeCAD** opens FreeCAD with this work folder, **Export CAD…** writes STEP/STL into the project.
+
 1. **FreeCAD…**
 2. **Launch FreeCAD** (opens FreeCAD, cwd = work dir) — draw/edit, export STEP
 3. **Export CAD…**
@@ -292,6 +296,10 @@ This window is also **modeless**.
 
 ### 5.1 Mesh / frequencies
 
+![Mesh parameters](images/dialog_mesh_params.png)
+
+**Mesh parameters.** Preset, frequency range (f0/fc), excitation and the cell-size overrides in one place; **Apply** writes them into the project.
+
 Mesh parameters (see §5.0):
 
 | Parameter | Patch 2.45 GHz | Yagi 2.45 GHz |
@@ -356,6 +364,10 @@ preview and Help → "Mesh repair (critical cells)…").
 
 ### 5.2 Material / assignment
 
+![Material](images/dialog_material.png)
+
+**Material.** Kind (dielectric / pec), εr, κ and tan δ — FR4: εr 4.4, tan δ 0.02; copper as pec.
+
 1. **Add Material…** — e.g. `substrate` (εr=4.4, tanδ=0.02), `copper`
 2. **Add Assignment…**
    - Object: `substrate` (or the substrate name from the import)
@@ -364,6 +376,10 @@ preview and Help → "Mesh repair (critical cells)…").
 3. The assignment syncs stl primitives (pec → copper, dielectric → substrate …)
 
 ### 5.3 Port
+
+![Port](images/dialog_port.png)
+
+**Port.** Lumped, 50 Ω, direction, mesh dirs and start/stop in mm. Example: the probe port of the GPS preset — 1 mm × 1 mm from the ground plane (z = 0) to the patch top (z = 1.6 mm).
 
 1. **Add Port…**
 2. Type: **lumped** (patch) — resistance **50**
@@ -377,6 +393,10 @@ preview and Help → "Mesh repair (critical cells)…").
 → **[docs/FREECAD_PORTS_EN.md](FREECAD_PORTS_EN.md)**
 
 ### 5.4 NF2FF (radiation pattern)
+
+![NF2FF box](images/dialog_nf2ff.png)
+
+**NF2FF box.** Start/stop in mm; it has to enclose the antenna and its beam. Example: the GPS preset's box (±55 mm, z −25 … 28.2 mm). **Fit NF2FF to Geometry** sets it automatically.
 
 1. **Edit NF2FF Box…** or **Fit NF2FF to Geometry**
 2. Box around the antenna, e.g. start `[-40,-40,-20]`, stop `[40,80,20]`, center `[0,20,0]`
@@ -464,7 +484,7 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
 
 ![Mesh viewer, XY slice in the patch plane](images/mesh_viewer.png)
 
-**Fig. 1 — Mesh viewer, XY slice at z = 1.6 mm.** The grid appears as lines, the geometry as areas: 75 mm board (blue), patch with its two staircase chamfers (orange), port (red), NF2FF box (violet dashed) and the FDTD domain (black dashed). You can see the cells refine over the patch and coarsen towards the maximum allowed cell size. The slider next to "Plane" moves the cut, "Mesh grid" toggles the lines, "Cell sizes" colours the cell sizes, "Overview" shows the 3D view. Right-clicking a marked cell opens the repair actions from section 6.1.
+**Mesh viewer, XY slice at z = 1.6 mm.** The grid appears as lines, the geometry as areas: 75 mm board (blue), patch with its two staircase chamfers (orange), port (red), NF2FF box (violet dashed) and the FDTD domain (black dashed). You can see the cells refine over the patch and coarsen towards the maximum allowed cell size. The slider next to "Plane" moves the cut, "Mesh grid" toggles the lines, "Cell sizes" colours the cell sizes, "Overview" shows the 3D view. Right-clicking a marked cell opens the repair actions from section 6.1.
 
 ---
 
@@ -508,25 +528,25 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
 
 ![Antenna tab, H-plane](images/antenna_tab_polar.png)
 
-**Fig. 2 — Antenna tab, H-plane.** On the left the discovered NF2FF results and the details block (Dmax, Gmax, η, Prad, grid), on the right the polar cut with its dBi rings. Right-clicking the plot opens the analysis menu (HPBW, front-to-back ratio, markers, pop-out). Example: the 2.45 GHz patch from section 2.2.
+**Antenna tab, H-plane.** On the left the discovered NF2FF results and the details block (Dmax, Gmax, η, Prad, grid), on the right the polar cut with its dBi rings. Right-clicking the plot opens the analysis menu (HPBW, front-to-back ratio, markers, pop-out). Example: the 2.45 GHz patch from section 2.2.
 
 ![Axial ratio cut](images/antenna_ar_cut.png)
 
-**Fig. 3 — Plot type "Axial Ratio (theta cut)".** AR against θ at a selectable azimuth ("AR φ" selector in the plot toolbar, 0…315°). The green band is AR ≤ 3 dB; the dotted line and its label give the widest angle from boresight that still meets it. Example: GPS L1 patch at 1.57542 GHz — 1.70 dB at θ = 0°, ≤ 3 dB out to θ = 62°. The linearly polarised 2.45 GHz example stays above 10 dB everywhere, so there the cut is only a check.
+**Plot type "Axial Ratio (theta cut)".** AR against θ at a selectable azimuth ("AR φ" selector in the plot toolbar, 0…315°). The green band is AR ≤ 3 dB; the dotted line and its label give the widest angle from boresight that still meets it. Example: GPS L1 patch at 1.57542 GHz — 1.70 dB at θ = 0°, ≤ 3 dB out to θ = 62°. The linearly polarised 2.45 GHz example stays above 10 dB everywhere, so there the cut is only a check.
 
 ![3D pattern](images/antenna_3d_pattern.png)
 
-**Fig. 4 — 3D pattern.** The three spatial directions are labelled x/y/z. The radius is normalised to the dBi window ("dBi min" slider in the toolbar); the colour bar carries the absolute values.
+**3D pattern.** The three spatial directions are labelled x/y/z. The radius is normalised to the dBi window ("dBi min" slider in the toolbar); the colour bar carries the absolute values.
 
 ![Polarization dialog](images/polarization_dialog.png)
 
-**Fig. 5 — "Polarization…" dialog.** One row per frequency with the AR at the pattern peak, the sense, tilt, peak direction and the phase center (Δx/Δy/Δz, RMS). The header line gives the number of points, the fraction with AR ≤ 3 dB and the senses present. "phase not well-defined" means the phase fit is not reliable for this pattern.
+**"Polarization…" dialog.** One row per frequency with the AR at the pattern peak, the sense, tilt, peak direction and the phase center (Δx/Δy/Δz, RMS). The header line gives the number of points, the fraction with AR ≤ 3 dB and the senses present. "phase not well-defined" means the phase fit is not reliable for this pattern.
 
 ### 7.2 Field picture
 
 ![E field in the substrate](images/e_field_slice.png)
 
-**Fig. 6 — |Et| in the substrate, a slice from the field dump Et_substrate (2.45 GHz example).** Two maxima left and right of the centre, with the mode null between them. The axes are in metres, the colour bar in V/m. The post-processing writes such slices as PNG next to the dump (`work/<project>/fields/`). The interactive view is the **Field Viewer** tab: slices and iso-surfaces, vector glyphs ("Vectors") for the field direction, series playback over the time or frequency steps, and export as a VTK series including the ParaView collection (`<dump>.pvd`) and as MP4.
+**|Et| in the substrate, a slice from the field dump Et_substrate (2.45 GHz example).** Two maxima left and right of the centre, with the mode null between them. The axes are in metres, the colour bar in V/m. The post-processing writes such slices as PNG next to the dump (`work/<project>/fields/`). The interactive view is the **Field Viewer** tab: slices and iso-surfaces, vector glyphs ("Vectors") for the field direction, series playback over the time or frequency steps, and export as a VTK series including the ParaView collection (`<dump>.pvd`) and as MP4.
 
 ---
 

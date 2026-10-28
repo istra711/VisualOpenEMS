@@ -125,6 +125,10 @@ Copy / Select All. Das gleiche Menü liegt auf der Statuszeile ganz unten.
 
 ### Variante B — FreeCAD-Tools in der GUI
 
+![FreeCAD-Tools](images/dialog_freecad_tools.png)
+
+**FreeCAD-Tools.** Pfade zu FreeCADCmd und zur FreeCAD-GUI (Beispiel), Work-Verzeichnis, Deflection und Importformat. **Launch FreeCAD** öffnet FreeCAD mit diesem Arbeitsordner, **Export CAD…** schreibt STEP/STL ins Projekt.
+
 1. **FreeCAD…**
 2. **Launch FreeCAD** (öffnet FreeCAD, cwd = Work-Dir) — zeichnen/ändern, STEP exportieren
 3. **Export CAD…**
@@ -294,6 +298,10 @@ angewandte Änderungen. Das Fenster ist ebenfalls **modeless**.
 
 ### 5.1 Mesh / Frequenzen
 
+![Mesh-Parameter](images/dialog_mesh_params.png)
+
+**Mesh-Parameter.** Preset, Frequenzbereich (f0/fc), Anregung und die Overrides für die Zellgrößen an einer Stelle; **Apply** schreibt sie ins Projekt.
+
 Mesh-Parameter (siehe §5.0):
 
 | Parameter | Patch 2,45 GHz | Yagi 2,45 GHz |
@@ -362,6 +370,10 @@ Reparatur-Dialog und Help → „Mesh repair (critical cells)…").
 
 ### 5.2 Material / Assignment
 
+![Material](images/dialog_material.png)
+
+**Material.** Art (dielectric / pec), εr, κ und tan δ — für FR4: εr 4,4, tan δ 0,02; Kupfer als pec.
+
 1. **Add Material…** — z. B. `substrate` (εr=4,4, tanδ=0,02), `copper`
 2. **Add Assignment…**
    - Object: `substrate` (oder Substrat-Name aus Import)
@@ -370,6 +382,10 @@ Reparatur-Dialog und Help → „Mesh repair (critical cells)…").
 3. Assignment synchronisiert stl-Primitives (pec → copper, dielectric → substrate …)
 
 ### 5.3 Port
+
+![Port](images/dialog_port.png)
+
+**Port.** lumped, 50 Ω, Richtung, Mesh dirs und Start/Stop in mm. Beispiel: der Probe-Port des GPS-Presets — 1 mm × 1 mm von der Ground-Ebene (z = 0) bis zur Patch-Oberkante (z = 1,6 mm).
 
 1. **Add Port…**
 2. Typ: **lumped** (Patch) — Resistanz **50**
@@ -383,6 +399,10 @@ Reparatur-Dialog und Help → „Mesh repair (critical cells)…").
 → **[docs/FREECAD_PORTS_DE.md](FREECAD_PORTS_DE.md)**
 
 ### 5.4 NF2FF (Strahlungsdiagramm)
+
+![NF2FF-Box](images/dialog_nf2ff.png)
+
+**NF2FF-Box.** Start/Stop in mm; sie muss die Antenne samt Keule umschließen. Beispiel: die Box des GPS-Presets (±55 mm, z −25 … 28,2 mm). **Fit NF2FF to Geometry** setzt sie automatisch.
 
 1. **Edit NF2FF Box…** oder **Fit NF2FF to Geometry**
 2. Box um Antenne, z. B. Start `[-40,-40,-20]`, Stop `[40,80,20]`, Center `[0,20,0]`
@@ -471,7 +491,7 @@ bzw. nachdem der Solver gelaufen ist:
 
 ![Mesh-Viewer, XY-Schnitt in der Patch-Ebene](images/mesh_viewer.png)
 
-**Abb. 1 — Mesh-Viewer, XY-Schnitt bei z = 1,6 mm.** Das Gitter erscheint als Linien, die Geometrie als Flächen: 75-mm-Board (blau), Patch mit den beiden Treppen-Fasen (orange), Port (rot), NF2FF-Box (violett gestrichelt) und Rechen-Domain (schwarz gestrichelt). Man sieht, wie die Zellen über dem Patch feiner werden und nach außen auf die maximal erlaubte Zellgröße wachsen. Der Schieber neben „Plane" legt den Schnitt, „Mesh grid" blendet das Gitter, „Cell sizes" färbt die Zellgrößen, „Overview" zeigt die 3D-Ansicht. Rechtsklick auf eine markierte Zelle öffnet die Reparatur-Aktionen aus §6.1.
+**Mesh-Viewer, XY-Schnitt bei z = 1,6 mm.** Das Gitter erscheint als Linien, die Geometrie als Flächen: 75-mm-Board (blau), Patch mit den beiden Treppen-Fasen (orange), Port (rot), NF2FF-Box (violett gestrichelt) und Rechen-Domain (schwarz gestrichelt). Man sieht, wie die Zellen über dem Patch feiner werden und nach außen auf die maximal erlaubte Zellgröße wachsen. Der Schieber neben „Plane" legt den Schnitt, „Mesh grid" blendet das Gitter, „Cell sizes" färbt die Zellgrößen, „Overview" zeigt die 3D-Ansicht. Rechtsklick auf eine markierte Zelle öffnet die Reparatur-Aktionen aus §6.1.
 
 ---
 
@@ -518,25 +538,25 @@ bzw. nachdem der Solver gelaufen ist:
 
 ![Antenna-Tab, H-Ebene](images/antenna_tab_polar.png)
 
-**Abb. 2 — Antenna-Tab, H-Ebene.** Links die gefundenen NF2FF-Ergebnisse und der Details-Block (Dmax, Gmax, η, Prad, Raster), rechts der Polarschnitt mit dBi-Ringen. Rechtsklick auf den Plot öffnet das Analyse-Menü (HPBW, Vor-Rück-Verhältnis, Marker, Pop-out). Beispiel: der 2,45-GHz-Patch aus §2.2.
+**Antenna-Tab, H-Ebene.** Links die gefundenen NF2FF-Ergebnisse und der Details-Block (Dmax, Gmax, η, Prad, Raster), rechts der Polarschnitt mit dBi-Ringen. Rechtsklick auf den Plot öffnet das Analyse-Menü (HPBW, Vor-Rück-Verhältnis, Marker, Pop-out). Beispiel: der 2,45-GHz-Patch aus §2.2.
 
 ![Axial-Ratio-Schnitt](images/antenna_ar_cut.png)
 
-**Abb. 3 — Plottyp „Axial Ratio (theta cut)".** AR über θ bei wählbarem Azimut (Wähler „AR φ" in der Plot-Toolbar, 0…315°). Das grüne Band ist der Bereich AR ≤ 3 dB; Punktlinie und Text nennen die größte Auslenkung ab Boresight, die diese Grenze noch einhält. Beispiel: GPS-L1-Patch bei 1,57542 GHz — 1,70 dB bei θ = 0°, ≤ 3 dB bis θ = 62°. Beim linear polarisierten 2,45-GHz-Beispiel liegt der AR durchgehend über 10 dB; dort taugt der Schnitt nur als Kontrolle.
+**Plottyp „Axial Ratio (theta cut)".** AR über θ bei wählbarem Azimut (Wähler „AR φ" in der Plot-Toolbar, 0…315°). Das grüne Band ist der Bereich AR ≤ 3 dB; Punktlinie und Text nennen die größte Auslenkung ab Boresight, die diese Grenze noch einhält. Beispiel: GPS-L1-Patch bei 1,57542 GHz — 1,70 dB bei θ = 0°, ≤ 3 dB bis θ = 62°. Beim linear polarisierten 2,45-GHz-Beispiel liegt der AR durchgehend über 10 dB; dort taugt der Schnitt nur als Kontrolle.
 
 ![3D-Muster](images/antenna_3d_pattern.png)
 
-**Abb. 4 — 3D-Muster.** Die drei Raumrichtungen sind mit x/y/z beschriftet. Der Radius ist auf das dBi-Fenster normiert (Regler „dBi min" in der Toolbar), die absoluten Werte liefert die Farbskala rechts.
+**3D-Muster.** Die drei Raumrichtungen sind mit x/y/z beschriftet. Der Radius ist auf das dBi-Fenster normiert (Regler „dBi min" in der Toolbar), die absoluten Werte liefert die Farbskala rechts.
 
 ![Polarization-Dialog](images/polarization_dialog.png)
 
-**Abb. 5 — Dialog „Polarization…".** Eine Zeile pro Frequenz mit AR am Strahlmaximum, Drehsinn, Tilt, Peak-Richtung und Phasenzentrum (Δx/Δy/Δz, RMS). Die Kopfzeile nennt Anzahl der Punkte, Anteil mit AR ≤ 3 dB und die vorkommenden Drehsinne. „phase not well-defined" heißt: der Phasen-Fit ist für dieses Muster nicht belastbar.
+**Dialog „Polarization…".** Eine Zeile pro Frequenz mit AR am Strahlmaximum, Drehsinn, Tilt, Peak-Richtung und Phasenzentrum (Δx/Δy/Δz, RMS). Die Kopfzeile nennt Anzahl der Punkte, Anteil mit AR ≤ 3 dB und die vorkommenden Drehsinne. „phase not well-defined" heißt: der Phasen-Fit ist für dieses Muster nicht belastbar.
 
 ### 7.2 Feldbild
 
 ![E-Feld im Substrat](images/e_field_slice.png)
 
-**Abb. 6 — |Et| im Substrat, Schnitt aus dem Felddump Et_substrate (2,45-GHz-Beispiel).** Zwei Maxima links und rechts der Mitte, dazwischen die Moden-Null. Die Achsen stehen in Metern, die Farbskala in V/m. Solche Schnitte schreibt das Postprocessing als PNG neben den Dump (`work/<projekt>/fields/`). Die interaktive Ansicht bietet der Tab **Field Viewer**: Schnittflächen und Iso-Flächen, Vektorpfeile („Vectors") für die Feldrichtung, Serien-Playback über die Zeit- oder Frequenzschritte, Export als VTK-Serie inklusive ParaView-Collection (`<dump>.pvd`) und als MP4.
+**|Et| im Substrat, Schnitt aus dem Felddump Et_substrate (2,45-GHz-Beispiel).** Zwei Maxima links und rechts der Mitte, dazwischen die Moden-Null. Die Achsen stehen in Metern, die Farbskala in V/m. Solche Schnitte schreibt das Postprocessing als PNG neben den Dump (`work/<projekt>/fields/`). Die interaktive Ansicht bietet der Tab **Field Viewer**: Schnittflächen und Iso-Flächen, Vektorpfeile („Vectors") für die Feldrichtung, Serien-Playback über die Zeit- oder Frequenzschritte, Export als VTK-Serie inklusive ParaView-Collection (`<dump>.pvd`) und als MP4.
 
 ---
 

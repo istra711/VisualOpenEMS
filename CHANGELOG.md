@@ -32,9 +32,14 @@ _No changes yet._
 - Tests: `tests/test_grid_export.py` (sorting, dedupe, mm conversion, cell
   statistics, cylindrical axes, invalid unit) and new `.pvd` cases in
   `tests/test_vtk_export.py`.
-- Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` gained sections 6.2, 7.1
-  and 7.2 with six screenshots (mesh viewer, antenna tab, axial-ratio cut, 3D
-  pattern, Polarization dialog, E-field slice) under `docs/images/`;
+- Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` are illustrated step by
+  step — one screenshot per configuration step (FreeCAD tools, mesh parameters,
+  material, port, NF2FF box) plus the evaluation pictures (mesh viewer, antenna
+  tab, axial-ratio cut, 3D pattern, Polarization dialog, E-field slice), eleven
+  figures in `docs/images/`. The drawing steps in FreeCAD are the only ones
+  without a picture: they cannot be captured headless. Figure numbers were
+  dropped from the captions (the text never referred to them), so inserting a
+  figure no longer renumbers the rest.
   `examples/build_anleitung_docx.py` now renders `![alt](path)` so the Word
   build carries the same figures. The README gained a *Screenshots* section
   (the table of contents promised one that did not exist) plus one picture each
