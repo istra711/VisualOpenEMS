@@ -555,11 +555,15 @@ python tests\yagi_mesh_ends.py    # Yagi cylinder-end densification
 | [docs/DIAGNOSTICS_CHANGES_DE.md](docs/DIAGNOSTICS_CHANGES_DE.md) | Same, German — with the measurements over the real projects (DE) |
 | [CHANGELOG.md](CHANGELOG.md) | Full change history per release |
 
-The German guide is also available as a Word document and as a LibreOffice
-document: [ANLEITUNG_DE.docx](docs/ANLEITUNG_DE.docx),
-[ANLEITUNG_DE.odt](docs/ANLEITUNG_DE.odt). Both are generated from the Markdown
-source with `python examples/build_anleitung_docx.py --odt` (the ODT step uses a
-headless LibreOffice; without one it is skipped).
+Both guides are also available as Word and LibreOffice documents:
+[ANLEITUNG_DE.docx](docs/ANLEITUNG_DE.docx) ·
+[ANLEITUNG_DE.odt](docs/ANLEITUNG_DE.odt) ·
+[ANLEITUNG_EN.docx](docs/ANLEITUNG_EN.docx) ·
+[ANLEITUNG_EN.odt](docs/ANLEITUNG_EN.odt).
+All four are generated from the Markdown sources with
+`python examples/build_anleitung_docx.py --all --odt` (the ODT step uses a
+headless LibreOffice and is skipped when none is installed; `--md` / `--docx`
+build a single file).
 
 ---
 

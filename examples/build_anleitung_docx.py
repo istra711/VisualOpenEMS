@@ -9,6 +9,7 @@ and the conversion is skipped with a message.
 
 from __future__ import annotations
 
+import argparse
 import re
 import shutil
 import subprocess
@@ -128,8 +129,11 @@ def _add_table(doc: Document, rows: list[list[str]]) -> None:
     doc.add_paragraph()
 
 
-def build() -> Path:
-    md = MD_PATH.read_text(encoding="utf-8")
+def build(md_path: Path | None = None, docx_path: Path | None = None) -> Path:
+    """Render one guide: Markdown -> DOCX. Defaults to the German guide."""
+    md_path = Path(md_path) if md_path else MD_PATH
+    docx_path = Path(docx_path) if docx_path else md_path.with_suffix(".docx")
+    md = md_path.read_text(encoding="utf-8")
     lines = md.splitlines()
 
     doc = Document()
@@ -178,7 +182,7 @@ def build() -> Path:
         # Image: ![alt](relative/path) -> centred picture, caption line follows
         m_img = re.match(r"^!\[[^\]]*\]\(([^)]+)\)$", stripped)
         if m_img:
-            img_path = (MD_PATH.parent / m_img.group(1)).resolve()
+            img_path = (md_path.parent / m_img.group(1)).resolve()
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if img_path.exists():
@@ -241,24 +245,64 @@ def build() -> Path:
         _inline(p, stripped)
         i += 1
 
-    # Footer note
+    # Footer note (language follows the source file name)
+    rel = md_path.relative_to(ROOT).as_posix() if md_path.is_relative_to(ROOT) else md_path.name
+    if md_path.name.endswith("_DE.md"):
+        footer = f"Generiert aus {rel} — FreeCAD OpenEMS GUI"
+    else:
+        footer = f"Generated from {rel} — FreeCAD OpenEMS GUI"
     doc.add_paragraph()
     p = doc.add_paragraph()
-    run = p.add_run("Generiert aus docs/ANLEITUNG_DE.md — FreeCAD OpenEMS GUI")
+    run = p.add_run(footer)
     run.italic = True
     run.font.size = Pt(9)
     run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
-    doc.save(DOCX_PATH)
-    return DOCX_PATH
+    doc.save(docx_path)
+    return docx_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Render the guides to DOCX (and ODT).")
+    ap.add_argument(
+        "--md", type=Path, help="Markdown source (default: docs/ANLEITUNG_DE.md)"
+    )
+    ap.add_argument(
+        "--docx", type=Path, help="DOCX output (default: next to the Markdown)"
+    )
+    ap.add_argument(
+        "--odt", action="store_true", help="also convert to ODT with headless LibreOffice"
+    )
+    ap.add_argument(
+        "--all", action="store_true", help="build both the German and the English guide"
+    )
+    args = ap.parse_args(argv)
+
+    jobs: list[tuple[Path, Path]] = []
+    if args.all:
+        for lang in ("DE", "EN"):
+            md = ROOT / "docs" / f"ANLEITUNG_{lang}.md"
+            jobs.append((md, md.with_suffix(".docx")))
+    else:
+        md = args.md or MD_PATH
+        jobs.append((md, args.docx or md.with_suffix(".docx")))
+
+    rc = 0
+    for md, docx in jobs:
+        if not md.exists():
+            print(f"missing source: {md}")
+            rc = 1
+            continue
+        out = build(md, docx)
+        print(f"Wrote {out}")
+        print(f"Size: {out.stat().st_size} bytes")
+        if args.odt:
+            odt = convert_to_odt(out)
+            if odt is not None:
+                print(f"Wrote {odt}")
+                print(f"Size: {odt.stat().st_size} bytes")
+    return rc
 
 
 if __name__ == "__main__":
-    path = build()
-    print(f"Wrote {path}")
-    print(f"Size: {path.stat().st_size} bytes")
-    if "--odt" in sys.argv[1:]:
-        odt = convert_to_odt(path)
-        if odt is not None:
-            print(f"Wrote {odt}")
-            print(f"Size: {odt.stat().st_size} bytes")
+    raise SystemExit(main())
