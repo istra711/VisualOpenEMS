@@ -38,6 +38,10 @@ Empfehlung: **Ein Solide = ein Objekt**, mit klarer Bezeichnung (geht später al
 
 ### 2.2 Konkretes Beispiel: Patch-Antenne 2,45 GHz (FR4, εr≈4,4, h=1,6 mm)
 
+![Querschnitt der Zielgeometrie](images/geometry_section.png)
+
+**Querschnitt der Zielgeometrie.** So muss die Skizze aussehen: Patch auf 1,6 mm FR4 über dem durchgehenden Ground, der Port als rote Linie in der Mitte. Das gezeigte Gitter ist schon auf die dünne Schicht verfeinert — im Mesh Viewer, nicht in FreeCAD.
+
 Orientierung: **Z = Höhe**, Patch in XY-Ebene.
 
 | Bauteil | Maße (mm) | FreeCAD-Tipp |
@@ -434,6 +438,10 @@ Reparatur-Dialog und Help → „Mesh repair (critical cells)…").
 **Save…** → z. B. `work\meine_antenne\antenne.fcsim.json`
 
 ### 5.6 Domain-Größe (schwarzer Rahmen im Mesh Viewer)
+
+![Domain und Boxen](images/mesh_viewer_overview.png)
+
+**Domain und Boxen.** Die Overview-Ansicht zeigt alle drei Projektionen: schwarz gestrichelt die Rechen-Domain, violett gestrichelt die NF2FF-Box, dazu Zellzahlen pro Achse und die Domain-Größe. Der schwarze Rahmen im Mesh Viewer ist genau diese Domain.
 
 Die Domain lässt sich nicht direkt bearbeiten — sie ergibt sich aus **Geometrie +
 Air-Margin + Gitterrundung**. Hebel:

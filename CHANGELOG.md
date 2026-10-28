@@ -33,14 +33,18 @@ _No changes yet._
   statistics, cylindrical axes, invalid unit) and new `.pvd` cases in
   `tests/test_vtk_export.py`.
 - Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` are illustrated step by
-  step, sixteen figures in `docs/images/`: the main window (start and with the
-  preset loaded), the configuration dialogs (FreeCAD tools, simulation
-  parameters, mesh parameters, material, port, NF2FF box), the script editor,
-  and the evaluation pictures (mesh viewer, S-parameters, antenna tab,
-  axial-ratio cut, 3D pattern, Polarization dialog, E-field slice). The drawing
-  steps in FreeCAD are the only ones without a picture: they cannot be captured
-  headless. Figure numbers were dropped from the captions (the text never
-  referred to them), so inserting a figure no longer renumbers the rest.
+  step, eighteen figures in `docs/images/`: the cross-section of the target
+  geometry, the main window (start and with the preset loaded), the
+  configuration dialogs (FreeCAD tools, simulation parameters, mesh parameters,
+  material, port, NF2FF box), the script editor, and the evaluation pictures
+  (mesh viewer slice and overview, S-parameters, antenna tab, axial-ratio cut,
+  3D pattern, Polarization dialog, E-field slice). Only the drawing itself in
+  FreeCAD has no picture — a GUI application cannot be captured headless.
+  Figure numbers were dropped from the captions (the text never referred to
+  them), so inserting a figure no longer renumbers the rest.
+- Docs: `build_anleitung_docx.py` deletes the target ODT before converting —
+  LibreOffice reports success without overwriting an existing file, which had
+  left a stale `ANLEITUNG_EN.odt` behind (16 of 18 pictures).
   `examples/build_anleitung_docx.py` now renders `![alt](path)` so the Word
   build carries the same figures. The README gained a *Screenshots* section
   (the table of contents promised one that did not exist) plus one picture each

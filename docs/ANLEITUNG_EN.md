@@ -36,6 +36,10 @@ Recommendation: **one solid = one object**, with a clear name (it becomes the na
 
 ### 2.2 Concrete example: patch antenna 2.45 GHz (FR4, εr≈4.4, h=1.6 mm)
 
+![Cross-section of the target geometry](images/geometry_section.png)
+
+**Cross-section of the target geometry.** This is what the sketch has to look like: patch on 1.6 mm FR4 above the continuous ground, the port as a red line in the middle. The grid shown is already refined onto the thin layer — that is the mesh viewer, not FreeCAD.
+
 Orientation: **Z = height**, patch in the XY plane.
 
 | Part | Dimensions (mm) | FreeCAD tip |
@@ -428,6 +432,10 @@ preview and Help → "Mesh repair (critical cells)…").
 **Save…** → e.g. `work\my_antenna\antenna.fcsim.json`
 
 ### 5.6 Domain size (black frame in the mesh viewer)
+
+![Domain and boxes](images/mesh_viewer_overview.png)
+
+**Domain and boxes.** The overview shows all three projections: black dashed the FDTD domain, violet dashed the NF2FF box, plus the cell count per axis and the domain size. The black frame in the mesh viewer is exactly this domain.
 
 The domain cannot be edited directly — it results from **geometry + air margin +
 grid rounding**. Levers:

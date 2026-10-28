@@ -67,8 +67,11 @@ def convert_to_odt(docx_path: Path) -> Path | None:
         str(docx_path.parent),
         str(docx_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
     odt = docx_path.with_suffix(".odt")
+    # LibreOffice reports success even when it does not overwrite an existing
+    # file (locked/read-only), so delete the target first and verify afterwards.
+    odt.unlink(missing_ok=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0 or not odt.exists():
         print("ODT conversion failed:", (proc.stderr or proc.stdout).strip()[:400])
         return None
