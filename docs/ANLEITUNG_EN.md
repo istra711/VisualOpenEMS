@@ -72,6 +72,11 @@ Step-by-step: **[docs/FREECAD_PORTS_EN.md](FREECAD_PORTS_EN.md)**
 
 ## 3. Start the GUI
 
+![Main window after start](images/main_window.png)
+
+**Main window after start.** Tabs Geometry / Mesh Viewer / S-Params / Antenna / Field Viewer, the project tree on the left, the import and material panels in the middle, log and mesh report at the bottom.
+
+
 ```text
 C:\Users\istra\Documents\claude_ps\FreeCAD_OpenEMS_GUI
 python app\main.py
@@ -145,6 +150,11 @@ c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe examples\run_stl_import_exa
 ```
 
 ### Variant C — preset (only to test the simulation)
+
+![After loading the preset](images/main_window_gps_preset.png)
+
+**After loading the preset.** Project tree with ground, substrate and patch, materials, port and NF2FF box; the geometry text carries the preset's figures and the hint how to make the axial-ratio dip visible with a frequency list.
+
 
 1. **Preset: Patch Antenna…**, **Preset: Yagi Antenna…** or **Preset: PCB Filter…**
 2. **PCB Filter** = 2-port microstrip notch filter on FR4 (stopband at 2.45 GHz):
@@ -261,6 +271,11 @@ Notes:
 ## 5. Configure the project
 
 ### 5.0 Simulation parameters (own window)
+
+![Simulation Parameters](images/dialog_sim_params.png)
+
+**Simulation Parameters.** Two tabs; the computed values on top (f_max, λ, cell sizes, air margin), below them the end criterion, timesteps, threads and boundary conditions.
+
 
 **Menu → Simulation → Simulation Parameters…** (or **Ctrl+Shift+P**) opens a
 separate, movable window with **all** simulation parameters — two tabs:
@@ -455,6 +470,10 @@ warning) — the mesh viewer outlines such primitives in red and writes
    - Manual: `<python> work\<project_name>\project_run.py`
 4. Result files under `work\<project_name>\` (among others `project_run.py`, meshes, S-params)
 
+![Script editor](images/dialog_script_editor.png)
+
+**Script editor.** Shows project_run.py — the script openEMS actually executes — with Save, Revert and Regenerate from project. Local edits are backed up as project_run_edited.py before a regeneration.
+
 ### 6.1 Mesh and simulation diagnostics
 
 Two reports answer "is this run trustworthy?" — before and after the solver ran:
@@ -489,6 +508,11 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
 ---
 
 ## 7. Evaluation
+
+![S-parameters](images/sparams_viewer.png)
+
+**S-parameters.** Smith chart, |S| dB, phase, VSWR; click markers, "Go to S-min" jumps to the resonance dip, "Pop out" detaches the plot into its own window.
+
 
 1. **S-Params Viewer**
    - S11 / S21, dB, phase

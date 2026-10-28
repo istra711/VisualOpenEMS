@@ -74,6 +74,11 @@ Schritt-für-Schritt: **[docs/FREECAD_PORTS_DE.md](FREECAD_PORTS_DE.md)**
 
 ## 3. GUI starten
 
+![Hauptfenster beim Start](images/main_window.png)
+
+**Hauptfenster beim Start.** Tabs Geometry / Mesh Viewer / S-Params / Antenna / Field Viewer, links der Projektbaum, in der Mitte die Import- und Materialbereiche, unten Log und Mesh-Report.
+
+
 ```text
 C:\Users\istra\Documents\claude_ps\FreeCAD_OpenEMS_GUI
 python app\main.py
@@ -146,6 +151,11 @@ c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe examples\run_stl_import_exa
 ```
 
 ### Variante C — Preset (nur zum Testen der Simulation)
+
+![Nach dem Laden des Presets](images/main_window_gps_preset.png)
+
+**Nach dem Laden des Presets.** Projektbaum mit Ground, Substrat und Patch, Materialien, Port und NF2FF-Box; im Geometrie-Text stehen die Kennwerte des Presets und der Hinweis, wie man den AR-Dip über eine Frequenzliste sichtbar macht.
+
 
 1. **Preset: Patch Antenna…**, **Preset: Yagi Antenna…** oder **Preset: PCB Filter…**
 2. **PCB Filter** = 2-Port-Mikrostreifen-Notchfilter auf FR4 (Stopband bei 2,45 GHz):
@@ -262,6 +272,11 @@ Hinweise:
 ## 5. Projekt konfigurieren
 
 ### 5.0 Simulations-Parameter (eigenes Fenster)
+
+![Simulation Parameters](images/dialog_sim_params.png)
+
+**Simulation Parameters.** Zwei Tabs; oben die berechneten Werte (f_max, λ, Zellgrößen, Luftrand), darunter Endkriterium, Timesteps, Threads und Randbedingungen.
+
 
 **Menü → Simulation → Simulation Parameters…** (oder **Strg+Umschalt+P**) öffnet
 ein eigenes, verschiebbares Fenster mit **allen** Simulationsparametern —
@@ -461,6 +476,10 @@ Warning) — der Mesh Viewer umrahmt solche Primitive rot und schreibt
    - Manuell: `<python> work\<Projektname>\project_run.py`
 4. Ergebnis-Dateien unter `work\<Projektname>\` (u. a. `project_run.py`, Meshes, S-Params)
 
+![Script-Editor](images/dialog_script_editor.png)
+
+**Script-Editor.** Zeigt project_run.py — das Skript, das openEMS wirklich ausführt — mit Save, Revert und Regenerate from project. Eigene Änderungen werden vor dem Neuerzeugen als project_run_edited.py gesichert.
+
 ### 6.1 Mesh- und Simulationsdiagnose
 
 Zwei Berichte beantworten die Frage „ist dieser Lauf belastbar?" – noch bevor
@@ -496,6 +515,11 @@ bzw. nachdem der Solver gelaufen ist:
 ---
 
 ## 7. Auswertung
+
+![S-Params](images/sparams_viewer.png)
+
+**S-Params.** Smith-Chart, |S| dB, Phase, VSWR; Marker per Klick, „Go to S-min“ springt auf das Resonanzminimum, „Pop out“ löst den Plot in ein eigenes Fenster.
+
 
 1. **S-Params Viewer**
    - S11 / S21, dB, Phase
