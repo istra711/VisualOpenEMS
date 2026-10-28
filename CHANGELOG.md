@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.7.0] - 2026-10-28
+
 ### Added
 
 - **Grid export (JSON)** (`app/meshing/grid_export.py`, Mesh → Export grid
@@ -28,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests: `tests/test_grid_export.py` (sorting, dedupe, mm conversion, cell
   statistics, cylindrical axes, invalid unit) and new `.pvd` cases in
   `tests/test_vtk_export.py`.
+- Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` gained section 7.1 with
+  four screenshots (Antenna tab, axial-ratio cut, 3D pattern, Polarization
+  dialog) under `docs/images/`; `examples/build_anleitung_docx.py` now renders
+  `![alt](path)` so the Word build carries the same figures.
 - Docs: new help topic **“Export & Interchange”** (Help menu, also in the F1
   dialog) covering every export path — STEP, grid JSON, CSX XML, VTK/`.pvd`/MP4,
   Touchstone, PNG — with a data/format/consumer table and the limits, plus
@@ -68,11 +76,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Help-menu entry ("Polarization / phase center…") and Copy-as-TSV.
 - Tests: `tests/test_polarization.py` — circular/linear/elliptical AR, a known
   phase-center offset, the payload summary and the missing-field case.
-- `app/csxcad_builder/gps_patch.py` — design study for a GPS L1 single-feed
-  circularly polarized patch. Converged openEMS runs reached S11 -10.1 dB at
-  1.57542 GHz, but the best axial ratio was 4.6 dB (at 1.56 GHz) and 7.9 dB at
-  L1, so it is **not** offered as a preset; a dual-feed patch with a 90° hybrid
-  is the reliable route.
+- **Axial-ratio cut in the antenna viewer** (`app/ui/antenna_viewer.py`): plot
+  type "Axial Ratio (theta cut)" — AR against θ at a selectable azimuth
+  (0…315°, nearest stored φ), computed from the complex `E_theta`/`E_phi` of the
+  loaded `nf2ff.json` (no re-run). It draws the 3 dB limit, shades the pass band
+  and labels the widest θ that still meets it, counted outward from boresight.
+  The azimuth selector lives in the plot toolbar, so the pop-out window carries
+  it without sync code, and it is hidden on every other plot type. Smoke test
+  extended with a synthetic CP field (AR 0 dB at φ = 0, 6 dB at φ = 180).
+- **Preset: GPS L1 patch (CP)** (`app/csxcad_builder/gps_patch.py`,
+  Presets → GPS L1 patch (CP)): 44.10 mm square patch on 1.6 mm FR4, two
+  opposite corners chamfered 5.0 mm as five 1.0 mm staircase steps, probe
+  10.9 mm inset on the patch centre line, 75 mm ground. A converged run (end
+  energy −30.5 dB) gives |S11| = −12.4 dB and AR = 1.70 dB (RHCP) at
+  1.57542 GHz. The axial ratio is mesh-dependent (2.93 dB on a 0.5 mm grid,
+  3.94 dB with a 0.5 mm staircase), and directivity/efficiency spread with the
+  NF2FF box size rather than with the antenna — the preset message quotes
+  D 7.3–7.9 dBi, gain 1.7–3.2 dBi and efficiency 27–34 % and says why. A
+  manufacturing variant with a true 45° chamfer (5.5 mm cut, 0.5 mm grid)
+  ships as a project file but is not solved. Tests: `tests/test_gps_patch.py`
+  (7 tests) pin the 180° rotational symmetry of the two chamfers, the
+  axis-aligned staircase and the centre-line feed.
 
 ### Fixed
 
@@ -85,8 +109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   'distance_between_segments'` and could not be meshed at all. The helper is
   restored verbatim from the upstream package
   (`github.com/MustafaAlchalabi/easyMesh4openEMS`), so such patches build now
-  and keep every vertex coordinate on the grid. The GPS patch study keeps its
-  three-box geometry because its documented results were computed with it.
+  and keep every vertex coordinate on the grid. The GPS patch preset uses the
+  polygon geometry this fix enables; the rejected three-box approach stays
+  documented in the case study.
   Tests: `tests/test_easymesh_diagonal.py` (helper contract + hexagon build).
 - **Mesh Viewer drew every polygon as a rectangle** (`app/meshing/polygon_geometry.py`,
   `app/ui/mesh_viewer.py`): a polygon / extruded polyline primitive was drawn
@@ -102,6 +127,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (10) it sits on instead of disappearing behind it. Tests:
   `tests/test_mesh_viewer_polygon.py` (geometry + CSX introspection) and
   `tests/polygon_viewer_smoke.py` (offscreen render, hexagon + edge-on).
+- **3D pattern had no axis labels** (`app/ui/antenna_viewer.py`): the tick
+  numbers are hidden on purpose (the colour bar carries the dBi scale), but the
+  three spatial directions were never labelled either, so x/y/z could not be
+  identified. They are labelled now, with a negative `labelpad` so they sit next
+  to their axis instead of far outside the cube. The smoke test pins them.
 - **easyMesh on NumPy 1.x** (`app/meshing/easy_wrapper.py`): the bundled
   easyMesh calls `np.atan`, an alias that only exists from NumPy 2.0 on; on
   NumPy 1.26 the missing alias is provided (`np.arctan`), without which any
@@ -109,6 +139,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **GPS preset quotes a range instead of a point value**
+  (`app/ui/main_window.py`, `app/csxcad_builder/gps_patch.py`): repeating the
+  identical geometry with a larger NF2FF box (±68 mm instead of ±55 mm) leaves
+  |S11| and the axial ratio unchanged to 0.03 dB but moves the directivity from
+  7.29 to 7.89 dBi and the efficiency from 27.3 % to 33.7 %, and rotates the
+  azimuth pattern by 180°. The far-field post-processing is therefore not
+  converged, so the preset message and the module docstring quote D 7.3–7.9 dBi,
+  gain 1.7–3.2 dBi and efficiency 27–34 % and name the reason.
 - **Polygon dialog opens compact and remembers its size**
   (`app/ui/geometry_editors.py`, `app/ui/primitive_preview.py`): it used to open
   at a fixed 900×640 on every screen, which covered most of a 1200×760 desktop.
@@ -1947,4 +1985,5 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.9]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.9
 [0.5.10]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.10
 [0.6.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.6.0
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.7.0

@@ -81,7 +81,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 ### Post-Processing
 
 - **S-Parameter Viewer** — Touchstone import, Smith chart, |S| dB, phase, VSWR; interactive markers; S-min jump; auto-opens after simulation
-- **Antenna Viewer** — 3D gain pattern, E/H cuts (Az/El), directivity, gain, radiation efficiency; H-plane/HPBW analysis; pop-out plot windows
+- **Antenna Viewer** — 3D gain pattern (axes labelled x/y/z), E/H cuts (Az/El), directivity, gain, radiation efficiency; HPBW and front-to-back analysis; **axial ratio** and **phase center** from the stored `E_theta`/`E_phi` (no re-run), including an **AR-vs-θ cut** at a selectable azimuth; pop-out plot windows
 - **NF2FF Summary** — gain/directivity/efficiency plot per frequency
 - **Field Viewer** — 3D field slices with per-axis navigation
 - **VTK Viewer** — convert the HDF5 field dumps to VTK rectilinear grids
@@ -97,7 +97,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 
 ### Workflow Automation
 
-- Preset generators: **Patch Antenna**, **Dipole**, **PCB Filter**, **Yagi Antenna**
+- Preset generators: **Patch Antenna**, **GPS L1 patch (CP)**, **Dipole**, **PCB Filter**, **Yagi Antenna**
 - FreeCAD CAD export dialog (STEP or per-object STL)
 - **STEP export for CAD / CST** (File → Export STEP…): writes the effective
   geometry (analytic boxes/cylinders/spheres/polygons + imported meshes) as an
@@ -340,11 +340,24 @@ python app\main.py
 
 ### Antenna Viewer
 
-- **3D gain** — spherical surface colored by gain (dBi)
+- **3D gain** — spherical surface coloured by gain (dBi), spatial axes labelled
+  x/y/z; the radius is normalised to the dBi window set by the slider, the colour
+  bar carries the absolute values
 - **E/H cuts** — Az/El plane cuts with polar plots
-- **HPBW** — half-power beamwidth analysis
-- **Efficiency** — radiation efficiency and total efficiency
+- **Axial-ratio cut** — AR against θ at a selectable azimuth (0…315°), with the
+  3 dB band shaded and the widest angle that still meets it labelled
+- **Polarization…** — axial ratio, CP sense, ellipse tilt and phase center per
+  frequency, derived from the stored complex `E_theta`/`E_phi` (no re-run);
+  copy as TSV
+- **HPBW / VRV** — half-power beamwidth and front-to-back ratio of the current cut
+- **Gain / efficiency vs frequency** — Dmax, gain, η and Prad over the NF2FF list
 - **Pop out** — detach any plot into a separate window
+
+![Axial-ratio cut](docs/images/antenna_ar_cut.png)
+
+*Axial ratio against θ for the GPS L1 preset at 1.57542 GHz (φ = 0°): 1.70 dB at
+boresight, ≤ 3 dB out to θ = 62°. The selector in the plot toolbar chooses the
+azimuth; the data comes from the `nf2ff.json` of the last run.*
 
 ---
 
