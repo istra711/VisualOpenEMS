@@ -32,10 +32,11 @@ _No changes yet._
 - Tests: `tests/test_grid_export.py` (sorting, dedupe, mm conversion, cell
   statistics, cylindrical axes, invalid unit) and new `.pvd` cases in
   `tests/test_vtk_export.py`.
-- Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` gained section 7.1 with
-  four screenshots (Antenna tab, axial-ratio cut, 3D pattern, Polarization
-  dialog) under `docs/images/`; `examples/build_anleitung_docx.py` now renders
-  `![alt](path)` so the Word build carries the same figures.
+- Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` gained sections 6.2, 7.1
+  and 7.2 with six screenshots (mesh viewer, antenna tab, axial-ratio cut, 3D
+  pattern, Polarization dialog, E-field slice) under `docs/images/`;
+  `examples/build_anleitung_docx.py` now renders `![alt](path)` so the Word
+  build carries the same figures.
 - Docs: new help topic **“Export & Interchange”** (Help menu, also in the F1
   dialog) covering every export path — STEP, grid JSON, CSX XML, VTK/`.pvd`/MP4,
   Touchstone, PNG — with a data/format/consumer table and the limits, plus
