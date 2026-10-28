@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- **Field Viewer: ParaView-style extras** (`app/ui/vtk_viewer.py`): **3 planes**
+  shows the X, Y and Z slices at once (the selected axis follows the slider, the
+  other two cut through the centre of their range), **Contours** draws 2…24
+  iso-lines of the selected array on the slices, and **Streamlines** traces field
+  lines through the volume with a tube filter. The streamline option is enabled
+  only when the dump carries a 3-component vector array — the current VTR export
+  stores the magnitude scalar only, so it stays greyed out there.
+- Tests: `tests/vtk_viewer_smoke.py` still passes; the new controls were checked
+  headlessly (actor count grows by 2 for the extra planes and by 3 for the
+  contours).
 
 ## [0.7.0] - 2026-10-28
 

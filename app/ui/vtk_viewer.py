@@ -564,6 +564,33 @@ class VtkFieldViewer(QWidget):
         self.slider_slice.setMaximumWidth(320)
         row2.addWidget(self.slider_slice, 3)
         row2.addWidget(self.spn_slice)
+        self.chk_planes = QCheckBox("3 planes")
+        self.chk_planes.setToolTip(
+            "Show the X, Y and Z slices at the same time (ParaView style).\n"
+            "The selected axis follows the slider, the other two cut through\n"
+            "the centre of their range."
+        )
+        self.chk_planes.toggled.connect(self._on_slider)
+        row2.addWidget(self.chk_planes)
+        self.chk_contours = QCheckBox("Contours")
+        self.chk_contours.setToolTip(
+            "Iso-lines of the selected array drawn on the slice."
+        )
+        self.chk_contours.toggled.connect(self._on_slider)
+        row2.addWidget(self.chk_contours)
+        self.spn_contours = QSpinBox()
+        self.spn_contours.setRange(2, 24)
+        self.spn_contours.setValue(8)
+        self.spn_contours.setToolTip("Number of contour lines.")
+        self.spn_contours.valueChanged.connect(self._on_slider)
+        row2.addWidget(self.spn_contours)
+        self.chk_stream = QCheckBox("Streamlines")
+        self.chk_stream.setToolTip(
+            "Field lines integrated through the volume, seeded on a plane\n"
+            "through the centre (like ParaView's Stream Tracer)."
+        )
+        self.chk_stream.toggled.connect(self._on_slider)
+        row2.addWidget(self.chk_stream)
         row2.addWidget(QLabel("Iso-level"))
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)
@@ -1905,6 +1932,112 @@ class VtkFieldViewer(QWidget):
         vectors_on = bool(self.chk_vectors.isChecked()) and self._has_vectors
         return (not vectors_on) or bool(self._vectors.get("overlay"))
 
+    def _axis_mid(self, axis: str) -> float:
+        """Centre of the current grid along ``axis`` (metres)."""
+        b = self._grid.GetBounds()
+        return {
+            "X": (b[0] + b[1]) / 2.0,
+            "Y": (b[2] + b[3]) / 2.0,
+        }.get(axis, (b[4] + b[5]) / 2.0)
+
+    def _plane_actor(self, vtk, lut, loc, name, axis: str, pos_m: float):
+        """One slice plane as ``(actor, cut_polydata)`` (3-plane mode)."""
+        nx, ny, nz = _AXIS_NORMAL[axis]
+        origin = [0.0, 0.0, 0.0]
+        origin[{"X": 0, "Y": 1, "Z": 2}[axis]] = float(pos_m)
+        plane = vtk.vtkPlane()
+        plane.SetNormal(nx, ny, nz)
+        plane.SetOrigin(*origin)
+        cutter = vtk.vtkCutter()
+        cutter.SetInputData(self._grid)
+        cutter.SetCutFunction(plane)
+        cutter.Update()
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(cutter.GetOutputPort())
+        if name:
+            mapper.SetLookupTable(lut)
+            if loc == "point":
+                mapper.SetScalarModeToUsePointFieldData()
+            else:
+                mapper.SetScalarModeToUseCellFieldData()
+            mapper.SelectColorArray(name)
+            mapper.SetScalarRange(*self._effective_range())
+            mapper.ScalarVisibilityOn()
+        else:
+            mapper.ScalarVisibilityOff()
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetOpacity(0.85)
+        return actor, cutter.GetOutput()
+
+    def _contour_actor(self, vtk, data, name: str, count: int):
+        """Iso-lines of ``name`` on a 2D slice."""
+        lo, hi = self._effective_range()
+        if data is None or not name or hi <= lo:
+            return None
+        cf = vtk.vtkContourFilter()
+        cf.SetInputData(data)
+        cf.SetInputArrayToProcess(0, 0, 0, 0, name)
+        for i in range(1, int(count) + 1):
+            cf.SetValue(i - 1, lo + (hi - lo) * i / (int(count) + 1))
+        cf.Update()
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(cf.GetOutputPort())
+        mapper.ScalarVisibilityOff()
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(0.12, 0.12, 0.12)
+        actor.GetProperty().SetLineWidth(1.0)
+        return actor
+
+    def _streamline_actor(self, vtk, name: str):
+        """Field lines through the volume, seeded on a plane near the centre."""
+        try:
+            # the tracer needs a VECTOR array; a scalar (e.g. "magnitude")
+            # cannot be integrated. Fall back to the first 3-component array.
+            vec_name = None
+            pd = self._grid.GetPointData()
+            for i in range(pd.GetNumberOfArrays()):
+                arr = pd.GetArray(i)
+                if arr is not None and arr.GetNumberOfComponents() == 3:
+                    vec_name = arr.GetName()
+                    break
+            if vec_name is None:
+                return None
+            b = self._grid.GetBounds()
+            dx, dy, dz = b[1] - b[0], b[3] - b[2], b[5] - b[4]
+            x0 = b[0] + 0.12 * dx
+            seed = vtk.vtkPlaneSource()
+            seed.SetOrigin(x0, b[2] + 0.10 * dy, b[4] + 0.50 * dz)
+            seed.SetPoint1(x0, b[3] - 0.10 * dy, b[4] + 0.50 * dz)
+            seed.SetPoint2(x0, b[2] + 0.10 * dy, b[5] - 0.50 * dz)
+            seed.SetXResolution(7)
+            seed.SetYResolution(7)
+            tracer = vtk.vtkStreamTracer()
+            tracer.SetInputData(self._grid)
+            tracer.SetSourceConnection(seed.GetOutputPort())
+            tracer.SetInputArrayToProcess(
+                0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, vec_name
+            )
+            tracer.SetIntegrationDirectionToBoth()
+            tracer.SetIntegratorTypeToRungeKutta4()
+            tracer.SetMaximumPropagation(2.0 * max(dx, dy, dz))
+            tracer.SetInitialStepLength(0.01 * dx)
+            tracer.Update()
+            tube = vtk.vtkTubeFilter()
+            tube.SetInputConnection(tracer.GetOutputPort())
+            tube.SetRadius(0.0025 * dx)
+            tube.SetNumberOfSides(6)
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(tube.GetOutputPort())
+            mapper.ScalarVisibilityOff()
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(0.25, 0.65, 1.0)
+            return actor
+        except Exception:  # noqa: BLE001 - a failed tracer must not kill the view
+            return None
+
     def _refresh_display(self, *_args) -> None:
         if self._renderer is None or self._grid is None:
             return
@@ -1934,6 +2067,38 @@ class VtkFieldViewer(QWidget):
             if name:
                 actor.GetMapper().SetLookupTable(lut)
             self._renderer.AddActor(actor)
+
+        # --- ParaView-style extras: 3 planes, contours, streamlines ---------
+        if rep == "Slice" and self.chk_planes.isChecked():
+            for axis in ("X", "Y", "Z"):
+                if axis == self.cmb_slice_axis.currentText():
+                    continue
+                extra, extra_data = self._plane_actor(
+                    vtk, lut, loc, name, axis, self._axis_mid(axis)
+                )
+                self._renderer.AddActor(extra)
+                if self.chk_contours.isChecked() and name:
+                    ca = self._contour_actor(
+                        vtk, extra_data, name, self.spn_contours.value()
+                    )
+                    if ca is not None:
+                        self._renderer.AddActor(ca)
+        if rep == "Slice" and self.chk_contours.isChecked() and name:
+            ca = self._contour_actor(vtk, base_data, name, self.spn_contours.value())
+            if ca is not None:
+                self._renderer.AddActor(ca)
+        pd_grid = self._grid.GetPointData()
+        has_vec = False
+        for i in range(pd_grid.GetNumberOfArrays()):
+            arr_i = pd_grid.GetArray(i)
+            if arr_i is not None and arr_i.GetNumberOfComponents() == 3:
+                has_vec = True
+                break
+        self.chk_stream.setEnabled(bool(has_vec))
+        if self.chk_stream.isChecked() and name and has_vec:
+            sa = self._streamline_actor(vtk, name)
+            if sa is not None:
+                self._renderer.AddActor(sa)
         if mapper is not None and name:
             # also explains the arrow colours while the field plot is hidden
             self._renderer.AddActor2D(
