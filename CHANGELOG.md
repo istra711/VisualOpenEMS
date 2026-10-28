@@ -39,6 +39,10 @@ _No changes yet._
   build carries the same figures. The README gained a *Screenshots* section
   (the table of contents promised one that did not exist) plus one picture each
   in the antenna-viewer and field-viewer sections.
+- Docs: the guide is also emitted as a LibreOffice document —
+  `examples/build_anleitung_docx.py --odt` converts the freshly built DOCX with
+  headless LibreOffice (a throw-away user profile, so an open LibreOffice does
+  not block it) and `docs/ANLEITUNG_DE.odt` is in the repository.
 - Docs: new help topic **“Export & Interchange”** (Help menu, also in the F1
   dialog) covering every export path — STEP, grid JSON, CSX XML, VTK/`.pvd`/MP4,
   Touchstone, PNG — with a data/format/consumer table and the limits, plus

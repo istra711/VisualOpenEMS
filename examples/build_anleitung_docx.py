@@ -1,8 +1,19 @@
-"""Build ANLEITUNG_DE.docx from docs/ANLEITUNG_DE.md (subset of Markdown)."""
+"""Build ANLEITUNG_DE.docx from docs/ANLEITUNG_DE.md (subset of Markdown).
+
+    python examples/build_anleitung_docx.py          # DOCX only
+    python examples/build_anleitung_docx.py --odt    # DOCX + ODT (LibreOffice)
+
+The ODT step needs a LibreOffice install; without it the DOCX is still written
+and the conversion is skipped with a message.
+"""
 
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 from docx import Document
@@ -13,6 +24,54 @@ from docx.shared import Inches, Pt, RGBColor
 ROOT = Path(__file__).resolve().parents[1]
 MD_PATH = ROOT / "docs" / "ANLEITUNG_DE.md"
 DOCX_PATH = ROOT / "docs" / "ANLEITUNG_DE.docx"
+
+SOFFICE_CANDIDATES = (
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    "/usr/bin/soffice",
+    "/usr/local/bin/soffice",
+)
+
+
+def _find_soffice() -> str | None:
+    exe = shutil.which("soffice") or shutil.which("libreoffice")
+    if exe:
+        return exe
+    for cand in SOFFICE_CANDIDATES:
+        if Path(cand).exists():
+            return cand
+    return None
+
+
+def convert_to_odt(docx_path: Path) -> Path | None:
+    """Convert ``docx_path`` to ODT with headless LibreOffice.
+
+    A throw-away user profile is used so a LibreOffice the user has open does
+    not block the conversion. Returns the ODT path, or ``None`` if LibreOffice
+    is not installed.
+    """
+    soffice = _find_soffice()
+    if soffice is None:
+        print("LibreOffice not found - ODT skipped")
+        return None
+    profile = Path(tempfile.gettempdir()) / "visualopenems_lo_profile"
+    profile.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        soffice,
+        f"-env:UserInstallation=file:///{profile.as_posix()}",
+        "--headless",
+        "--convert-to",
+        "odt",
+        "--outdir",
+        str(docx_path.parent),
+        str(docx_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    odt = docx_path.with_suffix(".odt")
+    if proc.returncode != 0 or not odt.exists():
+        print("ODT conversion failed:", (proc.stderr or proc.stdout).strip()[:400])
+        return None
+    return odt
 
 
 def _inline(paragraph, text: str) -> None:
@@ -198,3 +257,8 @@ if __name__ == "__main__":
     path = build()
     print(f"Wrote {path}")
     print(f"Size: {path.stat().st_size} bytes")
+    if "--odt" in sys.argv[1:]:
+        odt = convert_to_odt(path)
+        if odt is not None:
+            print(f"Wrote {odt}")
+            print(f"Size: {odt.stat().st_size} bytes")
