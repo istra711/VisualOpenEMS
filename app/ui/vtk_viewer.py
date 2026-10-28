@@ -2022,7 +2022,7 @@ class VtkFieldViewer(QWidget):
             tracer.SetIntegrationDirectionToBoth()
             tracer.SetIntegratorTypeToRungeKutta4()
             tracer.SetMaximumPropagation(2.0 * max(dx, dy, dz))
-            tracer.SetInitialStepLength(0.01 * dx)
+            tracer.SetInitialIntegrationStep(0.01 * dx)
             tracer.Update()
             tube = vtk.vtkTubeFilter()
             tube.SetInputConnection(tracer.GetOutputPort())
@@ -2035,7 +2035,8 @@ class VtkFieldViewer(QWidget):
             actor.SetMapper(mapper)
             actor.GetProperty().SetColor(0.25, 0.65, 1.0)
             return actor
-        except Exception:  # noqa: BLE001 - a failed tracer must not kill the view
+        except Exception as exc:  # noqa: BLE001 - a failed tracer must not kill the view
+            print("streamline failed:", type(exc).__name__, exc)
             return None
 
     def _refresh_display(self, *_args) -> None:

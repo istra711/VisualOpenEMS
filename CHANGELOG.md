@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows the X, Y and Z slices at once (the selected axis follows the slider, the
   other two cut through the centre of their range), **Contours** draws 2…24
   iso-lines of the selected array on the slices, and **Streamlines** traces field
-  lines through the volume with a tube filter. The streamline option is enabled
-  only when the dump carries a 3-component vector array — the current VTR export
-  stores the magnitude scalar only, so it stays greyed out there.
+  lines through the volume with `vtkStreamTracer` and a tube filter, coloured
+  from a seed plane through the centre. Streamlines need a 3-component vector
+  array; the VTR export writes one (`field`) for dumps that carry xyz
+  components, so the switch is enabled exactly when it can work.
 - Tests: `tests/vtk_viewer_smoke.py` still passes; the new controls were checked
   headlessly (actor count grows by 2 for the extra planes and by 3 for the
   contours).
