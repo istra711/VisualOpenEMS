@@ -48,6 +48,19 @@ def generate_run_script(
     primitives: list[dict] | None = None,
 ) -> Path:
     """Write project_run.py + companion JSON files into work_dir."""
+    # Waveguide ports need a cross-section before anything is written: the
+    # generated script would otherwise fail only after the mesh build.
+    for port in project.ports:
+        if port.type != "rect_waveguide" or not bool(getattr(port, "active", True)):
+            continue
+        if float(getattr(port, "wg_a", 0.0) or 0.0) <= 0.0 or float(
+            getattr(port, "wg_b", 0.0) or 0.0
+        ) <= 0.0:
+            raise ValueError(
+                f"rect_waveguide port '{port.name}': the waveguide width a and "
+                "height b must be > 0 - set them in the Port dialog "
+                "('Waveguide a' / 'Waveguide b')"
+            )
     # Keep paths absolute (no symlink resolution): openEMS asserts
     # os.getcwd() == os.path.realpath(sim_path) after chdir().
     project_path = Path(os.path.abspath(os.fspath(project_path)))
@@ -609,14 +622,27 @@ def main() -> int:
             # the swap happens after the zero-length extension below
             deferred_msl.append((idx, port, start, stop))
         elif port.type == "rect_waveguide":
-            FDTD.AddRectWaveGuidePort(
+            a_wg = float(getattr(port, "wg_a", 0.0) or 0.0)
+            b_wg = float(getattr(port, "wg_b", 0.0) or 0.0)
+            mode = str(getattr(port, "wg_mode", "") or "TE10").strip().upper()
+            if a_wg <= 0.0 or b_wg <= 0.0:
+                raise ValueError(
+                    f"rect_waveguide port '{port.name}': the waveguide width a "
+                    "and height b must be > 0 - set them in the Port dialog "
+                    "('Waveguide a' / 'Waveguide b')"
+                )
+            unit = float(project.mesh.unit_to_meters())
+            pobj = FDTD.AddRectWaveGuidePort(
                 idx,
                 start,
                 stop,
                 port.direction,
-                port.resistance,
+                a_wg * unit,
+                b_wg * unit,
+                mode,
                 excite=1.0 if port.excite_port else 0.0,
             )
+            port_objects.append((port, pobj))
             if bool(getattr(port, "reverse", False)):
                 print(
                     f"rect_waveguide port '{port.name}': 'reverse' is ignored "

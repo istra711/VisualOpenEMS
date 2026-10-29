@@ -101,6 +101,16 @@ class PortDef:
     #: mode) - used to re-derive the metal width and shown in the log. Empty
     #: for ports typed in by hand or imported from FreeCAD.
     metal: str = ""
+    #: rect_waveguide only: cross-section in drawing units (mm when the project
+    #: is in mm). ``wg_a`` is the extent along the first transverse axis - the
+    #: axis that follows ``direction`` in the cycle x -> y -> z -> x - and
+    #: ``wg_b`` along the second. For a guide along z that is a = x, b = y;
+    #: along x it is a = y, b = z; along y it is a = z, b = x. openEMS wants
+    #: metres, the run script converts with the project unit.
+    wg_a: float = 0.0
+    wg_b: float = 0.0
+    #: rect_waveguide only: four-character TE mode name ("TE10").
+    wg_mode: str = "TE10"
     #: Reverse the port: Start and Stop are swapped when the run script is
     #: generated. openEMS derives the port polarity from the sign of
     #: (stop - start) (`LumpedPort.direction` -> excitation and current probe,

@@ -299,12 +299,21 @@ def build_mesh_and_validate(
             deferred_msl_ports.append((idx, port, start, stop))
         elif port.type == "rect_waveguide":
             try:
+                a_wg = float(getattr(port, "wg_a", 0.0) or 0.0)
+                b_wg = float(getattr(port, "wg_b", 0.0) or 0.0)
+                if a_wg <= 0.0 or b_wg <= 0.0:
+                    raise ValueError(
+                        "waveguide width a / height b are not set (Port dialog)"
+                    )
+                unit = float(project.mesh.unit_to_meters())
                 FDTD.AddRectWaveGuidePort(
                     idx,
                     start,
                     stop,
                     port.direction,
-                    port.resistance,
+                    a_wg * unit,
+                    b_wg * unit,
+                    str(getattr(port, "wg_mode", "") or "TE10").strip().upper(),
                     excite=excite,
                 )
             except Exception as e:  # noqa: BLE001

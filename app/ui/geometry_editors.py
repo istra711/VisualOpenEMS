@@ -145,6 +145,34 @@ class PortDialog(QDialog):
         self.cmb_dir = QComboBox()
         self.cmb_dir.addItems(["x", "y", "z"])
         self.cmb_dir.setCurrentText(p.direction or "z")
+        self.spn_wg_a = QDoubleSpinBox()
+        self.spn_wg_a.setRange(0.0, 1000.0)
+        self.spn_wg_a.setDecimals(3)
+        self.spn_wg_a.setValue(float(getattr(p, "wg_a", 0.0) or 0.0))
+        self.spn_wg_b = QDoubleSpinBox()
+        self.spn_wg_b.setRange(0.0, 1000.0)
+        self.spn_wg_b.setDecimals(3)
+        self.spn_wg_b.setValue(float(getattr(p, "wg_b", 0.0) or 0.0))
+        self.cmb_wg_mode = QComboBox()
+        self.cmb_wg_mode.addItems(["TE10", "TE20", "TE01", "TE11", "TE21"])
+        _mode = str(getattr(p, "wg_mode", "") or "TE10").strip().upper()
+        self.cmb_wg_mode.setCurrentText(_mode if _mode in
+                                        [self.cmb_wg_mode.itemText(i)
+                                         for i in range(self.cmb_wg_mode.count())]
+                                        else "TE10")
+        self.spn_wg_a.setToolTip(
+            "Rectangular waveguide only (drawing units).\n"
+            "a = broad inner width, along the FIRST transverse axis:\n"
+            "  direction x -> a along y, b along z\n"
+            "  direction y -> a along z, b along x\n"
+            "  direction z -> a along x, b along y\n"
+            "WR-90 (X band, 8.2-12.4 GHz): a 22.86, b 10.16 mm."
+        )
+        self.spn_wg_b.setToolTip("Rectangular waveguide only: narrow inner height (see a).")
+        self.cmb_wg_mode.setToolTip(
+            "Rectangular waveguide only: TE mode. TE10 is the single-mode\n"
+            "fundamental; the cutoff follows from a and b."
+        )
         self.cmb_width = QComboBox()
         for label, value in (
             ("Line (no width)", "line"),
@@ -201,6 +229,9 @@ class PortDialog(QDialog):
         form.addRow("Type", self.cmb_type)
         form.addRow("Resistance (Ω)", self.spn_r)
         form.addRow("Direction", self.cmb_dir)
+        form.addRow("Waveguide a", self.spn_wg_a)
+        form.addRow("Waveguide b", self.spn_wg_b)
+        form.addRow("TE mode", self.cmb_wg_mode)
         form.addRow("Width (lumped)", self.cmb_width)
         form.addRow("Propagation dir (MSL)", self.cmb_prop)
         form.addRow("Excitation dir (MSL)", self.cmb_exc)
@@ -228,7 +259,14 @@ class PortDialog(QDialog):
 
     def _on_type_changed(self, kind: str) -> None:
         """Only lumped ports have a (lumped) width - MSL uses its own axes."""
+        is_wg = str(kind) == "rect_waveguide"
         self.cmb_width.setEnabled(str(kind) == "lumped")
+        form = self.layout()
+        if isinstance(form, QFormLayout):
+            for w in (self.spn_wg_a, self.spn_wg_b, self.cmb_wg_mode):
+                form.setRowVisible(w, is_wg)
+            # a waveguide port uses the analytic wave impedance, not R
+            form.setRowVisible(self.spn_r, not is_wg)
 
     def _accept(self) -> None:
         name = self.ed_name.text().strip() or "in1"
@@ -252,6 +290,9 @@ class PortDialog(QDialog):
                 else "line"
             ),
             metal=self._seed_metal,
+            wg_a=float(self.spn_wg_a.value()),
+            wg_b=float(self.spn_wg_b.value()),
+            wg_mode=self.cmb_wg_mode.currentText() if ptype == "rect_waveguide" else "TE10",
         )
         self.accept()
 
