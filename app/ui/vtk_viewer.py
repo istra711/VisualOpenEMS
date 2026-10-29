@@ -372,6 +372,7 @@ class VtkFieldViewer(QWidget):
         self._vtk = None
         self._iren = None
         self._renderer = None
+        self._geom_actors: list = []
         self._grid = None
         #: exact slice position in metres typed into the spinbox (None = the
         #: slider governs the position)
@@ -835,6 +836,45 @@ class VtkFieldViewer(QWidget):
             return False
 
     # --------------------------------------------------------------- actions
+    def set_geometry(self, primitives, unit_m: float = 1e-3) -> None:
+        """Draw the project's box primitives as translucent ghosts.
+
+        The dumps are in metres (openEMS SI), the primitives in drawing units -
+        ``unit_m`` converts them. Only boxes are drawn; polygons/STL are skipped
+        (they would need tessellation and the viewer only has the field grid).
+        """
+        if self._renderer is None:
+            return
+        vtk = self._vtk or _vtk()
+        self._vtk = vtk
+        for actor in getattr(self, "_geom_actors", []):
+            self._renderer.RemoveActor(actor)
+        self._geom_actors = []
+        scale = float(unit_m or 1e-3)
+        for pr in primitives or []:
+            if str(pr.get("kind", "box")) != "box":
+                continue
+            try:
+                s = [float(v) * scale for v in pr["start"]]
+                e = [float(v) * scale for v in pr["stop"]]
+            except (KeyError, TypeError, ValueError):
+                continue
+            lo = [min(s[i], e[i]) for i in range(3)]
+            hi = [max(s[i], e[i]) for i in range(3)]
+            cube = vtk.vtkCubeSource()
+            cube.SetBounds(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(cube.GetOutputPort())
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            prop = actor.GetProperty()
+            prop.SetOpacity(0.10)
+            prop.SetColor(0.62, 0.70, 0.88)
+            prop.SetEdgeVisibility(True)
+            prop.SetEdgeColor(0.35, 0.42, 0.60)
+            self._renderer.AddActor(actor)
+            self._geom_actors.append(actor)
+
     def set_work_dir(self, work_dir: Path | None) -> None:
         self.work_dir = Path(work_dir) if work_dir else None
 
