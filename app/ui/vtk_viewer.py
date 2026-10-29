@@ -819,7 +819,7 @@ class VtkFieldViewer(QWidget):
             # impossible. 2.0 is a fifth of that and still moves fast enough.
             try:
                 style = vtk.vtkInteractorStyleTrackballCamera()
-                style.SetMotionFactor(2.0)
+                style.SetMotionFactor(3.0)
                 self._iren.SetInteractorStyle(style)
             except Exception:  # noqa: BLE001 - older VTK without the setter
                 pass
