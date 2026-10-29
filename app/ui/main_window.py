@@ -2797,6 +2797,31 @@ class MainWindow(QMainWindow):
             self._current_file_path = Path(path)
             self._mesh_sig = None  # different project -> loaded CSX is unknown
             self.project = Project.load(path)
+            # Layout rule (see _project_dir): the project file lives in the
+            # work directory and the result folder next to it carries the same
+            # stem. A file inside a folder of its own name - or a generic
+            # "project.fcsim.json" inside the folder - makes the GUI look for
+            # the results in a different directory.
+            _p = Path(path)
+            _stem = _p.name[: -len(".fcsim.json")] if _p.name.endswith(".fcsim.json") else _p.stem
+            _work = Path(self.settings.work_path())
+            try:
+                _wrong = _p.parent.resolve() != _work.resolve()
+            except OSError:
+                _wrong = _p.parent != _work
+            if _wrong:
+                _msg = (
+                    f"WARNING: '{_p.name}' is not in the work directory "
+                    f"'{_work}'. The results folder is derived from the file "
+                    f"name, so the expected layout is "
+                    f"'{_work / (_stem + '.fcsim.json')}' next to "
+                    f"'{_work / _stem}'."
+                )
+                print(_msg)
+                try:
+                    self.log_view.appendPlainText(_msg)
+                except Exception:  # noqa: BLE001 - logging must never block a load
+                    pass
             # Rebuild primitives from saved project.primitives / mesh_path / patch preset
             self.primitives = []
             import numpy as np  # noqa: F401
