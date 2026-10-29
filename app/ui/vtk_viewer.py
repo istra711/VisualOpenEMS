@@ -373,6 +373,8 @@ class VtkFieldViewer(QWidget):
         self._iren = None
         self._renderer = None
         self._geom_actors: list = []
+        self._geom_prims: list = []
+        self._geom_unit: float = 1e-3
         self._grid = None
         #: exact slice position in metres typed into the spinbox (None = the
         #: slider governs the position)
@@ -465,6 +467,19 @@ class VtkFieldViewer(QWidget):
         self.chk_outline = QCheckBox("Outline")
         self.chk_outline.setChecked(True)
         self.chk_outline.toggled.connect(self._refresh_display)
+        self.chk_geom = QCheckBox("Geometry")
+        self.chk_geom.setChecked(True)
+        self.chk_geom.setToolTip(
+            "Draw the project's box primitives as translucent ghosts.\n"
+            "They are set when a project is loaded or the Field Viewer is opened."
+        )
+        self.chk_geom.toggled.connect(self._draw_geometry)
+        self.sld_geom = QSlider(Qt.Orientation.Horizontal)
+        self.sld_geom.setRange(0, 40)
+        self.sld_geom.setValue(12)
+        self.sld_geom.setFixedWidth(70)
+        self.sld_geom.setToolTip("Geometry opacity in percent")
+        self.sld_geom.valueChanged.connect(self._draw_geometry)
         self.btn_reset = QPushButton("Reset view")
         self.btn_reset.clicked.connect(self._reset_camera)
         self.btn_video = QPushButton("Video…")
@@ -482,7 +497,7 @@ class VtkFieldViewer(QWidget):
         # minimum width of the whole main window - the Project/Geometry splitter
         # could not be dragged any more.
         for w in (self.btn_open, self.btn_export, self.chk_per_step, self.spin_stride,
-                  self.chk_outline):
+                  self.chk_outline, self.chk_geom, self.sld_geom):
             bar.addWidget(w)
         # standard view (applied now + used for every newly loaded field) and the
         # info which field is on screen (file name without the frame number);
@@ -824,6 +839,7 @@ class VtkFieldViewer(QWidget):
                 self._iren.SetInteractorStyle(style)
             except Exception:  # noqa: BLE001 - older VTK without the setter
                 pass
+            self._draw_geometry()
             return True
         except Exception as e:  # noqa: BLE001 — e.g. no OpenGL in this session
             self._vtk_failed = True
@@ -843,6 +859,11 @@ class VtkFieldViewer(QWidget):
         ``unit_m`` converts them. Only boxes are drawn; polygons/STL are skipped
         (they would need tessellation and the viewer only has the field grid).
         """
+        self._geom_prims = [dict(p) for p in (primitives or [])]
+        self._geom_unit = float(unit_m or 1e-3)
+        self._draw_geometry()
+
+    def _draw_geometry(self, *_args) -> None:
         if self._renderer is None:
             return
         vtk = self._vtk or _vtk()
@@ -850,8 +871,13 @@ class VtkFieldViewer(QWidget):
         for actor in getattr(self, "_geom_actors", []):
             self._renderer.RemoveActor(actor)
         self._geom_actors = []
-        scale = float(unit_m or 1e-3)
-        for pr in primitives or []:
+        if hasattr(self, "chk_geom") and not self.chk_geom.isChecked():
+            return
+        opacity = 0.12
+        if hasattr(self, "sld_geom"):
+            opacity = max(0.0, min(1.0, self.sld_geom.value() / 100.0))
+        scale = float(getattr(self, "_geom_unit", 1e-3) or 1e-3)
+        for pr in getattr(self, "_geom_prims", []):
             if str(pr.get("kind", "box")) != "box":
                 continue
             try:
@@ -868,7 +894,7 @@ class VtkFieldViewer(QWidget):
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
             prop = actor.GetProperty()
-            prop.SetOpacity(0.10)
+            prop.SetOpacity(opacity)
             prop.SetColor(0.62, 0.70, 0.88)
             prop.SetEdgeVisibility(True)
             prop.SetEdgeColor(0.35, 0.42, 0.60)
