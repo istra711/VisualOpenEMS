@@ -384,6 +384,13 @@ azimuth; the data comes from the `nf2ff.json` of the last run.*
 - **Slices and iso-surfaces** of the field dumps, per-axis navigation
 - **Vector glyphs** ("Vectors") that replace the coloured surface, so the arrows
   stay visible; "field underneath" brings the overlay back
+- **Three planes at once** ("3 planes") — the X, Y and Z slice in one view; the
+  selected axis follows the slider, the other two cut through the centre
+- **Contour lines** ("Contours") — 2…24 iso-lines of the selected array drawn on
+  the slices
+- **Streamlines** — field lines traced through the volume and drawn as tubes,
+  coloured from a seed plane through the centre; enabled when the dump carries
+  the `field` vector array
 - **Series playback** over the time or frequency steps, with an arrow-motion
   readout per step
 - **Export** — VTK rectilinear grids (`.vtr`) plus a ParaView collection

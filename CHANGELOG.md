@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.8.0] - 2026-10-29
+
 ### Added
 
 - **Field Viewer: ParaView-style extras** (`app/ui/vtk_viewer.py`): **3 planes**
@@ -20,6 +24,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests: `tests/vtk_viewer_smoke.py` still passes; the new controls were checked
   headlessly (actor count grows by 2 for the extra planes and by 3 for the
   contours).
+
+### Fixed
+
+- **Streamlines did nothing on real dumps** (`app/ui/vtk_viewer.py`):
+  `vtkStreamTracer` has no `SetInitialStepLength`; the call raised
+  `AttributeError` and the actor was dropped silently, so the new switch left
+  the view unchanged. It is `SetInitialIntegrationStep`; with it the tracer
+  builds tubes from the `field` vector array that `dump_to_vtr` already writes
+  for dumps with xyz components.
+
+### Changed
+
+- **Version string matches the release** (`app/__init__.py`): it still said
+  `0.6.0`, so the About dialog and the window title showed a version two
+  releases behind.
+- Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` are illustrated step by
+  step, eighteen figures in `docs/images/`: the cross-section of the target
+  geometry, the main window (start and with the preset loaded), the
+  configuration dialogs (FreeCAD tools, simulation parameters, mesh parameters,
+  material, port, NF2FF box), the script editor, and the evaluation pictures
+  (mesh viewer slice and overview, S-parameters, antenna tab, axial-ratio cut,
+  3D pattern, Polarization dialog, E-field slice). Only the drawing itself in
+  FreeCAD has no picture — a GUI application cannot be captured headless.
+  Figure numbers were dropped from the captions (the text never referred to
+  them), so inserting a figure no longer renumbers the rest.
+- Docs: the guides describe the three new switches (3 planes, Contours,
+  Streamlines) in section 7.2, including why streamlines need a dump with the
+  `field` vector array; the README lists them in its Field Viewer section.
+- Docs: `build_anleitung_docx.py` deletes the target ODT before converting —
+  LibreOffice reports success without overwriting an existing file, which had
+  left a stale `ANLEITUNG_EN.odt` behind (16 of 18 pictures).
+  `examples/build_anleitung_docx.py` renders `![alt](path)` so the Word build
+  carries the same figures. The README gained a *Screenshots* section (the table
+  of contents promised one that did not exist) plus one picture each in the
+  antenna-viewer and field-viewer sections.
+- Docs: the guides are also emitted as LibreOffice documents —
+  `examples/build_anleitung_docx.py --all --odt` builds both languages and
+  converts each DOCX with headless LibreOffice (a throw-away user profile, so an
+  open LibreOffice does not block it); `--md` / `--docx` build a single file, and
+  the footer follows the source language. `docs/ANLEITUNG_DE.{docx,odt}` and
+  `docs/ANLEITUNG_EN.{docx,odt}` are in the repository.
 
 ## [0.7.0] - 2026-10-28
 
@@ -44,29 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests: `tests/test_grid_export.py` (sorting, dedupe, mm conversion, cell
   statistics, cylindrical axes, invalid unit) and new `.pvd` cases in
   `tests/test_vtk_export.py`.
-- Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` are illustrated step by
-  step, eighteen figures in `docs/images/`: the cross-section of the target
-  geometry, the main window (start and with the preset loaded), the
-  configuration dialogs (FreeCAD tools, simulation parameters, mesh parameters,
-  material, port, NF2FF box), the script editor, and the evaluation pictures
-  (mesh viewer slice and overview, S-parameters, antenna tab, axial-ratio cut,
-  3D pattern, Polarization dialog, E-field slice). Only the drawing itself in
-  FreeCAD has no picture — a GUI application cannot be captured headless.
-  Figure numbers were dropped from the captions (the text never referred to
-  them), so inserting a figure no longer renumbers the rest.
-- Docs: `build_anleitung_docx.py` deletes the target ODT before converting —
-  LibreOffice reports success without overwriting an existing file, which had
-  left a stale `ANLEITUNG_EN.odt` behind (16 of 18 pictures).
-  `examples/build_anleitung_docx.py` now renders `![alt](path)` so the Word
-  build carries the same figures. The README gained a *Screenshots* section
-  (the table of contents promised one that did not exist) plus one picture each
-  in the antenna-viewer and field-viewer sections.
-- Docs: the guides are also emitted as LibreOffice documents —
-  `examples/build_anleitung_docx.py --all --odt` builds both languages and
-  converts each DOCX with headless LibreOffice (a throw-away user profile, so an
-  open LibreOffice does not block it); `--md` / `--docx` build a single file, and
-  the footer follows the source language. `docs/ANLEITUNG_DE.{docx,odt}` and
-  `docs/ANLEITUNG_EN.{docx,odt}` are in the repository.
+- Docs: `docs/ANLEITUNG_DE.md` and `ANLEITUNG_EN.md` gained section 7.1 with
+  four screenshots (Antenna tab, axial-ratio cut, 3D pattern, Polarization
+  dialog) under `docs/images/`; `examples/build_anleitung_docx.py` now renders
+  `![alt](path)` so the Word build carries the same figures.
 - Docs: new help topic **“Export & Interchange”** (Help menu, also in the F1
   dialog) covering every export path — STEP, grid JSON, CSX XML, VTK/`.pvd`/MP4,
   Touchstone, PNG — with a data/format/consumer table and the limits, plus
@@ -2016,5 +2042,6 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.9]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.9
 [0.5.10]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.10
 [0.6.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.6.0
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.8.0
 [0.7.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.7.0

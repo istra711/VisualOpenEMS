@@ -590,6 +590,16 @@ bzw. nachdem der Solver gelaufen ist:
 
 **|Et| im Substrat, Schnitt aus dem Felddump Et_substrate (2,45-GHz-Beispiel).** Zwei Maxima links und rechts der Mitte, dazwischen die Moden-Null. Die Achsen stehen in Metern, die Farbskala in V/m. Solche Schnitte schreibt das Postprocessing als PNG neben den Dump (`work/<projekt>/fields/`). Die interaktive Ansicht bietet der Tab **Field Viewer**: Schnittflächen und Iso-Flächen, Vektorpfeile („Vectors") für die Feldrichtung, Serien-Playback über die Zeit- oder Frequenzschritte, Export als VTK-Serie inklusive ParaView-Collection (`<dump>.pvd`) und als MP4.
 
+Drei Schalter erweitern die Ansicht in Richtung ParaView:
+
+| Schalter | Wirkung |
+|----------|---------|
+| **3 planes** | zeigt die X-, Y- und Z-Schnittfläche gleichzeitig; die gewählte Achse folgt dem Schieber, die beiden anderen schneiden durch die Mitte ihres Bereichs |
+| **Contours** | legt 2…24 Iso-Linien des gewählten Arrays auf die Schnittflächen |
+| **Streamlines** | zeichnet Feldlinien durch das Volumen (`vtkStreamTracer`, als Röhrchen), eingefärbt vom Feldwert; Start ist eine Seed-Ebene durch die Mitte |
+
+Die Stromlinien brauchen ein Vektor-Array mit drei Komponenten. Der VTK-Export schreibt es als `field`, sobald der Dump xyz-Komponenten enthält — genau dann ist der Schalter aktiv. Ein Dump, der nur den Betrag speichert, lässt ihn ausgegraut, und der Tooltip nennt den Grund.
+
 ---
 
 ## 8. Workflow-Checkliste (Antenne 2,45 GHz)

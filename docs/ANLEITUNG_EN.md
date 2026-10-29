@@ -580,6 +580,16 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
 
 **|Et| in the substrate, a slice from the field dump Et_substrate (2.45 GHz example).** Two maxima left and right of the centre, with the mode null between them. The axes are in metres, the colour bar in V/m. The post-processing writes such slices as PNG next to the dump (`work/<project>/fields/`). The interactive view is the **Field Viewer** tab: slices and iso-surfaces, vector glyphs ("Vectors") for the field direction, series playback over the time or frequency steps, and export as a VTK series including the ParaView collection (`<dump>.pvd`) and as MP4.
 
+Three switches extend the view towards ParaView:
+
+| Switch | Effect |
+|--------|--------|
+| **3 planes** | shows the X, Y and Z slice at the same time; the selected axis follows the slider, the other two cut through the centre of their range |
+| **Contours** | draws 2…24 iso-lines of the selected array on the slices |
+| **Streamlines** | traces field lines through the volume with `vtkStreamTracer` and draws them as tubes, coloured from a seed plane through the centre |
+
+The streamlines need a vector array with three components. The VTK export writes it as `field` as soon as the dump carries xyz components — the switch is enabled exactly then. A dump that stores the magnitude only keeps it greyed out, and the tooltip says why.
+
 ---
 
 ## 8. Workflow checklist (2.45 GHz antenna)
