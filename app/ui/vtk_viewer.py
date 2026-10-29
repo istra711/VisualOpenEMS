@@ -1833,17 +1833,11 @@ class VtkFieldViewer(QWidget):
     def _vector_input(vtk, data, rep: str):
         """Geometry the arrows sit on (same shape as the visible representation).
 
-        Surface/Wireframe glyph the outside of the volume (arrows inside an
-        opaque surface would be invisible), Slice/Iso-surface glyph the cut /
-        contour polydata that is already on screen.
+        Surface/Wireframe glyph the whole volume like ParaView's Glyph filter:
+        the arrow count is capped by ``vtkMaskPoints`` and the translucent
+        geometry ghosts keep the inner arrows visible. Slice/Iso-surface glyph
+        the cut / contour polydata that is already on screen.
         """
-        if data is None:
-            return None
-        if rep in ("Surface", "Wireframe") and not isinstance(data, vtk.vtkPolyData):
-            surface = vtk.vtkDataSetSurfaceFilter()
-            surface.SetInputData(data)
-            surface.Update()
-            return surface.GetOutput()
         return data
 
     def _make_vector_actor(self, vtk, data, rep: str, lut):
