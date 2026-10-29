@@ -590,6 +590,10 @@ Three switches extend the view towards ParaView:
 
 The streamlines need a vector array with three components. The VTK export writes it as `field` as soon as the dump carries xyz components — the switch is enabled exactly then. A dump that stores the magnitude only keeps it greyed out, and the tooltip says why.
 
+![Magic tee 10 GHz](images/field_viewer_magic_tee.png)
+
+**3 planes, contours and streamlines on a WR-90 magic tee at 10 GHz.** 0.75 mm mesh, 149 000 dump points, logarithmic colour scale. The bright band is the junction where the wave splits into the two arms.
+
 ---
 
 ## 8. Workflow checklist (2.45 GHz antenna)

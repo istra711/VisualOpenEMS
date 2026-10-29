@@ -600,6 +600,10 @@ Drei Schalter erweitern die Ansicht in Richtung ParaView:
 
 Die Stromlinien brauchen ein Vektor-Array mit drei Komponenten. Der VTK-Export schreibt es als `field`, sobald der Dump xyz-Komponenten enthält — genau dann ist der Schalter aktiv. Ein Dump, der nur den Betrag speichert, lässt ihn ausgegraut, und der Tooltip nennt den Grund.
 
+![Magic Tee 10 GHz](images/field_viewer_magic_tee.png)
+
+**3 planes, Contours und Streamlines an einem Magic Tee (WR-90, 10 GHz).** Netz 0,75 mm, 149 000 Dump-Punkte, logarithmische Farbskala. Das helle Band ist der Knoten, an dem sich die Welle auf die beiden Arme aufteilt.
+
 ---
 
 ## 8. Workflow-Checkliste (Antenne 2,45 GHz)

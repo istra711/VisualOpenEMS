@@ -402,6 +402,12 @@ azimuth; the data comes from the `nf2ff.json` of the last run.*
 post-processing writes such slices as PNG next to the dump; the interactive 3D
 view with the vector glyphs lives in the Field Viewer tab.*
 
+![Magic tee field](docs/images/field_viewer_magic_tee.png)
+
+*3 planes, contour lines and streamlines in a WR-90 magic tee at 10 GHz
+(0.75 mm mesh, 149 000 dump points, logarithmic colour scale). The bright band
+is the junction where the wave splits into the two arms.*
+
 ---
 
 ## Meshing Rules
