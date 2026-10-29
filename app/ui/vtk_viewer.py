@@ -1129,6 +1129,7 @@ class VtkFieldViewer(QWidget):
         if self._renderer is not None:
             try:
                 self._renderer.RemoveAllViewProps()
+                self._draw_geometry()
                 self._update_corner_marker()  # no data -> hide the corner axes
                 self._iren.GetRenderWindow().Render()
             except Exception:  # noqa: BLE001
@@ -2119,6 +2120,7 @@ class VtkFieldViewer(QWidget):
             return
         vtk = self._vtk
         self._renderer.RemoveAllViewProps()
+        self._draw_geometry()
 
         rep = self.cmb_rep.currentText()
         loc, name = self._array()
