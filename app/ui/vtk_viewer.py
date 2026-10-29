@@ -814,6 +814,15 @@ class VtkFieldViewer(QWidget):
             self._renderer.SetBackground(0.15, 0.15, 0.18)
             self._iren.GetRenderWindow().AddRenderer(self._renderer)
             self._iren.Initialize()
+            # VTK's default MotionFactor is 10: a few pixels of mouse travel
+            # already swing the camera, which makes precise positioning
+            # impossible. 2.0 is a fifth of that and still moves fast enough.
+            try:
+                style = vtk.vtkInteractorStyleTrackballCamera()
+                style.SetMotionFactor(2.0)
+                self._iren.SetInteractorStyle(style)
+            except Exception:  # noqa: BLE001 - older VTK without the setter
+                pass
             return True
         except Exception as e:  # noqa: BLE001 — e.g. no OpenGL in this session
             self._vtk_failed = True
