@@ -226,7 +226,7 @@ def _check_grid(h5_name: str, x, y, z, field):
     return comp, nx, ny, nz
 
 
-def _write_vtr(vtk, ns, x, y, z, field, out_path: Path) -> Path:
+def _write_vtr(vtk, ns, x, y, z, field, out_path: Path, extra=None) -> Path:
     comp, nx, ny, nz = _check_grid(out_path.name, x, y, z, field)
     grid = vtk.vtkRectilinearGrid()
     grid.SetDimensions(nx, ny, nz)
@@ -245,6 +245,15 @@ def _write_vtr(vtk, ns, x, y, z, field, out_path: Path) -> Path:
         grid.GetPointData().AddArray(varr)
         grid.GetPointData().SetActiveVectors("field")
 
+    for name, arr in (extra or {}).items():
+        v = np.real(np.asarray(arr))
+        if v.shape[0] != 3:
+            continue
+        vec = np.column_stack([_flat(v[0]), _flat(v[1]), _flat(v[2])])
+        varr = ns.numpy_to_vtk(np.ascontiguousarray(vec, dtype=np.float32), deep=True)
+        varr.SetName(str(name))
+        grid.GetPointData().AddArray(varr)
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     writer = vtk.vtkXMLRectilinearGridWriter()
     writer.SetFileName(str(out_path))
@@ -255,12 +264,49 @@ def _write_vtr(vtk, ns, x, y, z, field, out_path: Path) -> Path:
     return out_path
 
 
-def dump_to_vtr(h5_path: Path | str, out_path: Path | str | None = None) -> Path:
+def poynting_vector(e_path: Path | str, h_path: Path | str):
+    """Time-averaged Poynting vector ``0.5 * Re(E x H*)`` of two dumps.
+
+    Both dumps must share the grid (same ``Mesh/{x,y,z}``); the result keeps
+    the openEMS layout ``(3, nx, ny, nz)``.
+    """
+    x, y, z, e = read_dump_arrays(e_path)
+    xh, yh, zh, h = read_dump_arrays(h_path)
+    if (len(x), len(y), len(z)) != (len(xh), len(yh), len(zh)):
+        raise ValueError("E and H dumps have different grid sizes")
+    if not (np.allclose(x, xh) and np.allclose(y, yh) and np.allclose(z, zh)):
+        raise ValueError("E and H dumps have different grid coordinates")
+    if e is None or h is None:
+        raise ValueError("E or H dump has no field data")
+    return 0.5 * np.real(np.cross(e, np.conj(h), axis=0))
+
+
+def _poynting_partner(h5_path: Path) -> Path | None:
+    """Sibling H dump for an E dump (``E_tee.h5`` -> ``H_tee.h5``)."""
+    stem = h5_path.stem
+    idx = stem.find("E")
+    if idx < 0:
+        return None
+    for name in (stem[:idx] + "H" + stem[idx + 1:], stem.replace("E", "H", 1)):
+        cand = h5_path.with_name(name + h5_path.suffix)
+        if cand.exists() and cand != h5_path:
+            return cand
+    return None
+
+
+def dump_to_vtr(
+    h5_path: Path | str,
+    out_path: Path | str | None = None,
+    with_poynting: bool = True,
+) -> Path:
     """Convert one openEMS dump HDF5 to a VTK ``.vtr`` rectilinear grid.
 
     Point data: the scalar ``magnitude`` (active) and, when the dump has xyz
-    components, the vector array ``field`` (real part). Raises ``ValueError``
-    for an empty/degenerate dump (no mesh or no field data).
+    components, the vector array ``field`` (real part). When ``with_poynting``
+    is set and a sibling H dump with the same grid exists (``E_tee.h5`` next to
+    ``H_tee.h5``), the vector array ``poynting`` (``0.5 Re(E x H*)``) is added
+    as well. Raises ``ValueError`` for an empty/degenerate dump (no mesh or no
+    field data).
     """
     import vtk
     from vtk.util import numpy_support as ns
@@ -269,7 +315,15 @@ def dump_to_vtr(h5_path: Path | str, out_path: Path | str | None = None) -> Path
     x, y, z, field = read_dump_arrays(h5_path)
     if out_path is None:
         out_path = h5_path.with_suffix(".vtr")
-    return _write_vtr(vtk, ns, x, y, z, field, Path(out_path))
+    extra = None
+    if with_poynting and h5_path.stem.find("E") >= 0:
+        partner = _poynting_partner(h5_path)
+        if partner is not None:
+            try:
+                extra = {"poynting": poynting_vector(h5_path, partner)}
+            except ValueError:
+                extra = None
+    return _write_vtr(vtk, ns, x, y, z, field, Path(out_path), extra=extra)
 
 
 def _is_fresh(out_path: Path, src: Path) -> bool:
