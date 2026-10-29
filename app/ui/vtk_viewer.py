@@ -901,6 +901,12 @@ class VtkFieldViewer(QWidget):
             self._renderer.AddActor(actor)
             self._geom_actors.append(actor)
 
+        try:
+            if self._iren is not None:
+                self._iren.GetRenderWindow().Render()
+        except Exception:  # noqa: BLE001 - never block on a redraw
+            pass
+
     def set_work_dir(self, work_dir: Path | None) -> None:
         self.work_dir = Path(work_dir) if work_dir else None
 
