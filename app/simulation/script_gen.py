@@ -53,6 +53,18 @@ def generate_run_script(
     for port in project.ports:
         if port.type != "rect_waveguide" or not bool(getattr(port, "active", True)):
             continue
+        _mode = str(getattr(port, "wg_mode", "") or "TE10").strip().upper()
+        if len(_mode) == 4 and _mode[3] != "0":
+            from app.simulation.openems_compat import rect_wg_second_axis_bug
+
+            if rect_wg_second_axis_bug():
+                print(
+                    f"WARNING: rect_waveguide port '{port.name}' uses {_mode}; "
+                    "this openEMS builds the second transverse coordinate from "
+                    "the first axis, so TE01/TE11 modes do not match and the "
+                    "port reads as isolated (see app/simulation/"
+                    "openems_compat.py)."
+                )
         if float(getattr(port, "wg_a", 0.0) or 0.0) <= 0.0 or float(
             getattr(port, "wg_b", 0.0) or 0.0
         ) <= 0.0:
