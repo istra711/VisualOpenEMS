@@ -1902,7 +1902,11 @@ class VtkFieldViewer(QWidget):
                 thr.SetLowerThreshold(cut)
                 thr.SetUpperThreshold(hi * 10.0 + 1.0)
                 thr.Update()
-                sampled = thr.GetOutput()
+                out = thr.GetOutput()
+                # Never let the threshold empty the view: a cut that removes
+                # every arrow looks like a broken switch, not like a filter.
+                if out is not None and out.GetNumberOfPoints() >= 2:
+                    sampled = out
         arr = sampled.GetPointData().GetArray(name)
         if arr is None or arr.GetNumberOfTuples() == 0:
             return None
