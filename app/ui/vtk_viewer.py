@@ -718,6 +718,14 @@ class VtkFieldViewer(QWidget):
             "clutter that hides the structure behind long blue arrows."
         )
         self.spn_vec_min.valueChanged.connect(self._on_vector_option_changed)
+        self.chk_vec_random = QCheckBox("random")
+        self.chk_vec_random.setChecked(False)
+        self.chk_vec_random.setToolTip(
+            "Sample the arrows at random (fixed seed) instead of every N-th point.\n"
+            "A fixed stride lands on lattice planes and shows up as parallel\n"
+            "sheets of arrows; random keeps the distribution even."
+        )
+        self.chk_vec_random.toggled.connect(self._on_vector_option_changed)
         self.chk_vec_norm = QCheckBox("same length")
         self.chk_vec_norm.setChecked(DEFAULT_VECTORS["normalize"])
         self.chk_vec_norm.setToolTip(
@@ -743,6 +751,7 @@ class VtkFieldViewer(QWidget):
         row_vec.addWidget(self.spn_vec_size)
         row_vec.addWidget(self.spn_vec_count)
         row_vec.addWidget(self.spn_vec_min)
+        row_vec.addWidget(self.chk_vec_random)
         row_vec.addWidget(self.chk_vec_norm)
         row_vec.addWidget(self.chk_vec_overlay)
         row_vec.addStretch(1)
@@ -1896,7 +1905,16 @@ class VtkFieldViewer(QWidget):
         mask = vtk.vtkMaskPoints()
         mask.SetInputData(poly)
         mask.SetOnRatio(ratio)
-        mask.SetRandomMode(0)  # deterministic: arrows must not jump per frame
+        if (
+            getattr(self, "chk_vec_random", None) is not None
+            and self.chk_vec_random.isChecked()
+        ):
+            mask.SetRandomMode(1)
+            mask.SetRandomModeType(1)
+            mask.SetRandomSeed(12345)
+            mask.SetNumberOfPoints(max_arrows)
+        else:
+            mask.SetRandomMode(0)  # deterministic: arrows must not jump per frame
         mask.GenerateVerticesOff()
         mask.Update()
         sampled = mask.GetOutput()
