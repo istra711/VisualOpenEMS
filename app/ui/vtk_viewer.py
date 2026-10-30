@@ -2068,6 +2068,14 @@ class VtkFieldViewer(QWidget):
         bar.GetLabelTextProperty().SetColor(1, 1, 1)
         bar.SetLabelFormat("%.2g")
         bar.SetDrawTickLabels(True)
+        # Title tight above the bar, upright (the reference uses a plain label,
+        # not the italic default).
+        bar.SetVerticalTitleSeparation(6)
+        try:
+            bar.GetTitleTextProperty().SetItalic(0)
+            bar.GetTitleTextProperty().SetFontFamilyToArial()
+        except Exception:  # noqa: BLE001 - older VTK text property
+            pass
         bar.SetTextPad(3)
         bar.SetVerticalTitleSeparation(4)
         return bar
