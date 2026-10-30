@@ -1886,10 +1886,11 @@ class VtkFieldViewer(QWidget):
                 # The colour scale is logarithmic and the data spans decades, so
                 # a linear cut at 1 % already removed almost everything. Cut in
                 # log space instead: 1 % sits just above the smallest value.
-                if self.chk_log.isChecked() and lo > 0.0 and hi > lo:
+                if self.chk_log.isChecked() and hi > 0.0:
+                    base = lo if lo > 0.0 else hi * 1e-9
                     cut = 10.0 ** (
-                        math.log10(lo)
-                        + (math.log10(hi) - math.log10(lo)) * (min_pct / 100.0)
+                        math.log10(base)
+                        + (math.log10(hi) - math.log10(base)) * (min_pct / 100.0)
                     )
                 else:
                     cut = lo + (hi - lo) * (min_pct / 100.0)
