@@ -1698,6 +1698,10 @@ class VtkFieldViewer(QWidget):
             "max_arrows": int(self.spn_vec_count.value()),
             "normalize": bool(self.chk_vec_norm.isChecked()),
             "overlay": bool(self.chk_vec_overlay.isChecked()),
+            "min_pct": int(self.spn_vec_min.value()),
+            "random": bool(self.chk_vec_random.isChecked()),
+            "title_left": bool(self.chk_title_left.isChecked()),
+            "geom_opacity": int(self.sld_geom.value()),
         }
 
     def set_vector_options(self, options: dict | None, *, notify: bool = False) -> None:
@@ -1723,6 +1727,14 @@ class VtkFieldViewer(QWidget):
             (self.chk_vectors, opts["enabled"]),
             (self.spn_vec_size, opts["size"]),
             (self.spn_vec_count, opts["max_arrows"]),
+            (self.spn_vec_min, opts.get("min_pct", 0)),
+            (self.chk_vec_random, bool(opts.get("random", False))),
+            (self.chk_title_left, bool(opts.get("title_left", False))),
+            (self.sld_geom, opts.get("geom_opacity", 12)),
+            (self.spn_vec_min, opts.get("min_pct", 0)),
+            (self.chk_vec_random, bool(opts.get("random", False))),
+            (self.chk_title_left, bool(opts.get("title_left", False))),
+            (self.sld_geom, opts.get("geom_opacity", 12)),
             (self.chk_vec_norm, opts["normalize"]),
             (self.chk_vec_overlay, opts["overlay"]),
         ):
