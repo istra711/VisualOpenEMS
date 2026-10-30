@@ -2068,6 +2068,10 @@ class VtkFieldViewer(QWidget):
             prop.SetOrientation(90)
             prop.SetJustificationToCentered()
             prop.SetVerticalJustificationToCentered()
+            # The bar is placed in normalized viewport coordinates (0.84..0.99),
+            # but a vtkActor2D defaults to display pixels -- which put the title
+            # in the bottom-left corner instead of beside the bar.
+            self._title_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
         # _refresh_display calls RemoveAllViewProps, which also drops 2D actors -
         # so the title has to be attached again on every refresh.
         try:

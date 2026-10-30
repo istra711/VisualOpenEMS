@@ -427,7 +427,23 @@ def main() -> int:
     # the colour bar title shows the physical unit of the dump
     bar_u = v._make_scalar_bar(_vtk, v._lookup_table(), "magnitude", v._field_unit)
     assert bar_u.GetTitle() == "E-Field magnitude [V/m]", bar_u.GetTitle()
-    print("  compact colour bar OK")
+
+    # the left-hand title must live in normalized viewport coordinates: an
+    # actor2D defaults to display pixels, which put "Titel der Grafik" at the
+    # bottom-left corner instead of beside the bar
+    v._renderer = _vtk.vtkRenderer()
+    v.chk_title_left.setChecked(True)
+    v._bar_title = "Titel der Grafik"
+    v._apply_bar_title(bar)
+    coord = v._title_actor.GetPositionCoordinate()
+    assert coord.GetCoordinateSystemAsString() == "Normalized Viewport", \
+        coord.GetCoordinateSystemAsString()
+    assert v._title_actor.GetVisibility() == 1
+    v.chk_title_left.setChecked(False)
+    v._apply_bar_title(bar)
+    assert v._title_actor.GetVisibility() == 0
+    v._renderer = None
+    print("  compact colour bar OK (title beside the bar)")
 
     # --- Auto / Log scale / Rescale interplay -------------------------------
     # Auto follows the CURRENT frame: the three frames hold 1x / 0.5x / 4x
