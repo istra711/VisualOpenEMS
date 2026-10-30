@@ -707,6 +707,17 @@ class VtkFieldViewer(QWidget):
             "frame to frame instead of flickering."
         )
         self.spn_vec_count.valueChanged.connect(self._on_vector_option_changed)
+        self.spn_vec_min = QSpinBox()
+        self.spn_vec_min.setRange(0, 99)
+        self.spn_vec_min.setValue(0)
+        self.spn_vec_min.setSuffix(" % min")
+        self.spn_vec_min.setFixedWidth(95)
+        self.spn_vec_min.setToolTip(
+            "Hide arrows whose field is below this share of the peak.\n"
+            "0 % keeps every sampled point; 5-20 % drops the near-zero\n"
+            "clutter that hides the structure behind long blue arrows."
+        )
+        self.spn_vec_min.valueChanged.connect(self._on_vector_option_changed)
         self.chk_vec_norm = QCheckBox("same length")
         self.chk_vec_norm.setChecked(DEFAULT_VECTORS["normalize"])
         self.chk_vec_norm.setToolTip(
@@ -731,6 +742,7 @@ class VtkFieldViewer(QWidget):
         row_vec.addWidget(self.chk_vectors)
         row_vec.addWidget(self.spn_vec_size)
         row_vec.addWidget(self.spn_vec_count)
+        row_vec.addWidget(self.spn_vec_min)
         row_vec.addWidget(self.chk_vec_norm)
         row_vec.addWidget(self.chk_vec_overlay)
         row_vec.addStretch(1)
@@ -1860,6 +1872,27 @@ class VtkFieldViewer(QWidget):
         mask.GenerateVerticesOff()
         mask.Update()
         sampled = mask.GetOutput()
+        # Threshold: the near-zero points show up as long blue arrows (same
+        # length mode) and hide everything behind them. Cut them by their share
+        # of the peak magnitude before the glyph filter runs.
+        try:
+            min_pct = float(self.spn_vec_min.value())
+        except Exception:  # noqa: BLE001
+            min_pct = 0.0
+        if min_pct > 0.0:
+            scal = sampled.GetPointData().GetArray("magnitude")
+            if scal is not None:
+                lo, hi = scal.GetRange()
+                cut = lo + (hi - lo) * (min_pct / 100.0)
+                thr = vtk.vtkThresholdPoints()
+                thr.SetInputData(sampled)
+                thr.SetInputArrayToProcess(
+                    0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, "magnitude"
+                )
+                thr.SetLowerThreshold(cut)
+                thr.SetUpperThreshold(hi * 10.0 + 1.0)
+                thr.Update()
+                sampled = thr.GetOutput()
         arr = sampled.GetPointData().GetArray(name)
         if arr is None or arr.GetNumberOfTuples() == 0:
             return None
