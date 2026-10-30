@@ -1925,6 +1925,11 @@ class VtkFieldViewer(QWidget):
             else:
                 cut = lo + (hi - lo) * (min_pct / 100.0)
             keep = mags_all >= cut
+            print(
+                f"vector threshold: {min_pct:.0f} % ({'log' if self.chk_log.isChecked() else 'lin'})"
+                f" -> cut {cut:.3e}, keep {int(keep.sum())}/{mags_all.size}",
+                flush=True,
+            )
             if 2 <= int(keep.sum()) < mags_all.size:
                 sampled = self._subset_points(vtk, ns, sampled, keep)
                 arr = sampled.GetPointData().GetArray(name)
