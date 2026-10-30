@@ -1860,6 +1860,17 @@ class VtkFieldViewer(QWidget):
         """
         return data
 
+    def _logmsg(self, text: str) -> None:
+        """Diagnostics: stdout plus ``field_viewer.log`` next to the results."""
+        print(text, flush=True)
+        try:
+            wd = getattr(self, "work_dir", None)
+            if wd:
+                with open(Path(wd) / "field_viewer.log", "a", encoding="utf-8") as fh:
+                    fh.write(text + "\n")
+        except OSError:
+            pass
+
     @staticmethod
     def _subset_points(vtk, ns, poly, keep):
         """New polydata with only the points where ``keep`` is true."""
@@ -1921,16 +1932,15 @@ class VtkFieldViewer(QWidget):
             idx = rng.choice(n_all, size=take, replace=False)
             sel = np.zeros(n_all, dtype=bool)
             sel[idx] = True
-            print(f"random: cloud {n_all} pts, select {take}", flush=True)
+            self._logmsg(f"random: cloud {n_all} pts, select {take}")
             try:
                 sampled = self._subset_points(vtk, ns, cloud, sel)
-                print(
-                    f"random: sampled {sampled.GetNumberOfPoints()} pts",
-                    flush=True,
+                self._logmsg(
+                    f"random: sampled {sampled.GetNumberOfPoints()} pts"
                 )
             except Exception as exc:  # noqa: BLE001
-                print(f"random: subset failed: {exc!r}", flush=True)
-                sampled = cloud
+                self._logmsg(f"random: subset failed: {exc!r}")
+                return None
         else:
             ratio = max(1, int(round(npts / max_arrows)))
             mask = vtk.vtkMaskPoints()
