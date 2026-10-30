@@ -1901,23 +1901,27 @@ class VtkFieldViewer(QWidget):
 
         npts = poly.GetNumberOfPoints()
         max_arrows = max(1, int(self.spn_vec_count.value()))
-        ratio = max(1, int(round(npts / max_arrows)))
-        mask = vtk.vtkMaskPoints()
-        mask.SetInputData(poly)
-        mask.SetOnRatio(ratio)
         if (
             getattr(self, "chk_vec_random", None) is not None
             and self.chk_vec_random.isChecked()
         ):
-            mask.SetRandomMode(1)
-            mask.SetRandomModeType(1)
-            mask.SetRandomSeed(12345)
-            mask.SetNumberOfPoints(max_arrows)
+            # Random subset in numpy: vtkMaskPoints' random mode returned an
+            # empty set here, and a fixed seed keeps the arrows stable.
+            rng = np.random.default_rng(12345)
+            take = min(max_arrows, npts)
+            idx = rng.choice(npts, size=take, replace=False)
+            sel = np.zeros(npts, dtype=bool)
+            sel[idx] = True
+            sampled = self._subset_points(vtk, ns, poly, sel)
         else:
+            ratio = max(1, int(round(npts / max_arrows)))
+            mask = vtk.vtkMaskPoints()
+            mask.SetInputData(poly)
+            mask.SetOnRatio(ratio)
             mask.SetRandomMode(0)  # deterministic: arrows must not jump per frame
-        mask.GenerateVerticesOff()
-        mask.Update()
-        sampled = mask.GetOutput()
+            mask.GenerateVerticesOff()
+            mask.Update()
+            sampled = mask.GetOutput()
         arr = sampled.GetPointData().GetArray(name)
         if arr is None or arr.GetNumberOfTuples() == 0:
             return None
