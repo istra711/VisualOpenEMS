@@ -1962,7 +1962,7 @@ class VtkFieldViewer(QWidget):
         arrow.SetShaftRadius(0.045)
 
         glyph = vtk.vtkGlyph3D()
-        glyph.SetInputConnection(mask.GetOutputPort())
+        glyph.SetInputData(sampled)
         glyph.SetSourceConnection(arrow.GetOutputPort())
         glyph.SetInputArrayToProcess(
             0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, name
