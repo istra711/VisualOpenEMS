@@ -2066,7 +2066,8 @@ class VtkFieldViewer(QWidget):
         bar.GetTitleTextProperty().SetColor(1, 1, 1)
         bar.GetLabelTextProperty().SetFontSize(10)
         bar.GetLabelTextProperty().SetColor(1, 1, 1)
-        bar.SetLabelFormat("%.2e")
+        bar.SetLabelFormat("%.2g")
+        bar.SetDrawTickLabels(True)
         bar.SetTextPad(3)
         bar.SetVerticalTitleSeparation(4)
         return bar
