@@ -720,10 +720,9 @@ class VtkFieldViewer(QWidget):
         self.spn_vec_min.valueChanged.connect(self._on_vector_option_changed)
         self.chk_vec_random = QCheckBox("random")
         self.chk_vec_random.setChecked(False)
-        self.chk_vec_random.setEnabled(False)
         self.chk_vec_random.setToolTip(
-            "Disabled: the random subset still renders empty in this build.\n"
-            "The stride sampling stays active until that is fixed."
+            "Sample the arrows at random (fixed seed 12345) instead of every\n"
+            "N-th point. Prints the point counts to the log while it runs."
         )
         self.chk_vec_random.toggled.connect(self._on_vector_option_changed)
         self.chk_vec_norm = QCheckBox("same length")
@@ -1922,7 +1921,16 @@ class VtkFieldViewer(QWidget):
             idx = rng.choice(n_all, size=take, replace=False)
             sel = np.zeros(n_all, dtype=bool)
             sel[idx] = True
-            sampled = self._subset_points(vtk, ns, cloud, sel)
+            print(f"random: cloud {n_all} pts, select {take}", flush=True)
+            try:
+                sampled = self._subset_points(vtk, ns, cloud, sel)
+                print(
+                    f"random: sampled {sampled.GetNumberOfPoints()} pts",
+                    flush=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"random: subset failed: {exc!r}", flush=True)
+                sampled = cloud
         else:
             ratio = max(1, int(round(npts / max_arrows)))
             mask = vtk.vtkMaskPoints()
