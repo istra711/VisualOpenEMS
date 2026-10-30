@@ -720,10 +720,10 @@ class VtkFieldViewer(QWidget):
         self.spn_vec_min.valueChanged.connect(self._on_vector_option_changed)
         self.chk_vec_random = QCheckBox("random")
         self.chk_vec_random.setChecked(False)
+        self.chk_vec_random.setEnabled(False)
         self.chk_vec_random.setToolTip(
-            "Sample the arrows at random (fixed seed) instead of every N-th point.\n"
-            "A fixed stride lands on lattice planes and shows up as parallel\n"
-            "sheets of arrows; random keeps the distribution even."
+            "Disabled: the random subset still renders empty in this build.\n"
+            "The stride sampling stays active until that is fixed."
         )
         self.chk_vec_random.toggled.connect(self._on_vector_option_changed)
         self.chk_vec_norm = QCheckBox("same length")
@@ -1985,7 +1985,7 @@ class VtkFieldViewer(QWidget):
 
         spacing = self._characteristic_spacing()
         # mean distance of the sampled points: cell size scaled by the decimation
-        base = spacing * math.sqrt(ratio)
+        base = spacing
         target = base * float(self.spn_vec_size.value()) * 0.6
 
         arrow = vtk.vtkArrowSource()
