@@ -2083,7 +2083,7 @@ class VtkFieldViewer(QWidget):
             bar.SetTitle("")
             self._title_actor.SetInput(text)
             # bar spans x 0.84..0.99, y 0.06..0.94 (see _make_scalar_bar)
-            self._title_actor.SetPosition(0.812, 0.5)
+            self._title_actor.SetPosition(0.826, 0.5)
             self._title_actor.SetVisibility(1)
         else:
             bar.SetTitle(text)
@@ -2113,7 +2113,7 @@ class VtkFieldViewer(QWidget):
         # which is why it drifted into the middle of the pane.)
         bar.SetPosition(0.84, 0.06)
         bar.SetPosition2(0.15, 0.88)
-        bar.SetBarRatio(0.24)
+        bar.SetBarRatio(0.15)
         bar.GetTitleTextProperty().SetFontSize(12)
         bar.GetTitleTextProperty().SetColor(1, 1, 1)
         bar.GetLabelTextProperty().SetFontSize(10)
