@@ -684,9 +684,9 @@ class MainWindow(QMainWindow):
             view.customContextMenuRequested.connect(
                 lambda pos, v=view: self._show_log_view_context_menu(v, pos)
             )
-        # the divider between the tabs and the log panel, too
-        self.right_split.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.right_split.customContextMenuRequested.connect(self._show_status_context_menu)
+        # Only the divider handle, not the whole splitter: the splitter spans the
+        # plot area, so a right-click anywhere in the canvas opened the log menu
+        # instead of the plot's own menu.
         handle = self.right_split.handle(1)
         if handle is not None:
             handle.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
