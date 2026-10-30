@@ -426,7 +426,7 @@ def main() -> int:
     assert bar.GetUnconstrainedFontSize() == 1
     # the colour bar title shows the physical unit of the dump
     bar_u = v._make_scalar_bar(_vtk, v._lookup_table(), "magnitude", v._field_unit)
-    assert bar_u.GetTitle() == "magnitude [V/m]", bar_u.GetTitle()
+    assert bar_u.GetTitle() == "E-Field magnitude [V/m]", bar_u.GetTitle()
     print("  compact colour bar OK")
 
     # --- Auto / Log scale / Rescale interplay -------------------------------

@@ -375,6 +375,8 @@ class VtkFieldViewer(QWidget):
         self._geom_actors: list = []
         self._geom_prims: list = []
         self._geom_unit: float = 1e-3
+        self._title_actor = None
+        self._bar_title: str = ""
         self._grid = None
         #: exact slice position in metres typed into the spinbox (None = the
         #: slider governs the position)
@@ -725,6 +727,14 @@ class VtkFieldViewer(QWidget):
             "N-th point. Prints the point counts to the log while it runs."
         )
         self.chk_vec_random.toggled.connect(self._on_vector_option_changed)
+        self.chk_title_left = QCheckBox("Title left")
+        self.chk_title_left.setChecked(False)
+        self.chk_title_left.setToolTip(
+            "Draw the colour-bar title vertically to the left of the bar\n"
+            "(rotated 90°) instead of above it."
+        )
+        self.chk_title_left.toggled.connect(self._refresh_display)
+        row3.addWidget(self.chk_title_left)
         self.chk_vec_norm = QCheckBox("same length")
         self.chk_vec_norm.setChecked(DEFAULT_VECTORS["normalize"])
         self.chk_vec_norm.setToolTip(
@@ -2043,6 +2053,33 @@ class VtkFieldViewer(QWidget):
         return actor
 
     # ------------------------------------------------------------- rendering
+    def _apply_bar_title(self, bar):
+        """Title above the bar, or rotated to its left (switch in the toolbar)."""
+        text = getattr(self, "_bar_title", "") or bar.GetTitle()
+        self._bar_title = text
+        if self._renderer is None:
+            return bar
+        if self._title_actor is None:
+            vtk = self._vtk or _vtk()
+            self._title_actor = vtk.vtkTextActor()
+            prop = self._title_actor.GetTextProperty()
+            prop.SetColor(1, 1, 1)
+            prop.SetFontSize(12)
+            prop.SetOrientation(90)
+            prop.SetJustificationToCentered()
+            prop.SetVerticalJustificationToCentered()
+            self._renderer.AddActor2D(self._title_actor)
+        if self.chk_title_left.isChecked():
+            bar.SetTitle("")
+            self._title_actor.SetInput(text)
+            # bar spans x 0.84..0.99, y 0.06..0.94 (see _make_scalar_bar)
+            self._title_actor.SetPosition(0.812, 0.5)
+            self._title_actor.SetVisibility(1)
+        else:
+            bar.SetTitle(text)
+            self._title_actor.SetVisibility(0)
+        return bar
+
     @staticmethod
     def _make_scalar_bar(vtk, lut, name: str, unit: str = ""):
         """Compact colour bar: VTK otherwise scales title/labels with the bar
@@ -2313,7 +2350,7 @@ class VtkFieldViewer(QWidget):
         if mapper is not None and name:
             # also explains the arrow colours while the field plot is hidden
             self._renderer.AddActor2D(
-                self._make_scalar_bar(vtk, lut, name, self._field_unit)
+                self._apply_bar_title(self._make_scalar_bar(vtk, lut, name, self._field_unit))
             )
 
         # vector glyphs (ParaView "Glyph") on top of the current representation
