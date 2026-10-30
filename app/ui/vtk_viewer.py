@@ -1905,14 +1905,24 @@ class VtkFieldViewer(QWidget):
             getattr(self, "chk_vec_random", None) is not None
             and self.chk_vec_random.isChecked()
         ):
-            # Random subset in numpy: vtkMaskPoints' random mode returned an
-            # empty set here, and a fixed seed keeps the arrows stable.
+            # Random subset in numpy. vtkMaskPoints' random mode returned an
+            # empty set here, and the raw input is a rectilinear grid whose
+            # GetPoints() is None - so first pass every point through
+            # vtkMaskPoints (ratio 1) to get a polydata, then pick in numpy.
+            allpts = vtk.vtkMaskPoints()
+            allpts.SetInputData(poly)
+            allpts.SetOnRatio(1)
+            allpts.SetRandomMode(0)
+            allpts.GenerateVerticesOff()
+            allpts.Update()
+            cloud = allpts.GetOutput()
+            n_all = cloud.GetNumberOfPoints()
             rng = np.random.default_rng(12345)
-            take = min(max_arrows, npts)
-            idx = rng.choice(npts, size=take, replace=False)
-            sel = np.zeros(npts, dtype=bool)
+            take = min(max_arrows, n_all)
+            idx = rng.choice(n_all, size=take, replace=False)
+            sel = np.zeros(n_all, dtype=bool)
             sel[idx] = True
-            sampled = self._subset_points(vtk, ns, poly, sel)
+            sampled = self._subset_points(vtk, ns, cloud, sel)
         else:
             ratio = max(1, int(round(npts / max_arrows)))
             mask = vtk.vtkMaskPoints()
