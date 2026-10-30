@@ -580,6 +580,8 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
 
 **|Et| in the substrate, a slice from the field dump Et_substrate (2.45 GHz example).** Two maxima left and right of the centre, with the mode null between them. The axes are in metres, the colour bar in V/m. The post-processing writes such slices as PNG next to the dump (`work/<project>/fields/`). The interactive view is the **Field Viewer** tab: slices and iso-surfaces, vector glyphs ("Vectors") for the field direction, series playback over the time or frequency steps, and export as a VTK series including the ParaView collection (`<dump>.pvd`) and as MP4.
 
+Layout: an action bar on top (`Open`, `Export ▾`, `Video`, `Pop out`, `Reset view`), the collapsible display panel with **Data**, **Slice / Iso**, **Colour** and **Vectors** on the left, and the playback bar at the bottom. The slice/iso block appears only for those representations; export details (per-step, step stride) live in the `Export ▾` menu. Choose **Layout** under `Settings` → **Viewer settings…**: **B** = docked panel, **C** = minimal UI with a `Display…` popup.
+
 Three switches extend the view towards ParaView:
 
 | Switch | Effect |
@@ -589,6 +591,8 @@ Three switches extend the view towards ParaView:
 | **Streamlines** | traces field lines through the volume with `vtkStreamTracer` and draws them as tubes, coloured from a seed plane through the centre |
 
 The streamlines need a vector array with three components. The VTK export writes it as `field` as soon as the dump carries xyz components — the switch is enabled exactly then. A dump that stores the magnitude only keeps it greyed out, and the tooltip says why.
+
+Under `Settings` → **Viewer settings…** are all Field Viewer defaults (auto-play, standard view, vector arrows) and the **colour scale**: colour map (jet, turbo, viridis, plasma, inferno, magma, coolwarm, rainbow, greyscale), **Reverse the colours**, the number of **colour steps** (256 = smooth, down to 2 = discrete bands) and a live preview. The setting applies to plot and colour bar immediately and is remembered; the default still is the classic blue → red table. The numeric limits stay in the viewer (`Auto`, `min`, `max`, `Log scale`). The colour-bar title is configured in the same window under **Colour bar title**: left of the bar or above it, with X/Y position (normalized viewport coordinates), text size and rotation. The bar itself has X/Y position, width/height, font family (Arial/Times/Courier) and label font size under **Colour bar**. **Preview** applies the settings to the viewer without saving; **Cancel** restores the previous state, **Save** keeps them. The window is split into the tabs **Viewer**, **Colour** and **Colour bar**.
 
 ![Magic tee 10 GHz](images/field_viewer_magic_tee.png)
 

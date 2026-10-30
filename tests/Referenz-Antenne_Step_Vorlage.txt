@@ -1,0 +1,6 @@
+
+Komponente	Form	Abmessungen (X × Y × Z) in mm	Position (Center X, Center Y, Start Z)	Material
+Groundplane	Box / Quader	60.0 × 60.0 × 0.02	(0.0, 0.0, 0.0)	Kupfer / PEC
+Substrat	Box / Quader	60.0 × 60.0 × 1.60	(0.0, 0.0, 0.02)	FR4 (\(\varepsilon_r = 4.4\))
+Patch	Box / Quader	38.0 × 29.5 × 0.02	(0.0, 0.0, 1.62)	Kupfer / PEC
+Feedline	Box / Quader	3.05 × 15.25 × 0.02	(0.0, -22.375, 1.62)	Kupfer / PEC

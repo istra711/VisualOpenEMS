@@ -1,0 +1,61 @@
+Neben den umgesetzten Optionen (Surface, Wireframe, Slice, Iso-surface, Vektorpfeile, Farbtabelle Auto/Manuell/Log, Zeit-Animation, Outline, Achsen, MP4) gibt es eine ganze Reihe weiterer sinnvoller Darstellungen. Grob nach Nutzen sortiert:
+
+1. Strömungs-/Flussdarstellung (zeigt „Bewegung“ am besten)
+- Streamlines / Stromlinien: Integrierte Bahnlinien durch das Vektorfeld (vtkStreamTracer), als dünne Linien, Tubes oder Bänder; Startpunkte als Punktwolke, Linie, Ebene oder Kugel. Für E/H sehr anschaulich, für den Poynting-Vektor (Energiefluss) der Klassiker.
+- Path Lines für Zeitreihen: Stromlinien, die sich über die Zeit verändern (braucht zeitinterpoliertes Dataset, also mehr als das jetzige „Frame für Frame neu laden“).
+- LIC (Line Integral Convolution): texturierte Strömungsdarstellung auf einer Schnittfläche – extrem gut, um Feldrichtung und Wirbel schon im Standbild zu erkennen (vtkSurfaceLICMapper, GPU-abhängig).
+- Stream Surfaces / Ribbons: Flächen, die von Stromlinien aufgespannt werden – schön für 3D-Wirbel.
+- Hedgehog: Pfeile in festem Raster mit konstanter Länge (reine Richtungsanzeige ohne Skalierung) – noch simpler als der jetzige Glyph-Modus.
+
+2. Volumen- und Transparenzdarstellung
+- Volume Rendering (Ray-Casting, vtkGPUVolumeRayCastMapper): halbtransparentes Volumen mit Transferfunktion (Farbe + Opazität); man sieht „wolkenartig“ ins Innere, ohne Scheiben zu schneiden. Braucht echte 3D-Daten und eine GPU.
+- Transparente/„ghosted“ Oberfläche: Außenhaut halbtransparent, damit innenliegende Pfeile/Schnitte sichtbar bleiben.
+- Mehrere verschachtelte Iso-Flächen gleichzeitig (z. B. 10 / 30 / 60 % vom Maximum) mit abgestufter Transparenz.
+
+3. Flächige/2D-Darstellungen
+- Konturlinien auf der Schnittfläche (Iso-Linien des Skalars, mit Beschriftung) – zusätzlich zur Farbfläche; sehr gut lesbar.
+- Orthogonale Schnitte gleichzeitig (X-, Y-, Z-Ebene) oder Schnitt-Fächer (mehrere parallele Ebenen mit Abstand).
+- Raster-/Bild-Ansicht (senkrecht auf die Schnittfläche, pixelgenau, Interpolation an/aus) – wie eine Heatmap.
+- Höhenprofil / Warp (vtkWarpScalar): die Schnittfläche wird proportional zu |E| ausgelenkt → reliefartiges „Gebirge“ der Feldstärke, sehr intuitiv.
+- Punktwolke / „Points“-Darstellung statt Flächen.
+
+4. Auswählen, Filtern, Messen
+- Schwellenwert (Threshold): nur Bereiche über/unter einem Wert zeigen (z. B. nur |E| > 10 % vom Max).
+- Clip / Crop: Halbraum oder Box wegschneiden, um ins Volumen zu schauen (ohne dünne Scheibe).
+- Probe / Punktabfrage: Wert an einer geklickten Position (Farbe + Zahlenwert).
+- Plot over Line: 1D-Profil entlang einer Linie (z. B. Feldverlauf über dem Substrat).
+- Plot over Time: Feldwert an einem Punkt über die Zeit (Transienten, Einschwingen).
+- Temporal Statistics: Mittelwert/RMS/Maximum über einen Zeitausschnitt (stationärer Zustand).
+
+5. Vektor-Darstellung verfeinern
+- Kegel/Spitzen statt Pfeilen, oder 2D-Glyphen (nur in der Schnittebene).
+- Skalierung nach einer anderen Größe (z. B. Richtung = E, Länge = |S|).
+- Räumlich gleichmäßige Ausdünnung (uniform spatial distribution) statt „jeder N-te Punkt“ – gleichmäßigeres Pfeilraster bei unregelmäßigen Gittern.
+- Polarisationsellipsen: für harmonische Felder die Spitze des E-Vektors als Ellipse über eine Periode – zeigt Polarisation (linear/zirkular) direkt.
+
+6. Farbe, abgeleitete Größen, Transferfunktion
+- Frei wählbare Colormaps (viridis, turbo, jet, diverging für vorzeichenbehaftete Größen) statt nur der aktuellen Tabelle. _(umgesetzt: Settings → Field Viewer — colour scale)_
+- Opazität nach zweitem Array (z. B. Farbe = Phase, Deckkraft = |E|).
+- Abgeleitete Arrays: Ex/Ey/Ez einzeln, Phase, dB, |E|², Poynting S = E × H, Verlustdichte/SAR, Oberflächenstrom auf Metall.
+- Formel-/Calculator-Filter für eigene Ausdrücke (vtkArrayCalculator).
+
+7. Zeit, Kamera, Vergleich
+- Phasen-Animation für Frequenzbereichs-Dumps: Re{F·e^{jωt}} über die Phase animieren → man sieht die Feldverteilung „rotieren“, ohne eine transiente Simulation. (Datenlimits: der Exporter schreibt aktuell nur den Realteil, Imaginärteil müsste mit exportiert werden.)
+- Sweep-Animation: Schnittebene fährt während der Wiedergabe durch das Volumen.
+- Turntable/Kamerafahrt für Videos, Zeitstempel/Framenummer als Overlay.
+- Side-by-side / Differenzansicht zweier Arrays, Frequenzen oder Zeitpunkte (A−B).
+- Geometrie-/Mesh-Overlay: STEP/STL oder das Rechengitter halbtransparent über die Felder legen – man sieht sofort, wo Metall/Substrat relativ zum Feld liegen.
+
+8. Export/Interoperabilität
+- .pvd-Zeitsammlung statt <name>.series.json: ParaView lädt damit die ganze Zeitreihe als Animation.
+- ParaView-State (.pvsm) mitschreiben, damit man mit identischen Einstellungen in ParaView weiterarbeitet.
+- Export nach glTF/X3D/OBJ für Präsentationen, hochauflösende Offscreen-Screenshots.
+
+
+Einordnung nach Aufwand (grobe Einschätzung)
+- Klein: Konturlinien auf der Scheibe, Colormap-Auswahl, Threshold, Clip, Multi-Slice, Punkte-Modus, Warp/Höhenprofil, Kamerafahrt, Annotationen.
+- Mittel: Streamlines (+ Seeding), Plot over Line/Time, Probe, Poynting als abgeleitetes Array, Geometrie-Overlay, .pvd-Export, Polarisationsellipsen.
+- Größer: Volume Rendering (GPU/Transferfunktion-UI), LIC (GPU-Treiber), Path Lines (zeitinterpoliertes Dataset), Phasen-Animation (Imaginärteil im Export + Phasen-Slider).
+
+
+Am meisten „Aha“ pro Aufwand wären aus meiner Sicht Streamlines/Poynting, Konturlinien auf der Schnittfläche, Warp-Höhenprofil, Multi-Slice/Clip und die Phasen-Animation für Frequenzdaten.

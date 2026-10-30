@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import time
 import traceback
 from datetime import datetime
@@ -10,7 +11,16 @@ from queue import Empty, Queue
 
 from PySide6 import QtCore
 from PySide6.QtCore import QUrl, QObject, Qt, QTimer, Signal, QThread
-from PySide6.QtGui import QAction, QCursor, QDesktopServices, QFont, QKeySequence
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QCursor,
+    QDesktopServices,
+    QFont,
+    QImage,
+    QKeySequence,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -161,6 +171,30 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001 — never block a dialog close
             print("save dialog size failed:", e)
 
+    def _dialog_geometry(self, key: str):
+        """Remembered geometry (``QByteArray``) of a dialog, or ``None``."""
+        raw = (getattr(self.settings, "dialog_geometry", None) or {}).get(key) or ""
+        if not raw:
+            return None
+        try:
+            return QtCore.QByteArray(base64.b64decode(raw))
+        except Exception as e:  # noqa: BLE001 — corrupt entry: use the default
+            print("restore dialog geometry failed:", e)
+            return None
+
+    def _remember_dialog_geometry(self, key: str, dlg) -> None:
+        """Persist a dialog's size and position for the next open."""
+        value = base64.b64encode(bytes(dlg.saveGeometry())).decode("ascii")
+        geos = dict(getattr(self.settings, "dialog_geometry", None) or {})
+        if geos.get(key) == value:
+            return
+        geos[key] = value
+        self.settings.dialog_geometry = geos
+        try:
+            self.settings.save()
+        except Exception as e:  # noqa: BLE001 — never block a dialog close
+            print("save dialog geometry failed:", e)
+
     def _apply_window_geometry(self) -> None:
         """Restore saved geometry, else fit on the primary available screen."""
         avail = self._screen_avail()
@@ -238,6 +272,23 @@ class MainWindow(QMainWindow):
             self.settings.window_geometry = base64.b64encode(data).decode("ascii")
             self.settings.log_panel_visible = self.btn_log_toggle.isChecked()
             self.settings.project_panel_visible = self.btn_project_toggle.isChecked()
+            if hasattr(self, "main_splitter"):
+                if self.project_panel.isVisible():
+                    self.settings.main_splitter_sizes = list(
+                        self.main_splitter.sizes()
+                    )
+                elif self._project_panel_sizes:
+                    self.settings.main_splitter_sizes = list(
+                        self._project_panel_sizes
+                    )
+            if hasattr(self, "right_split"):
+                if self.log_panel.isVisible():
+                    self.settings.log_splitter_sizes = list(self.right_split.sizes())
+                elif self._log_sizes:
+                    self.settings.log_splitter_sizes = list(self._log_sizes)
+            if hasattr(self, "tabs"):
+                title = self.tabs.tabText(self.tabs.currentIndex())
+                self.settings.current_tab = str(title or "")
             self.settings.save()
         except Exception as e:  # noqa: BLE001
             print("save geometry failed:", e)
@@ -284,6 +335,11 @@ class MainWindow(QMainWindow):
         self.btn_gps.setToolTip(
             "1.57542 GHz GPS L1 circularly polarised patch on FR4 1.6 mm "
             "(chamfered polygon, one probe feed) under work/gps_patch"
+        )
+        self.btn_wr62 = QPushButton("Preset: WR62 Waveguide…")
+        self.btn_wr62.setToolTip(
+            "Straight WR62 rectangular waveguide, 100 mm, TE10 at 10 GHz, "
+            "with E/H/J field dumps under work/wr62_waveguide"
         )
         self.btn_run = QPushButton("Run Simulation")
         self.btn_abort = QPushButton("Abort")
@@ -346,7 +402,9 @@ class MainWindow(QMainWindow):
         # Left: project tree + geometry
         left = QWidget()
         self.project_panel = left
-        self._project_panel_sizes: list[int] | None = None
+        self._project_panel_sizes: list[int] | None = (
+            list(getattr(self.settings, "main_splitter_sizes", None) or []) or None
+        )
         lv = QVBoxLayout(left)
         self.lbl_project_panel = QLabel("Project / Geometry")
         lv.addWidget(self.lbl_project_panel)
@@ -696,7 +754,9 @@ class MainWindow(QMainWindow):
             )
 
         self.right_split.setSizes([520, 220])
-        self._log_sizes: list[int] | None = None
+        self._log_sizes: list[int] | None = (
+            list(getattr(self.settings, "log_splitter_sizes", None) or []) or None
+        )
         self._apply_log_panel_visibility(
             bool(getattr(self.settings, "log_panel_visible", True))
         )
@@ -742,8 +802,49 @@ class MainWindow(QMainWindow):
             getattr(self.settings, "field_viewer_vectors", None)
         )
         self.vtk_viewer.on_vectors_changed = self._on_field_vectors_changed
+        # colour scale (colormap / reverse / steps; edited in Settings)
+        self.vtk_viewer.set_color_scale_options(
+            getattr(self.settings, "field_viewer_color_scale", None)
+        )
+        self.vtk_viewer.on_color_scale_changed = self._on_field_color_scale_changed
+        # colour-bar title (left/position/size; migrated from the old
+        # field_viewer_vectors["title_left"] checkbox)
+        title_opts = getattr(self.settings, "field_viewer_title", None) or {}
+        if not title_opts:
+            title_opts = {
+                "left": bool(
+                    (getattr(self.settings, "field_viewer_vectors", None) or {}).get(
+                        "title_left", False
+                    )
+                )
+            }
+        self.vtk_viewer.set_bar_title_options(title_opts)
+        self.vtk_viewer.set_color_bar_options(
+            getattr(self.settings, "field_viewer_color_bar", None)
+        )
+        self.vtk_viewer.set_layout_mode(
+            getattr(self.settings, "field_viewer_layout", "panel")
+        )
+        self.vtk_viewer.spn_fps.setValue(
+            int(getattr(self.settings, "field_viewer_fps", 4) or 4)
+        )
+        self.vtk_viewer.chk_loop.setChecked(
+            bool(getattr(self.settings, "field_viewer_loop", True))
+        )
+        self.vtk_viewer.set_display_geometry(
+            getattr(self.settings, "field_viewer_display_geometry", "")
+        )
+        self.vtk_viewer.on_display_geometry_changed = (
+            self._on_display_geometry_changed
+        )
         tabs.addTab(self.vtk_viewer, "Field Viewer")
         self.vtk_tab_index = tabs.indexOf(self.vtk_viewer)
+        saved_tab = str(getattr(self.settings, "current_tab", "") or "")
+        if saved_tab:
+            for _i in range(tabs.count()):
+                if tabs.tabText(_i) == saved_tab:
+                    tabs.setCurrentIndex(_i)
+                    break
 
         # Per-tab help: toolbar button (current tab) + Help on each page
         from app.ui.tab_help import inject_help_button, show_tab_help
@@ -843,6 +944,7 @@ class MainWindow(QMainWindow):
         self.btn_pcb_bp.clicked.connect(self._on_load_pcb_bandpass)
         self.btn_pcb_hairpin.clicked.connect(self._on_load_pcb_hairpin)
         self.btn_gps.clicked.connect(self._on_load_gps_patch)
+        self.btn_wr62.clicked.connect(self._on_load_wr62)
         self.btn_build_mesh.clicked.connect(self._on_build_mesh)
         self.btn_run.clicked.connect(self._on_run)
         self.btn_abort.clicked.connect(self._on_abort)
@@ -949,6 +1051,12 @@ class MainWindow(QMainWindow):
             btn=self.btn_pcb_hairpin,
         )
         add_action(pmenu, "Preset: GPS L1 Patch (1.57542 GHz)\u2026", btn=self.btn_gps)
+        add_action(
+            pmenu,
+            "Preset: WR62 Waveguide (10 GHz)\u2026",
+            btn=self.btn_wr62,
+            tip="Straight WR62 guide, 100 mm, TE10 at 10 GHz, E/H/J dumps",
+        )
 
         gmenu = bar.addMenu("&Geometry")
         add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
@@ -1196,6 +1304,13 @@ class MainWindow(QMainWindow):
 
         tmenu = bar.addMenu("&Settings")
         add_action(tmenu, "Settings\u2026", btn=self.btn_settings)
+        add_action(
+            tmenu,
+            "Viewer settings\u2026",
+            slot=self._on_viewer_settings,
+            tip="Field Viewer colour scale (colour map, reverse, colour steps) "
+            "with live preview",
+        )
 
         hmenu = bar.addMenu("&Help")
         add_action(hmenu, "Help for Current Tab", btn=self.btn_help, shortcut="F1")
@@ -4212,6 +4327,49 @@ class MainWindow(QMainWindow):
             self._log(ln)
         self._log_computed_summary()
 
+    def _on_load_wr62(self) -> None:
+        """Load the straight WR62 waveguide preset (E/H/J field dumps)."""
+        from app.csxcad_builder.primitives import wr62_waveguide_primitives
+
+        self._current_file_path = None
+        work = self.settings.work_path() / "wr62_waveguide"
+        work.mkdir(parents=True, exist_ok=True)
+
+        project, prims = wr62_waveguide_primitives(f0=10.0e9, length=100.0, excite="in")
+        self.project = project
+        self.primitives = prims
+        self.project.primitives = list(prims)
+        if hasattr(self.sim_params, "set_patch_group_visible"):
+            self.sim_params.set_patch_group_visible(False)
+        self._sync_form_from_project()
+        self._refresh_tree()
+        self._refresh_ports()
+        self._refresh_materials()
+
+        saved = project.save(work / "wr62_waveguide.fcsim.json")
+        try:
+            self.vtk_viewer.set_work_dir(work)
+            self.vtk_viewer.set_geometry(prims, unit_m=1e-3)
+        except Exception:  # noqa: BLE001 — viewer may not exist in early tests
+            pass
+
+        lines = [
+            "WR62 rectangular waveguide PRESET loaded: TE10 at 10 GHz.",
+            "Cross-section 15.7988 x 7.8994 mm, ports 100 mm apart, four 2 mm "
+            "PEC walls; PML at both x ends.",
+            "f_c(TE10) = 9.488 GHz, lambda_g = 94.9 mm at 10 GHz.",
+            "Field dumps: Et, Ht, Jt (10 GHz) — open them in the Field Viewer.",
+            "Two rect_waveguide ports (in excited, out passive); "
+            "Run All Ports (Ctrl+Shift+R) completes the 2x2 S-matrix.",
+            f"Project: {saved}",
+        ]
+        self.geom_info.setPlainText("\n".join(lines))
+        self._update_window_title()
+        self._log("WR62 waveguide preset loaded")
+        for ln in lines:
+            self._log(ln)
+        self._log_computed_summary()
+
     def _on_load_gps_patch(self) -> None:
         """Load the 1.57542 GHz GPS L1 circularly polarised patch preset."""
         from app.csxcad_builder.gps_patch import gps_patch_primitives
@@ -5977,6 +6135,463 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _on_display_geometry_changed(self, value: str) -> None:
+        """Remember the Display popup's size/position for the next open."""
+        self.settings.field_viewer_display_geometry = str(value or "")
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 - never block the viewer on a write error
+            pass
+
+    def _on_field_color_scale_changed(self, options: dict) -> None:
+        """Persist the Field Viewer colour scale and mirror it to the pop-out."""
+        self.settings.field_viewer_color_scale = dict(options or {})
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 - never block the viewer on a write error
+            pass
+        win = getattr(getattr(self, "vtk_viewer", None), "_popout_win", None)
+        if win is not None and getattr(win, "viewer", None) is not None:
+            try:
+                win.viewer.set_color_scale_options(options)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_viewer_settings(self) -> None:
+        """Settings menu: all Field Viewer display defaults.
+
+        Kept out of the main Settings dialog, which otherwise grows with every
+        viewer option. The numeric colour range itself stays in the viewer
+        toolbar (Auto / min / max / Log scale).
+        """
+        from app.colormaps import (
+            COLORMAPS,
+            COLOR_SCALE_MAX_STEPS,
+            COLOR_SCALE_MIN_STEPS,
+            DEFAULT_COLOR_SCALE,
+            colormap_colors,
+        )
+        from app.ui.vtk_viewer import DEFAULT_VIEWER_LAYOUT, VIEWER_LAYOUTS, VIEW_PRESETS
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Viewer settings")
+        dlg.resize(540, 470)
+        geo = self._dialog_geometry("viewer_settings_tabs")
+        if geo is not None:
+            dlg.restoreGeometry(geo)
+        root = QVBoxLayout(dlg)
+        tabs = QTabWidget()
+        root.addWidget(tabs, 1)
+        tab_viewer = QWidget()
+        viewer_layout = QVBoxLayout(tab_viewer)
+        tab_colour = QWidget()
+        colour_layout = QVBoxLayout(tab_colour)
+        tab_bar = QWidget()
+        bar_layout = QVBoxLayout(tab_bar)
+        tabs.addTab(tab_viewer, "Viewer")
+        tabs.addTab(tab_colour, "Colour")
+        tabs.addTab(tab_bar, "Colour bar")
+        try:
+            tabs.setCurrentIndex(
+                max(0, min(2, int(getattr(self.settings, "viewer_settings_tab", 0))))
+            )
+        except (TypeError, ValueError):
+            tabs.setCurrentIndex(0)
+
+        # --- layout mode (B = docked panel, C = minimal + Display popup) -----
+        grp_layout = QGroupBox("Layout")
+        lform = QFormLayout(grp_layout)
+        cmb_layout = QComboBox()
+        for label, key in VIEWER_LAYOUTS:
+            cmb_layout.addItem(label, key)
+        idx_layout = cmb_layout.findData(
+            str(getattr(self.settings, "field_viewer_layout", DEFAULT_VIEWER_LAYOUT))
+        )
+        cmb_layout.setCurrentIndex(idx_layout if idx_layout >= 0 else 0)
+        cmb_layout.setToolTip(
+            "Display panel (B): the Data / Slice / Colour / Vectors panel is\n"
+            "docked left of the 3D view.\n"
+            "Minimal (C): the panel is hidden; a Display… button in the top bar\n"
+            "opens it in a popup, leaving the full width to the viewer."
+        )
+        lform.addRow("Field Viewer", cmb_layout)
+        viewer_layout.addWidget(grp_layout)
+
+        # --- Field Viewer defaults (were in the main Settings dialog) --------
+        grp_fv = QGroupBox("Field Viewer")
+        fvform = QFormLayout(grp_fv)
+        cmb_view = QComboBox()
+        for key, label in VIEW_PRESETS:
+            cmb_view.addItem(label, key)
+        idx_view = cmb_view.findData(
+            str(getattr(self.settings, "field_viewer_view", "keep"))
+        )
+        cmb_view.setCurrentIndex(idx_view if idx_view >= 0 else 0)
+        cmb_view.setToolTip(
+            "Standard view of the Field Viewer's 3D pane.\n"
+            "Applied to every newly loaded field; the viewer's 'View' box\n"
+            "changes the same setting."
+        )
+        fvform.addRow("Default view", cmb_view)
+        chk_vectors = QCheckBox("Show field vectors (glyph arrows) after loading")
+        chk_vectors.setChecked(
+            bool(
+                (getattr(self.settings, "field_viewer_vectors", None) or {}).get(
+                    "enabled", False
+                )
+            )
+        )
+        chk_vectors.setToolTip(
+            "Default state of the Field Viewer 'Vectors' checkbox.\n"
+            "The arrows show the field direction (ParaView Glyph) — slice\n"
+            "them onto the cut plane to watch the field move during playback.\n"
+            "Changing it in the viewer is remembered as well."
+        )
+        fvform.addRow("", chk_vectors)
+        viewer_layout.addWidget(grp_fv)
+
+        # --- playback defaults (moved out of the playback bar) ----------------
+        grp_pb = QGroupBox("Playback")
+        pbform = QFormLayout(grp_pb)
+        spn_fps = QSpinBox()
+        spn_fps.setRange(1, 60)
+        spn_fps.setValue(int(getattr(self.settings, "field_viewer_fps", 4) or 4))
+        spn_fps.setSuffix(" fps")
+        spn_fps.setToolTip("Default playback speed of the time series.")
+        pbform.addRow("Speed", spn_fps)
+        chk_loop = QCheckBox("Loop")
+        chk_loop.setChecked(bool(getattr(self.settings, "field_viewer_loop", True)))
+        chk_loop.setToolTip("Restart at the first step after the last one.")
+        pbform.addRow("", chk_loop)
+        chk_autoplay = QCheckBox("Auto-play time series after loading / exporting")
+        chk_autoplay.setChecked(
+            bool(getattr(self.settings, "field_viewer_autoplay", False))
+        )
+        chk_autoplay.setToolTip(
+            "Start the animation automatically after loading / exporting a series."
+        )
+        pbform.addRow("", chk_autoplay)
+        viewer_layout.addWidget(grp_pb)
+
+        grp_cs = QGroupBox("Field Viewer — colour scale")
+        csform = QFormLayout(grp_cs)
+        cs_opts = dict(DEFAULT_COLOR_SCALE)
+        cs_opts.update(self.vtk_viewer.color_scale_options() or {})
+        cmb_cmap = QComboBox()
+        for label, key in COLORMAPS:
+            cmb_cmap.addItem(label, key)
+        idx_cmap = cmb_cmap.findData(str(cs_opts.get("cmap", "jet")))
+        cmb_cmap.setCurrentIndex(idx_cmap if idx_cmap >= 0 else 0)
+        cmb_cmap.setToolTip(
+            "Colour table of the field plot and its colour bar.\n"
+            "Applied when the dialog is saved and used for every newly loaded\n"
+            "field; the range itself is still set by Auto / min / max / Log\n"
+            "scale in the viewer."
+        )
+        chk_reverse = QCheckBox("Reverse the colours")
+        chk_reverse.setChecked(bool(cs_opts.get("reverse", False)))
+        chk_reverse.setToolTip(
+            "Low values get the top colour, high values the bottom one."
+        )
+        spn_steps = QSpinBox()
+        spn_steps.setRange(COLOR_SCALE_MIN_STEPS, COLOR_SCALE_MAX_STEPS)
+        try:
+            steps_value = int(cs_opts.get("steps", DEFAULT_COLOR_SCALE["steps"]))
+        except (TypeError, ValueError):
+            steps_value = int(DEFAULT_COLOR_SCALE["steps"])
+        spn_steps.setValue(
+            max(COLOR_SCALE_MIN_STEPS, min(COLOR_SCALE_MAX_STEPS, steps_value))
+        )
+        spn_steps.setToolTip(
+            "Number of colour table entries.\n"
+            f"{COLOR_SCALE_MAX_STEPS} = smooth gradient; values down to "
+            f"{COLOR_SCALE_MIN_STEPS} show the data as discrete colour bands."
+        )
+        lbl_preview = QLabel()
+        lbl_preview.setMinimumSize(240, 18)
+        lbl_preview.setToolTip("Preview of the selected colour scale.")
+
+        def _update_cmap_preview(*_args) -> None:
+            name = str(cmb_cmap.currentData() or DEFAULT_COLOR_SCALE["cmap"])
+            steps = int(spn_steps.value())
+            colors = colormap_colors(name, steps, bool(chk_reverse.isChecked()))
+            if not colors:
+                return
+            img = QImage(len(colors), 1, QImage.Format.Format_RGB32)
+            for i, (r, g, b) in enumerate(colors):
+                img.setPixelColor(i, 0, QColor.fromRgbF(r, g, b))
+            # few steps = visible bands; keep them crisp instead of blurring
+            mode = (
+                Qt.TransformationMode.SmoothTransformation
+                if steps >= 64
+                else Qt.TransformationMode.FastTransformation
+            )
+            lbl_preview.setPixmap(
+                QPixmap.fromImage(img).scaled(
+                    240, 18, Qt.AspectRatioMode.IgnoreAspectRatio, mode
+                )
+            )
+
+        cmb_cmap.currentIndexChanged.connect(_update_cmap_preview)
+        chk_reverse.toggled.connect(_update_cmap_preview)
+        spn_steps.valueChanged.connect(_update_cmap_preview)
+        _update_cmap_preview()
+        csform.addRow("Colour map", cmb_cmap)
+        csform.addRow("", chk_reverse)
+        csform.addRow("Colour steps", spn_steps)
+        csform.addRow("Preview", lbl_preview)
+        colour_layout.addWidget(grp_cs)
+
+        # --- colour-bar geometry / font --------------------------------------
+        from app.ui.vtk_viewer import COLOR_BAR_FONTS, DEFAULT_COLOR_BAR
+
+        grp_bar = QGroupBox("Colour bar")
+        bform = QFormLayout(grp_bar)
+        bar_opts = dict(DEFAULT_COLOR_BAR)
+        bar_opts.update(self.vtk_viewer.color_bar_options() or {})
+        spn_bar_x = QDoubleSpinBox()
+        spn_bar_x.setRange(0.0, 1.0)
+        spn_bar_x.setDecimals(3)
+        spn_bar_x.setSingleStep(0.01)
+        spn_bar_x.setValue(float(bar_opts.get("x", 0.84)))
+        spn_bar_x.setToolTip("Lower-left corner of the bar (normalized viewport X).")
+        spn_bar_y = QDoubleSpinBox()
+        spn_bar_y.setRange(0.0, 1.0)
+        spn_bar_y.setDecimals(3)
+        spn_bar_y.setSingleStep(0.01)
+        spn_bar_y.setValue(float(bar_opts.get("y", 0.06)))
+        spn_bar_y.setToolTip("Lower-left corner of the bar (normalized viewport Y).")
+        spn_bar_w = QDoubleSpinBox()
+        spn_bar_w.setRange(0.02, 1.0)
+        spn_bar_w.setDecimals(3)
+        spn_bar_w.setSingleStep(0.01)
+        spn_bar_w.setValue(float(bar_opts.get("width", 0.15)))
+        spn_bar_w.setToolTip(
+            "Width of the bar plus its labels (normalized viewport)."
+        )
+        spn_bar_h = QDoubleSpinBox()
+        spn_bar_h.setRange(0.02, 1.0)
+        spn_bar_h.setDecimals(3)
+        spn_bar_h.setSingleStep(0.01)
+        spn_bar_h.setValue(float(bar_opts.get("height", 0.88)))
+        spn_bar_h.setToolTip(
+            "Height of the bar plus its labels (normalized viewport)."
+        )
+        cmb_bar_font = QComboBox()
+        cmb_bar_font.addItems(COLOR_BAR_FONTS)
+        cmb_bar_font.setCurrentText(str(bar_opts.get("font", "Arial")))
+        cmb_bar_font.setToolTip("Font family of the bar labels and title.")
+        spn_bar_font = QSpinBox()
+        spn_bar_font.setRange(6, 72)
+        spn_bar_font.setValue(int(bar_opts.get("font_size", 10)))
+        spn_bar_font.setSuffix(" pt")
+        spn_bar_font.setToolTip("Font size of the bar labels (the title size is above).")
+        bform.addRow("X position", spn_bar_x)
+        bform.addRow("Y position", spn_bar_y)
+        bform.addRow("Width", spn_bar_w)
+        bform.addRow("Height", spn_bar_h)
+        bform.addRow("Font", cmb_bar_font)
+        bform.addRow("Label size", spn_bar_font)
+        bar_layout.addWidget(grp_bar)
+
+        # --- colour-bar title (was the "Title left" checkbox in the toolbar) --
+        from app.ui.vtk_viewer import DEFAULT_BAR_TITLE
+
+        grp_title = QGroupBox("Colour bar title")
+        tform = QFormLayout(grp_title)
+        title_opts = dict(DEFAULT_BAR_TITLE)
+        title_opts.update(self.vtk_viewer.bar_title_options() or {})
+        chk_title_left = QCheckBox("Title left of the colour bar")
+        chk_title_left.setChecked(bool(title_opts.get("left", False)))
+        chk_title_left.setToolTip(
+            "Draw the colour-bar title rotated beside the bar instead of above\n"
+            "it. X / Y are normalized viewport coordinates: 0 = left/bottom,\n"
+            "1 = right/top (the bar sits at x 0.84…0.99, y 0.06…0.94)."
+        )
+        spn_title_x = QDoubleSpinBox()
+        spn_title_x.setRange(0.0, 1.0)
+        spn_title_x.setDecimals(3)
+        spn_title_x.setSingleStep(0.01)
+        spn_title_x.setValue(float(title_opts.get("x", 0.826)))
+        spn_title_x.setToolTip("Horizontal position of the left-hand title (0…1).")
+        spn_title_y = QDoubleSpinBox()
+        spn_title_y.setRange(0.0, 1.0)
+        spn_title_y.setDecimals(3)
+        spn_title_y.setSingleStep(0.01)
+        spn_title_y.setValue(float(title_opts.get("y", 0.5)))
+        spn_title_y.setToolTip("Vertical position of the left-hand title (0…1).")
+        spn_title_size = QSpinBox()
+        spn_title_size.setRange(6, 72)
+        spn_title_size.setValue(int(title_opts.get("size", 12)))
+        spn_title_size.setSuffix(" pt")
+        spn_title_size.setToolTip(
+            "Title font size in points (applies above and beside the bar)."
+        )
+        spn_title_rot = QDoubleSpinBox()
+        spn_title_rot.setRange(0.0, 360.0)
+        spn_title_rot.setDecimals(0)
+        spn_title_rot.setSingleStep(15.0)
+        spn_title_rot.setValue(float(title_opts.get("rotation", 90.0)))
+        spn_title_rot.setSuffix(" °")
+        spn_title_rot.setToolTip(
+            "Text angle of the left-hand title (90 = vertical, 0 = horizontal)."
+        )
+
+        def _sync_title_controls(*_args) -> None:
+            on = bool(chk_title_left.isChecked())
+            for widget in (spn_title_x, spn_title_y, spn_title_rot):
+                widget.setEnabled(on)
+
+        chk_title_left.toggled.connect(_sync_title_controls)
+        _sync_title_controls()
+        tform.addRow("", chk_title_left)
+        tform.addRow("X position", spn_title_x)
+        tform.addRow("Y position", spn_title_y)
+        tform.addRow("Text size", spn_title_size)
+        tform.addRow("Rotation", spn_title_rot)
+        bar_layout.addWidget(grp_title)
+        viewer_layout.addStretch(1)
+        colour_layout.addStretch(1)
+        bar_layout.addStretch(1)
+
+        hint = QLabel(
+            "Defaults for the Field Viewer: auto-play, standard view, vector\n"
+            "arrows and the colour scale. Saved for all projects; the numeric\n"
+            "colour limits stay in the viewer (Auto / min / max / Log scale)."
+        )
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        # current state: restored when the dialog is cancelled after a preview
+        snapshot = {
+            "autoplay": bool(self.vtk_viewer.chk_autoplay.isChecked()),
+            "fps": int(self.vtk_viewer.spn_fps.value()),
+            "loop": bool(self.vtk_viewer.chk_loop.isChecked()),
+            "view": self.vtk_viewer.view_preset(),
+            "vectors": self.vtk_viewer.vector_options(),
+            "color_scale": self.vtk_viewer.color_scale_options(),
+            "title": self.vtk_viewer.bar_title_options(),
+            "color_bar": self.vtk_viewer.color_bar_options(),
+            "layout": self.vtk_viewer.layout_mode(),
+        }
+
+        def _collect_options() -> dict:
+            vec = dict(self.vtk_viewer.vector_options())
+            vec["enabled"] = bool(chk_vectors.isChecked())
+            return {
+                "autoplay": bool(chk_autoplay.isChecked()),
+                "fps": int(spn_fps.value()),
+                "loop": bool(chk_loop.isChecked()),
+                "view": str(cmb_view.currentData() or "keep"),
+                "vectors": vec,
+                "color_scale": {
+                    "cmap": str(
+                        cmb_cmap.currentData() or DEFAULT_COLOR_SCALE["cmap"]
+                    ),
+                    "reverse": bool(chk_reverse.isChecked()),
+                    "steps": int(spn_steps.value()),
+                },
+                "title": {
+                    "left": bool(chk_title_left.isChecked()),
+                    "x": float(spn_title_x.value()),
+                    "y": float(spn_title_y.value()),
+                    "size": int(spn_title_size.value()),
+                    "rotation": float(spn_title_rot.value()),
+                },
+                "color_bar": {
+                    "x": float(spn_bar_x.value()),
+                    "y": float(spn_bar_y.value()),
+                    "width": float(spn_bar_w.value()),
+                    "height": float(spn_bar_h.value()),
+                    "font": str(cmb_bar_font.currentText() or "Arial"),
+                    "font_size": int(spn_bar_font.value()),
+                },
+                "layout": str(cmb_layout.currentData() or DEFAULT_VIEWER_LAYOUT),
+            }
+
+        def _apply_options(opts: dict, *, persist: bool) -> None:
+            """Push options to the viewer (and pop-out), optionally save them."""
+            targets = [self.vtk_viewer]
+            win = getattr(self.vtk_viewer, "_popout_win", None)
+            if win is not None and getattr(win, "viewer", None) is not None:
+                targets.append(win.viewer)
+            for target in targets:
+                # set_autoplay_default() toggles the checkbox; block its
+                # auto-save signal so Preview never writes app_settings.json
+                target.chk_autoplay.blockSignals(True)
+                try:
+                    target.set_autoplay_default(bool(opts["autoplay"]))
+                finally:
+                    target.chk_autoplay.blockSignals(False)
+                target.set_view_default(str(opts["view"]))
+                target.spn_fps.setValue(int(opts["fps"]))
+                target.chk_loop.setChecked(bool(opts["loop"]))
+                target.set_vector_options(dict(opts["vectors"]))
+                target.set_color_scale_options(dict(opts["color_scale"]))
+                target.set_bar_title_options(dict(opts["title"]))
+                target.set_color_bar_options(dict(opts["color_bar"]))
+                target.set_layout_mode(str(opts["layout"]))
+            if not persist:
+                return
+            self.settings.field_viewer_autoplay = bool(opts["autoplay"])
+            self.settings.field_viewer_fps = int(opts["fps"])
+            self.settings.field_viewer_loop = bool(opts["loop"])
+            self.settings.field_viewer_view = str(opts["view"])
+            self.settings.field_viewer_vectors = dict(opts["vectors"])
+            self.settings.field_viewer_color_scale = dict(opts["color_scale"])
+            self.settings.field_viewer_title = dict(opts["title"])
+            self.settings.field_viewer_color_bar = dict(opts["color_bar"])
+            self.settings.field_viewer_layout = str(opts["layout"])
+            self.settings.save()
+
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_preview = bb.addButton(
+            "Preview", QDialogButtonBox.ButtonRole.ApplyRole
+        )
+        btn_preview.setToolTip(
+            "Apply the current settings to the viewer without saving.\n"
+            "Cancel restores the previous state; Save keeps the preview."
+        )
+        btn_preview.clicked.connect(
+            lambda: _apply_options(_collect_options(), persist=False)
+        )
+        root.addWidget(bb)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        accepted = dlg.exec()
+        self.settings.viewer_settings_tab = int(tabs.currentIndex())
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 — never block a dialog close
+            pass
+        self._remember_dialog_geometry("viewer_settings_tabs", dlg)
+        if not accepted:
+            _apply_options(snapshot, persist=False)
+            return
+
+        options = _collect_options()
+        _apply_options(options, persist=True)
+        color_scale = options["color_scale"]
+        vectors = options["vectors"]
+        title_options = options["title"]
+        bar_options = options["color_bar"]
+        self._log(
+            "Viewer settings saved (auto-play="
+            f"{'on' if options['autoplay'] else 'off'}, "
+            f"view={options['view']}, "
+            f"vectors={'on' if vectors['enabled'] else 'off'}, "
+            "colour scale: "
+            f"{color_scale['cmap']}"
+            f"{', reversed' if color_scale['reverse'] else ''}"
+            f", {color_scale['steps']} step(s); title="
+            f"{'left' if title_options['left'] else 'top'}"
+            f", {title_options['size']} pt; bar={bar_options['font']}"
+            f" {bar_options['font_size']} pt; layout={options['layout']})"
+        )
+
     def _on_settings(self) -> None:
         # Settings dialog: paths + port defaults
         from PySide6.QtWidgets import (
@@ -5992,7 +6607,10 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.resize(480, 560)
+        dlg.resize(480, 500)
+        geo = self._dialog_geometry("settings_main")
+        if geo is not None:
+            dlg.restoreGeometry(geo)
         root = QVBoxLayout(dlg)
 
         form = QFL()
@@ -6056,55 +6674,15 @@ class MainWindow(QMainWindow):
         hint.setWordWrap(True)
         root.addWidget(hint)
 
-        # --- Field Viewer ---
-        grp_fv = QGroupBox("Field Viewer")
-        fvform = QFL(grp_fv)
-        chk_autoplay = QCheckBox("Auto-play time series after loading / exporting")
-        chk_autoplay.setChecked(
-            bool(getattr(self.settings, "field_viewer_autoplay", False))
-        )
-        chk_autoplay.setToolTip(
-            "Default state of the Field Viewer 'Auto-play' checkbox.\n"
-            "Toggle in the viewer is remembered as well."
-        )
-        fvform.addRow("", chk_autoplay)
-        from app.ui.vtk_viewer import VIEW_PRESETS
-
-        cmb_view = QComboBox()
-        for key, label in VIEW_PRESETS:
-            cmb_view.addItem(label, key)
-        idx_view = cmb_view.findData(str(getattr(self.settings, "field_viewer_view", "keep")))
-        cmb_view.setCurrentIndex(idx_view if idx_view >= 0 else 0)
-        cmb_view.setToolTip(
-            "Standard view of the Field Viewer's 3D pane.\n"
-            "Applied to every newly loaded field; the viewer's 'View' box\n"
-            "changes the same setting."
-        )
-        fvform.addRow("Default view", cmb_view)
-        chk_vectors = QCheckBox("Show field vectors (glyph arrows) after loading")
-        chk_vectors.setChecked(
-            bool(
-                (getattr(self.settings, "field_viewer_vectors", None) or {}).get(
-                    "enabled", False
-                )
-            )
-        )
-        chk_vectors.setToolTip(
-            "Default state of the Field Viewer 'Vectors' checkbox.\n"
-            "The arrows show the field direction (ParaView Glyph) — slice\n"
-            "them onto the cut plane to watch the field move during playback.\n"
-            "Changing it in the viewer is remembered as well."
-        )
-        fvform.addRow("", chk_vectors)
-        root.addWidget(grp_fv)
-
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
         root.addWidget(bb)
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
-        if not dlg.exec():
+        accepted = dlg.exec()
+        self._remember_dialog_geometry("settings_main", dlg)
+        if not accepted:
             return
 
         self.settings.freecad_cmd = e_fc.text()
@@ -6117,24 +6695,7 @@ class MainWindow(QMainWindow):
         self.settings.default_port_excite = bool(chk_excite.isChecked())
         self.settings.default_port_mesh_dirs = cmb_mesh.currentText()
         self.settings.default_port_direction = cmb_dir.currentText()
-        self.settings.field_viewer_autoplay = bool(chk_autoplay.isChecked())
-        self.settings.field_viewer_view = str(cmb_view.currentData() or "keep")
-        vec_opts = dict(getattr(self.settings, "field_viewer_vectors", None) or {})
-        vec_opts["enabled"] = bool(chk_vectors.isChecked())
-        self.settings.field_viewer_vectors = vec_opts
         self.settings.save()
-        try:
-            self.vtk_viewer.set_autoplay_default(self.settings.field_viewer_autoplay)
-        except Exception:  # noqa: BLE001 — viewer may not exist in early tests
-            pass
-        try:
-            self.vtk_viewer.set_view_default(self.settings.field_viewer_view)
-        except Exception:  # noqa: BLE001 — viewer may not exist in early tests
-            pass
-        try:
-            self.vtk_viewer.set_vector_options(self.settings.field_viewer_vectors)
-        except Exception:  # noqa: BLE001 — viewer may not exist in early tests
-            pass
         try:
             self.sparam_viewer.scan_root = self.settings.work_path()
             self.antenna_viewer.set_work_dir(self.settings.work_path())

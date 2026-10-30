@@ -5,7 +5,15 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from app.models.project import Project
+from app.models.project import (
+    BoundarySpec,
+    DumpDef,
+    MaterialDef,
+    MeshSpec,
+    PortDef,
+    Project,
+    SimSpec,
+)
 
 
 def patch_antenna_primitives(
@@ -888,3 +896,90 @@ def pcb_bandpass_stub_primitives(
     p.primitives = list(primitives)
     return p, primitives
 
+
+
+def wr62_waveguide_primitives(
+    f0: float = 10.0e9,
+    length: float = 100.0,
+    excite: str = "in",
+    extra: float = 20.0,
+    wall: float = 2.0,
+) -> tuple[Project, list[dict]]:
+    """Straight WR62 rectangular waveguide with E/H/J field dumps.
+
+    Port planes are ``length`` mm apart; the PEC walls extend ``extra`` mm
+    beyond each port towards the x-PML. TE10 at ``f0`` (10 GHz by default);
+    WR62 is 15.7988 x 7.8994 mm, f_c = 9.488 GHz.
+    """
+    a, b = 15.7988, 7.8994
+    f_start, f_stop = 9.5e9, 11.5e9
+    project = Project(name="wr62_waveguide")
+    project.materials = [
+        MaterialDef(name="pec", kind="pec", color=(0.75, 0.6, 0.35, 1.0))
+    ]
+    project.mesh = MeshSpec(
+        preset="medium",
+        drawing_unit="mm",
+        start_frequency=f_start,
+        stop_frequency=f_stop,
+        target_frequency=f0,
+        min_cellsize=0.25,
+        max_cellsize=1.0,
+        max_grading_ratio=1.5,
+        cells_per_wavelength=15.0,
+    )
+    project.boundary = BoundarySpec(
+        xmin="PML", xmax="PML",
+        ymin="PEC", ymax="PEC",
+        zmin="PEC", zmax="PEC",
+        pml_size=8, air_margin=[0.0] * 6,
+    )
+    project.sim = SimSpec(
+        end_criteria=1e-4, max_timesteps=200000,
+        field_dumps_enabled=True, verbose=2,
+    )
+    project.ports = [
+        PortDef(
+            name="in", type="rect_waveguide",
+            start=[-length / 2.0, 0.0, 0.0],
+            stop=[-length / 2.0 + 2.0, a, b],
+            direction="x", excite_port=(excite == "in"),
+            wg_a=a, wg_b=b, wg_mode="TE10", mesh_dirs="xyz",
+        ),
+        PortDef(
+            name="out", type="rect_waveguide",
+            start=[length / 2.0, 0.0, 0.0],
+            stop=[length / 2.0 - 2.0, a, b],
+            direction="x", excite_port=(excite == "out"),
+            wg_a=a, wg_b=b, wg_mode="TE10", mesh_dirs="xyz",
+        ),
+    ]
+    dump_lo = [-length / 2.0, 0.0, 0.0]
+    dump_hi = [length / 2.0, a, b]
+    project.dumps = [
+        DumpDef(
+            name=kind, quantity=kind[0],
+            start=list(dump_lo), stop=list(dump_hi),
+            frequency_domain=True, frequency=f0, frequencies=[f0],
+        )
+        for kind in ("Et", "Ht", "Jt")
+    ]
+    x0, x1 = -length / 2.0 - extra, length / 2.0 + extra
+    y0, y1 = -wall, a + wall
+    z0, z1 = -wall, b + wall
+    primitives = [
+        {"kind": "box", "name": "wall_y_min", "material": "pec", "priority": 1,
+         "start": [x0, y0, z0], "stop": [x1, 0.0, z1]},
+        {"kind": "box", "name": "wall_y_max", "material": "pec", "priority": 1,
+         "start": [x0, a, z0], "stop": [x1, y1, z1]},
+        {"kind": "box", "name": "wall_z_min", "material": "pec", "priority": 1,
+         "start": [x0, y0, z0], "stop": [x1, y1, 0.0]},
+        {"kind": "box", "name": "wall_z_max", "material": "pec", "priority": 1,
+         "start": [x0, y0, b], "stop": [x1, y1, z1]},
+    ]
+    project.notes = (
+        f"WR62 straight waveguide, a={a} mm, b={b} mm, TE10 at {f0 / 1e9:.2f} GHz, "
+        f"length={length:.0f} mm; E/H/J field dumps."
+    )
+    project.primitives = list(primitives)
+    return project, primitives

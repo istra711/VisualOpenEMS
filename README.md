@@ -97,7 +97,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 
 ### Workflow Automation
 
-- Preset generators: **Patch Antenna**, **GPS L1 patch (CP)**, **Dipole**, **PCB Filter**, **Yagi Antenna**
+- Preset generators: **Patch Antenna**, **GPS L1 patch (CP)**, **Dipole**, **PCB Filter**, **Yagi Antenna**, **WR62 waveguide**
 - FreeCAD CAD export dialog (STEP or per-object STL)
 - **STEP export for CAD / CST** (File → Export STEP…): writes the effective
   geometry (analytic boxes/cylinders/spheres/polygons + imported meshes) as an
@@ -267,6 +267,7 @@ python app\main.py
 | **Presets → PCB Bandpass (5.6 GHz)…** | 5-pole Chebyshev stub band-pass on PTFE | 2-port, no vias |
 | **Presets → PCB Hairpin Bandpass (2.4 GHz)…** | Compact 5-pole hairpin band-pass on RT/duroid 6010 | 2-port, no vias |
 | **Presets → Yagi Antenna…** | 3-element Yagi | Directional antenna |
+| **Presets → WR62 Waveguide (10 GHz)…** | Straight WR62, 100 mm, TE10 | 2-port, E/H/J field dumps |
 
 ### Import your own geometry
 
@@ -338,6 +339,8 @@ python app\main.py
 └────────────────────────────────────────────────────────────────┘
 ```
 
+Window state is remembered across sessions: geometry (including maximised state), splitter sizes, Project/Geometry and log-panel visibility, the last active tab, and the size/position of the main Settings, Viewer settings and Display dialogs.
+
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -381,6 +384,13 @@ azimuth; the data comes from the `nf2ff.json` of the last run.*
 
 ### Field Viewer
 
+- **Display panel** on the left with collapsible *Data*, *Slice / Iso*, *Colour*
+  and *Vectors* sections; a compact action bar on top and the playback bar at
+  the bottom. Slice/iso controls appear only for those representations.
+- **Field indicator** in the page header, e.g. `Field Viewer (J_tee [A/m²])`
+- **Layout modes** in *Viewer settings*: **B** = docked display panel,
+  **C** = minimal UI with a `Display…` popup, leaving the full width to the viewer
+- **Export ▾** menu with per-step series and step-stride options
 - **Slices and iso-surfaces** of the field dumps, per-axis navigation
 - **Vector glyphs** ("Vectors") that replace the coloured surface, so the arrows
   stay visible; "field underneath" brings the overlay back
@@ -391,6 +401,13 @@ azimuth; the data comes from the `nf2ff.json` of the last run.*
 - **Streamlines** — field lines traced through the volume and drawn as tubes,
   coloured from a seed plane through the centre; enabled when the dump carries
   the `field` vector array
+- **Viewer settings** (three tabs: *Viewer*, *Colour*, *Colour bar*) — layout
+  (B/C), playback (fps, Loop, Auto-play), standard view, vector-arrow default,
+  the colour scale (map, reverse, colour steps), the colour bar (position, width,
+  height, font, label size) and its title (left/right, x/y, text size, rotation)
+  with live preview under *Settings → Viewer settings…*; a **Preview** button
+  applies changes without saving, **Cancel** restores them; remembered across
+  sessions
 - **Series playback** over the time or frequency steps, with an arrow-motion
   readout per step
 - **Export** — VTK rectilinear grids (`.vtr`) plus a ParaView collection
@@ -511,6 +528,7 @@ All examples are in `examples/` and runnable standalone:
 | `run_pcb_filter_example.py` | PCB filter with dual excitation |
 | `run_pcb_bandpass_example.py` | 5.6 GHz stub band-pass (PTFE) |
 | `run_pcb_hairpin_example.py` | 2.4 GHz hairpin band-pass (RT/duroid 6010) |
+| `run_wr62_waveguide_example.py` | Straight WR62 waveguide, 100 mm, TE10 at 10 GHz |
 | `run_stl_import_example.py` | Headless STL import |
 | `run_yagi_example.py` | Yagi antenna simulation |
 

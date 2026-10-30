@@ -13,20 +13,25 @@ inside the GUI. The GL window is not created on a headless/offscreen platform
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
 import re
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QByteArray, QPoint, Qt, QTimer
 from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -34,8 +39,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSlider,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -45,6 +53,15 @@ from app.postproc.vtk_export import (  # noqa: F401
     dump_to_vtr,
     export_dumps_to_vtk,
     field_unit,
+)
+from app.colormaps import (  # noqa: F401 — re-exported for the settings dialog
+    COLORMAPS,
+    COLOR_SCALE_MAX_STEPS,
+    COLOR_SCALE_MIN_STEPS,
+    DEFAULT_COLOR_SCALE,
+    colormap_colors,
+    colormap_names,
+    fill_lookup_table,
 )
 from app.ui.number_field import SciSpinBox
 
@@ -89,6 +106,7 @@ DEFAULT_AXES: dict = {
     "font": 12,  # caption font size (pt)
     "scale": 1.0,  # triad size factor (see AXES_SCALES)
     "ruler": False,  # numeric coordinate ticks around the dataset bounds
+    "origin_back": False,  # put the in-scene triad on the far bbox corner
 }
 
 #: Defaults for the vector glyph display (ParaView "Glyph"; persisted in
@@ -106,7 +124,46 @@ DEFAULT_VECTORS: dict = {
     #: slice/surface/volume as well hides up to half of every arrow, so the
     #: overlay is off by default and only drawn on request.
     "overlay": False,
+    #: minimum arrow strength (share of the peak) and sampling mode
+    "min_pct": 5,
+    "random": True,
+    #: geometry ghost opacity in percent
+    "geom_opacity": 12,
 }
+
+#: Colour-bar title options (Viewer settings). "left" draws the title rotated
+#: next to the bar at normalized viewport ``x``/``y``; "size" is the point size
+#: and "rotation" the text angle (90 = vertical, as used beside the bar).
+DEFAULT_BAR_TITLE: dict = {
+    "left": False,
+    "x": 0.826,
+    "y": 0.5,
+    "size": 12,
+    "rotation": 90,
+}
+
+#: Colour-bar geometry and text (Viewer settings). Position/size are normalized
+#: viewport coordinates: ``x``/``y`` = lower-left corner, ``width``/``height``
+#: = the space the bar plus labels occupies.
+DEFAULT_COLOR_BAR: dict = {
+    "x": 0.84,
+    "y": 0.06,
+    "width": 0.15,
+    "height": 0.88,
+    "font": "Arial",
+    "font_size": 10,
+}
+
+#: Font families offered for the colour bar / its title (VTK built-ins).
+COLOR_BAR_FONTS: tuple[str, ...] = ("Arial", "Times", "Courier")
+
+#: Field Viewer layout modes (Viewer settings):
+#: "panel" = docked display panel (B), "minimal" = hidden panel + Display popup (C)
+VIEWER_LAYOUTS: tuple[tuple[str, str], ...] = (
+    ("Display panel (B)", "panel"),
+    ("Minimal — Display… popup (C)", "minimal"),
+)
+DEFAULT_VIEWER_LAYOUT = "panel"
 
 #: Standard views of the 3D pane (key -> label). "keep" only fits the camera and
 #: keeps the direction it has (the old "Reset view" behaviour).
@@ -313,6 +370,7 @@ class FieldViewerWindow(QMainWindow):
         self.viewer.on_axes_changed = self._on_viewer_axes_changed
         self.viewer.on_view_changed = self._on_viewer_view_changed
         self.viewer.on_vectors_changed = self._on_viewer_vectors_changed
+        self.viewer.on_color_scale_changed = self._on_viewer_color_scale_changed
         self.setWindowTitle("Field Viewer - pop-out")
         self.resize(1000, 780)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -339,6 +397,15 @@ class FieldViewerWindow(QMainWindow):
         if src is not None and src is not self.viewer:
             try:
                 src.set_vector_options(options, notify=True)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_viewer_color_scale_changed(self, options: dict) -> None:
+        """Colour scale changed in the pop-out: mirror to the tab view + persist."""
+        src = self.source
+        if src is not None and src is not self.viewer:
+            try:
+                src.set_color_scale_options(options, notify=True)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -406,6 +473,20 @@ class VtkFieldViewer(QWidget):
         #: vector glyph settings (DEFAULT_VECTORS); the widgets mirror them
         self._vectors = dict(DEFAULT_VECTORS)
         self.on_vectors_changed = None  # callback(options: dict) for persistence
+        #: colour scale of the field plot (DEFAULT_COLOR_SCALE); changed in
+        #: Settings, mirrored to the pop-out
+        self._color_scale = dict(DEFAULT_COLOR_SCALE)
+        self.on_color_scale_changed = None  # callback(options: dict)
+        #: colour-bar title (DEFAULT_BAR_TITLE); edited in Viewer settings
+        self._bar_title_opts = dict(DEFAULT_BAR_TITLE)
+        #: colour-bar geometry/font (DEFAULT_COLOR_BAR); edited in Viewer settings
+        self._color_bar_opts = dict(DEFAULT_COLOR_BAR)
+        #: layout "panel" (B) or "minimal" (C); edited in Viewer settings
+        self._layout_mode = DEFAULT_VIEWER_LAYOUT
+        self._display_dialog = None
+        #: last Display-popup geometry (base64) + persistence callback
+        self._display_geometry = ""
+        self.on_display_geometry_changed = None
         self._has_vectors = False  # loaded grid carries a 3-component field array
         #: cached reference |field| over the series + the array it was taken from
         self._vec_series_ref: float | None = None
@@ -428,14 +509,14 @@ class VtkFieldViewer(QWidget):
         bar = QHBoxLayout()
         self.btn_open = QPushButton("Open…")
         self.btn_open.clicked.connect(self._on_open)
-        self.btn_export = QPushButton("Export project dumps → VTK")
+        self.btn_export = QPushButton("Export ▾")
         self.btn_export.setToolTip(
-            "Convert every field dump (simulation/*.h5) of the current project to\n"
-            "VTK in <project>/vtk and load the first one.\n\n"
+            "Export the current project's field dumps to VTK.\n"
+            "The menu also holds the series options (per-step, step stride).\n\n"
             "Only changed dumps are rewritten (outputs newer than the dump are\n"
             "reused); a progress dialog shows the work and can cancel it."
         )
-        self.btn_export.clicked.connect(self.export_and_load)
+        self.btn_export.clicked.connect(self._show_export_menu)
         self.chk_per_step = QCheckBox("per-step")
         self.chk_per_step.setChecked(True)
         self.chk_per_step.setToolTip(
@@ -461,13 +542,17 @@ class VtkFieldViewer(QWidget):
         self.cmb_rep = QComboBox()
         self.cmb_rep.addItems(["Surface", "Wireframe", "Slice", "Iso-surface"])
         self.cmb_rep.setCurrentText("Surface")  # ParaView-like default
-        self.cmb_rep.currentIndexChanged.connect(self._refresh_display)
+        self.cmb_rep.currentIndexChanged.connect(self._on_rep_changed)
         self.cmb_array = QComboBox()
-        self.cmb_array.setMinimumWidth(150)
+        self.cmb_array.setMinimumWidth(100)
+        self.cmb_array.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.cmb_array.setMinimumContentsLength(8)
         self.cmb_array.setToolTip("Field array to display (point or cell data).")
         self.cmb_array.currentIndexChanged.connect(self._on_array_changed)
         self.chk_outline = QCheckBox("Outline")
-        self.chk_outline.setChecked(True)
+        self.chk_outline.setChecked(False)
         self.chk_outline.toggled.connect(self._refresh_display)
         self.chk_geom = QCheckBox("Geometry")
         self.chk_geom.setChecked(True)
@@ -476,14 +561,21 @@ class VtkFieldViewer(QWidget):
             "They are set when a project is loaded or the Field Viewer is opened."
         )
         self.chk_geom.toggled.connect(self._draw_geometry)
-        self.sld_geom = QSlider(Qt.Orientation.Horizontal)
+        self.sld_geom = QSpinBox()
         self.sld_geom.setRange(0, 40)
         self.sld_geom.setValue(12)
-        self.sld_geom.setFixedWidth(70)
-        self.sld_geom.setToolTip("Geometry opacity in percent")
+        self.sld_geom.setSuffix(" %")
+        self.sld_geom.setToolTip("Geometry opacity in percent (0 = invisible).")
         self.sld_geom.valueChanged.connect(self._draw_geometry)
         self.btn_reset = QPushButton("Reset view")
         self.btn_reset.clicked.connect(self._reset_camera)
+        self.btn_display = QPushButton("Display…")
+        self.btn_display.setToolTip(
+            "Layout C: open the display panel (Data / Slice / Colour / Vectors)\n"
+            "in a popup instead of docking it beside the 3D view."
+        )
+        self.btn_display.clicked.connect(self._open_display_popup)
+        self.btn_display.setVisible(False)
         self.btn_video = QPushButton("Video…")
         self.btn_video.setToolTip(
             "Render the loaded field sequence to an MP4 video with the current\n"
@@ -505,6 +597,10 @@ class VtkFieldViewer(QWidget):
         # info which field is on screen (file name without the frame number);
         # left-aligned with the rest, the leftover width stays at the right end
         self.cmb_view_preset = QComboBox()
+        self.cmb_view_preset.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.cmb_view_preset.setMinimumContentsLength(8)
         for key, label in VIEW_PRESETS:
             self.cmb_view_preset.addItem(label, key)
         self.cmb_view_preset.setToolTip(
@@ -529,7 +625,7 @@ class VtkFieldViewer(QWidget):
         )
         bar.addWidget(self.lbl_field)
         bar.addStretch(1)
-        root.addLayout(bar)
+
 
         bar_view = QHBoxLayout()
         lbl_rep = QLabel("Show")
@@ -542,7 +638,7 @@ class VtkFieldViewer(QWidget):
         for w in (self.btn_video, self.btn_popout, self.btn_reset):
             bar_view.addWidget(w)
         bar_view.addStretch(1)
-        root.addLayout(bar_view)
+
 
         # slice + iso level
         row2 = QHBoxLayout()
@@ -555,7 +651,7 @@ class VtkFieldViewer(QWidget):
         self.slider_slice = QSlider(Qt.Orientation.Horizontal)
         self.slider_slice.setRange(0, 1000)
         self.slider_slice.setValue(500)
-        self.slider_slice.setMinimumWidth(160)
+        self.slider_slice.setMinimumWidth(100)
         self.slider_slice.valueChanged.connect(self._on_slice_slider)
         self.slider_slice.setToolTip(
             "Slice position along the selected axis (0…1000 of the bounds).\n"
@@ -566,6 +662,7 @@ class VtkFieldViewer(QWidget):
         # ±1 km in mm: plenty for any domain, and a wider range only widens the
         # box (Qt derives the minimum width from the largest value text)
         self.spn_slice.setRange(-1e6, 1e6)
+        self.spn_slice.setMaximumWidth(100)
         self.spn_slice.setSuffix(" mm")
         self.spn_slice.setKeyboardTracking(False)  # apply on Enter / focus-out
         self.spn_slice.valueChanged.connect(self._on_slice_value)
@@ -604,11 +701,26 @@ class VtkFieldViewer(QWidget):
         row2.addWidget(self.spn_contours)
         self.chk_stream = QCheckBox("Streamlines")
         self.chk_stream.setToolTip(
-            "Field lines integrated through the volume, seeded on a plane\n"
-            "through the centre (like ParaView's Stream Tracer)."
+            "Field lines integrated through the whole volume (n³ seeds, like\n"
+            "ParaView's Stream Tracer). They update with every time/frequency step."
         )
         self.chk_stream.toggled.connect(self._on_slider)
+        self.spn_stream_seeds = QSpinBox()
+        self.spn_stream_seeds.setRange(2, 10)
+        self.spn_stream_seeds.setValue(6)
+        self.spn_stream_seeds.setSuffix("³")
+        self.spn_stream_seeds.setFixedWidth(64)
+        self.spn_stream_seeds.setEnabled(False)
+        self.spn_stream_seeds.setToolTip(
+            "Seeds per axis: n³ start points spread through the whole volume.\n"
+            "6³ = 216 lines (default, like the ParaView reference); raise for\n"
+            "density, lower for faster time playback."
+        )
+        self.spn_stream_seeds.valueChanged.connect(self._on_slider)
+        self.chk_stream.toggled.connect(self.spn_stream_seeds.setEnabled)
         row2.addWidget(self.chk_stream)
+        row2.addWidget(QLabel("seeds"))
+        row2.addWidget(self.spn_stream_seeds)
         row2.addWidget(QLabel("Iso-level"))
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)
@@ -618,9 +730,13 @@ class VtkFieldViewer(QWidget):
         row2.addWidget(self.slider, 2)
         row2.addStretch(1)
         self.lbl_level = QLabel("—")
-        self.lbl_level.setMinimumWidth(160)
+        self.lbl_level.setMinimumWidth(0)
+        self.lbl_level.setWordWrap(True)
+        self.lbl_level.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         row2.addWidget(self.lbl_level)
-        root.addLayout(row2)
+
 
         # colour range (ParaView "Rescale to ... / log scale")
         row3 = QHBoxLayout()
@@ -665,7 +781,7 @@ class VtkFieldViewer(QWidget):
         row3.addWidget(self.chk_log)
         row3.addWidget(self.btn_rescale)
         row3.addStretch(1)
-        root.addLayout(row3)
+
 
         # vector glyphs (ParaView "Glyph"): small arrows show the field
         # direction, so a time series visibly "moves" (rotating E field etc.)
@@ -690,8 +806,6 @@ class VtkFieldViewer(QWidget):
         self.spn_vec_size.setSingleStep(0.1)
         self.spn_vec_size.setDecimals(2)
         self.spn_vec_size.setValue(DEFAULT_VECTORS["size"])
-        self.spn_vec_size.setPrefix("size ")
-        self.spn_vec_size.setFixedWidth(105)
         self.spn_vec_size.setToolTip(
             "Arrow length relative to the arrow spacing (1.0 = arrows just\n"
             "about touch). Increase for long arrows, decrease for small ticks."
@@ -701,8 +815,6 @@ class VtkFieldViewer(QWidget):
         self.spn_vec_count.setRange(50, 50000)
         self.spn_vec_count.setSingleStep(250)
         self.spn_vec_count.setValue(DEFAULT_VECTORS["max_arrows"])
-        self.spn_vec_count.setPrefix("arrows ")
-        self.spn_vec_count.setFixedWidth(120)
         self.spn_vec_count.setToolTip(
             "Maximum number of arrows. The points are decimated uniformly and\n"
             "deterministically (every N-th point), so the arrows stay put from\n"
@@ -711,9 +823,8 @@ class VtkFieldViewer(QWidget):
         self.spn_vec_count.valueChanged.connect(self._on_vector_option_changed)
         self.spn_vec_min = QSpinBox()
         self.spn_vec_min.setRange(0, 99)
-        self.spn_vec_min.setValue(0)
-        self.spn_vec_min.setSuffix(" % min")
-        self.spn_vec_min.setFixedWidth(95)
+        self.spn_vec_min.setValue(int(DEFAULT_VECTORS["min_pct"]))
+        self.spn_vec_min.setSuffix(" %")
         self.spn_vec_min.setToolTip(
             "Hide arrows whose field is below this share of the peak.\n"
             "0 % keeps every sampled point; 5-20 % drops the near-zero\n"
@@ -721,20 +832,12 @@ class VtkFieldViewer(QWidget):
         )
         self.spn_vec_min.valueChanged.connect(self._on_vector_option_changed)
         self.chk_vec_random = QCheckBox("random")
-        self.chk_vec_random.setChecked(False)
+        self.chk_vec_random.setChecked(bool(DEFAULT_VECTORS["random"]))
         self.chk_vec_random.setToolTip(
             "Sample the arrows at random (fixed seed 12345) instead of every\n"
             "N-th point. Prints the point counts to the log while it runs."
         )
         self.chk_vec_random.toggled.connect(self._on_vector_option_changed)
-        self.chk_title_left = QCheckBox("Title left")
-        self.chk_title_left.setChecked(False)
-        self.chk_title_left.setToolTip(
-            "Draw the colour-bar title vertically to the left of the bar\n"
-            "(rotated 90°) instead of above it."
-        )
-        self.chk_title_left.toggled.connect(self._refresh_display)
-        row3.addWidget(self.chk_title_left)
         self.chk_vec_norm = QCheckBox("same length")
         self.chk_vec_norm.setChecked(DEFAULT_VECTORS["normalize"])
         self.chk_vec_norm.setToolTip(
@@ -764,47 +867,65 @@ class VtkFieldViewer(QWidget):
         row_vec.addWidget(self.chk_vec_norm)
         row_vec.addWidget(self.chk_vec_overlay)
         row_vec.addStretch(1)
-        root.addLayout(row_vec)
+
 
         # time series (animation)
         row4 = QHBoxLayout()
+        row4.setContentsMargins(0, 0, 0, 0)
+        self.btn_play = QPushButton("▶ Play")
+        self.btn_play.setCheckable(True)
+        self.btn_play.setMinimumWidth(84)
+        self.btn_play.toggled.connect(self._on_play_toggled)
         self.lbl_time = QLabel("Time")
         self.slider_time = QSlider(Qt.Orientation.Horizontal)
         self.slider_time.setRange(0, 0)
+        self.slider_time.setMaximumWidth(520)
         self.slider_time.valueChanged.connect(self._on_time_slider)
-        self.btn_play = QPushButton("▶ Play")
-        self.btn_play.setCheckable(True)
-        self.btn_play.toggled.connect(self._on_play_toggled)
         self.lbl_time_info = QLabel("")
+        self.lbl_time_info.setFixedWidth(150)
         self.lbl_sim_time = QLabel("")
+        self.lbl_sim_time.setFixedWidth(110)
         self.lbl_sim_time.setToolTip(
             "Physical simulation time of this frame (ps/ns) — or frequency for "
             "frequency-domain dumps — taken from the openEMS HDF5 dump."
         )
-        self.spn_fps = QSpinBox()
+        #: arrow-motion diagnostics: fixed width so the playback bar does not
+        #: jump when the text changes from step to step (full text in tooltip)
+        self.lbl_motion = QLabel("")
+        self.lbl_motion.setMinimumWidth(0)
+        self.lbl_motion.setMaximumWidth(360)
+        self.lbl_motion.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
+        self.lbl_motion.setToolTip("Arrow motion compared with the previous step.")
+        self.spn_fps = QSpinBox(self)
         self.spn_fps.setRange(1, 60)
         self.spn_fps.setValue(4)
         self.spn_fps.setSuffix(" fps")
         self.spn_fps.setToolTip("Playback speed of the time-series animation.")
         self.spn_fps.valueChanged.connect(self._on_fps_changed)
-        self.chk_loop = QCheckBox("Loop")
+        self.chk_loop = QCheckBox("Loop", self)
         self.chk_loop.setChecked(True)
         self.chk_loop.setToolTip("Restart at the first step after the last one.")
-        self.chk_autoplay = QCheckBox("Auto-play")
+        self.chk_autoplay = QCheckBox("Auto-play", self)
         self.chk_autoplay.setChecked(False)  # default off; enable in Settings
         self.chk_autoplay.setToolTip(
             "Start the animation automatically after loading / exporting a series.\n"
             "Default can be changed in Settings → Field Viewer."
         )
+        row4.addWidget(self.btn_play)
         row4.addWidget(self.lbl_time)
         row4.addWidget(self.slider_time, 1)
-        row4.addWidget(self.btn_play)
         row4.addWidget(self.lbl_time_info)
         row4.addWidget(self.lbl_sim_time)
-        row4.addWidget(self.spn_fps)
-        row4.addWidget(self.chk_loop)
-        row4.addWidget(self.chk_autoplay)
-        root.addLayout(row4)
+        row4.addWidget(self.lbl_motion)
+        row4.addStretch(1)
+        # fps / Loop / Auto-play moved to Viewer settings; keep the widgets as
+        # hidden state holders for the playback code.
+        self.spn_fps.hide()
+        self.chk_loop.hide()
+        self.chk_autoplay.hide()
+
         self._set_time_visible(False)
 
         # VTK render window (created lazily so importing vtk is deferred)
@@ -818,7 +939,142 @@ class VtkFieldViewer(QWidget):
         self.lbl_hint.setWordWrap(True)
         self.lbl_hint.setStyleSheet("color:#666;")
         self._host_layout.addWidget(self.lbl_hint)
-        root.addWidget(self._host, 1)
+
+        # --- top action bar -------------------------------------------------
+        topbar = QHBoxLayout()
+        for w in (
+            self.btn_open,
+            self.btn_export,
+            self.btn_video,
+            self.btn_popout,
+            self.btn_reset,
+            self.btn_display,
+        ):
+            topbar.addWidget(w)
+        topbar.addStretch(1)
+        self.lbl_field.hide()
+        root.addLayout(topbar)
+        root.addWidget(self._hline())
+
+        # --- display panel (left) + 3D view (right) -------------------------
+        panel_body = QWidget()
+        panel_layout = QVBoxLayout(panel_body)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(1)
+
+        data_btn, data_body, data_layout = self._add_section(
+            panel_layout, "Data"
+        )
+        data_form = QFormLayout()
+        data_form.setContentsMargins(0, 0, 0, 0)
+        data_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
+        data_form.addRow("Show", self.cmb_rep)
+        data_form.addRow("Array", self.cmb_array)
+        data_form.addRow("View", self.cmb_view_preset)
+        data_form.addRow(self.chk_outline)
+        data_form.addRow(self.chk_geom, self.sld_geom)
+        data_layout.addLayout(data_form)
+
+        slice_btn, slice_body, slice_layout = self._add_section(
+            panel_layout, "Slice / Iso"
+        )
+        self._slice_btn = slice_btn
+        self._slice_body = slice_body
+        self._slice_controls = QWidget()
+        slice_form = QFormLayout(self._slice_controls)
+        slice_form.setContentsMargins(0, 0, 0, 0)
+        slice_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
+        slice_form.addRow("Axis", self.cmb_slice_axis)
+        pos_row = QHBoxLayout()
+        pos_row.setContentsMargins(0, 0, 0, 0)
+        pos_row.addWidget(self.slider_slice, 1)
+        pos_row.addWidget(self.spn_slice)
+        slice_form.addRow("Position", pos_row)
+        slice_form.addRow(self.chk_planes)
+        contours_row = QHBoxLayout()
+        contours_row.setContentsMargins(0, 0, 0, 0)
+        contours_row.addWidget(self.chk_contours)
+        contours_row.addWidget(self.spn_contours)
+        contours_row.addStretch(1)
+        slice_form.addRow(contours_row)
+        stream_row = QHBoxLayout()
+        stream_row.setContentsMargins(0, 0, 0, 0)
+        stream_row.addWidget(self.chk_stream)
+        stream_row.addWidget(QLabel("seeds"))
+        stream_row.addWidget(self.spn_stream_seeds)
+        stream_row.addStretch(1)
+        slice_layout.addWidget(self._slice_controls)
+        self._iso_controls = QWidget()
+        iso_form = QFormLayout(self._iso_controls)
+        iso_form.setContentsMargins(0, 0, 0, 0)
+        iso_form.addRow("Iso-level", self.slider)
+        slice_layout.addWidget(self._iso_controls)
+        # Streamlines apply to the whole volume and work for both Slice and
+        # Iso-surface, so the row lives outside the slice-only container.
+        slice_layout.addLayout(stream_row)
+
+        colour_btn, colour_body, colour_layout = self._add_section(
+            panel_layout, "Colour"
+        )
+        colour_form = QFormLayout()
+        colour_form.setContentsMargins(0, 0, 0, 0)
+        colour_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
+        colour_form.addRow(self.chk_auto)
+        colour_form.addRow("min", self.spn_min)
+        colour_form.addRow("max", self.spn_max)
+        self.lbl_level.setWordWrap(True)
+        colour_form.addRow(self.lbl_level)
+        colour_form.addRow(self.chk_log)
+        colour_form.addRow(self.btn_rescale)
+        colour_layout.addLayout(colour_form)
+
+        vec_btn, vec_body, vec_layout = self._add_section(
+            panel_layout, "Vectors"
+        )
+        vec_form = QFormLayout()
+        vec_form.setContentsMargins(0, 0, 0, 0)
+        vec_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
+        vec_form.addRow(self.chk_vectors)
+        vec_form.addRow("Size", self.spn_vec_size)
+        vec_form.addRow("Max arrows", self.spn_vec_count)
+        vec_form.addRow("Hide below", self.spn_vec_min)
+        vec_form.addRow(self.chk_vec_norm)
+        vec_form.addRow(self.chk_vec_overlay)
+        vec_form.addRow(self.chk_vec_random)
+        vec_layout.addLayout(vec_form)
+
+        panel_layout.addStretch(1)
+        panel_scroll = QScrollArea()
+        panel_scroll.setWidgetResizable(True)
+        panel_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        panel_scroll.setWidget(panel_body)
+        panel_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        panel_scroll.setMinimumWidth(280)
+        panel_scroll.setMaximumWidth(320)
+        self.panel_scroll = panel_scroll
+
+        main_row = QHBoxLayout()
+        main_row.setContentsMargins(0, 0, 0, 0)
+        self._main_row = main_row
+        main_row.addWidget(panel_scroll)
+        main_row.addWidget(self._host, 1)
+        root.addLayout(main_row, 1)
+        root.addWidget(self._hline())
+        root.addLayout(row4)
+        self._update_representation_controls()
+        self.set_layout_mode(self._layout_mode)
+
+        self._set_time_visible(False)
 
     def _set_time_visible(self, on: bool) -> None:
         self._time_controls_on = on
@@ -828,11 +1084,187 @@ class VtkFieldViewer(QWidget):
             self.btn_play,
             self.lbl_time_info,
             self.lbl_sim_time,
-            self.spn_fps,
-            self.chk_loop,
-            self.chk_autoplay,
+            self.lbl_motion,
         ):
             w.setVisible(on)
+
+    @staticmethod
+    def _hline() -> QFrame:
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        return line
+
+    def _add_section(self, parent_layout, title: str, expanded: bool = True):
+        """Collapsible display-panel section (bold header + body widget)."""
+        if parent_layout.count():
+            parent_layout.addWidget(self._hline())
+        btn = QToolButton()
+        btn.setText(title)
+        btn.setCheckable(True)
+        btn.setChecked(expanded)
+        btn.setAutoRaise(True)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        btn.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        font = btn.font()
+        font.setBold(True)
+        btn.setFont(font)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(2, 0, 0, 4)
+        body_layout.setSpacing(2)
+        body.setVisible(expanded)
+
+        def _toggle(on: bool) -> None:
+            btn.setArrowType(
+                Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow
+            )
+            body.setVisible(on)
+
+        btn.toggled.connect(_toggle)
+        parent_layout.addWidget(btn)
+        parent_layout.addWidget(body)
+        return btn, body, body_layout
+
+    def _build_export_menu(self) -> QMenu:
+        """Export menu: action + per-step / step-stride options."""
+        menu = QMenu(self)
+        act_export = menu.addAction("Export project dumps → VTK")
+        act_export.triggered.connect(lambda _checked=False: self.export_and_load())
+        menu.addSeparator()
+        act_per = menu.addAction("Per-step series")
+        act_per.setCheckable(True)
+        act_per.setChecked(self.chk_per_step.isChecked())
+        act_per.toggled.connect(self.chk_per_step.setChecked)
+        stride_menu = menu.addMenu("Step stride")
+        stride_group = QActionGroup(stride_menu)
+        stride_group.setExclusive(True)
+        for n in (1, 2, 4, 8, 16, 25, 50):
+            label = "every step" if n == 1 else f"every {n}. step"
+            act = stride_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(int(self.spin_stride.value()) == n)
+            stride_group.addAction(act)
+            act.triggered.connect(
+                lambda _checked=False, n=n: self.spin_stride.setValue(n)
+            )
+        return menu
+
+    def _show_export_menu(self) -> None:
+        self._build_export_menu().exec(
+            self.btn_export.mapToGlobal(QPoint(0, self.btn_export.height()))
+        )
+
+    def _on_rep_changed(self, *_args) -> None:
+        self._update_representation_controls()
+        self._refresh_display()
+
+    def _update_representation_controls(self) -> None:
+        """Show slice/iso controls only for the representations that use them."""
+        rep = self.cmb_rep.currentText()
+        active = rep in ("Slice", "Iso-surface")
+        for widget in (
+            getattr(self, "_slice_btn", None),
+            getattr(self, "_slice_body", None),
+        ):
+            if widget is not None:
+                widget.setVisible(active)
+        if getattr(self, "_slice_controls", None) is not None:
+            self._slice_controls.setVisible(rep == "Slice")
+        if getattr(self, "_iso_controls", None) is not None:
+            self._iso_controls.setVisible(rep == "Iso-surface")
+        # first switch to a slice/iso representation opens the section
+        if active and not getattr(self, "_slice_was_active", False):
+            btn = getattr(self, "_slice_btn", None)
+            if btn is not None:
+                btn.setChecked(True)
+        self._slice_was_active = active
+
+    # -------------------------------------------------------------- layout mode
+    def layout_mode(self) -> str:
+        """Current layout key: "panel" (B) or "minimal" (C)."""
+        return self._layout_mode
+
+    def set_display_geometry(self, value: str) -> None:
+        """Restore the Display-popup geometry (base64 QByteArray)."""
+        self._display_geometry = str(value or "")
+
+    def set_layout_mode(self, mode: str) -> None:
+        """Switch between the docked display panel (B) and minimal UI (C).
+
+        In minimal mode the panel is hidden and the top bar offers a
+        ``Display…`` button that opens the same panel in a popup window.
+        """
+        mode = str(mode or "").lower()
+        if mode not in ("panel", "minimal"):
+            mode = DEFAULT_VIEWER_LAYOUT
+        self._layout_mode = mode
+        if mode == "panel" and self._display_dialog is not None:
+            self._display_dialog.close()
+        btn = getattr(self, "btn_display", None)
+        if btn is not None:
+            btn.setVisible(mode == "minimal")
+        panel = getattr(self, "panel_scroll", None)
+        if panel is not None and self._display_dialog is None:
+            panel.setVisible(mode == "panel")
+
+    def _open_display_popup(self) -> None:
+        """Minimal layout: show the display panel in its own window."""
+        if self._layout_mode != "minimal":
+            return
+        if self._display_dialog is not None:
+            self._display_dialog.raise_()
+            self._display_dialog.activateWindow()
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Field Viewer — display")
+        dlg.setMinimumSize(340, 620)
+        dlg.resize(380, 760)
+        if self._display_geometry:
+            try:
+                dlg.restoreGeometry(
+                    QByteArray(base64.b64decode(self._display_geometry))
+                )
+                if dlg.width() < 340 or dlg.height() < 620:
+                    dlg.resize(380, 760)
+            except Exception:  # noqa: BLE001 — corrupt geometry: keep the default
+                pass
+        else:
+            dlg.resize(380, 760)
+        layout = QVBoxLayout(dlg)
+        self._main_row.removeWidget(self.panel_scroll)
+        self.panel_scroll.setMaximumWidth(420)
+        self.panel_scroll.setVisible(True)
+        layout.addWidget(self.panel_scroll)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        bb.rejected.connect(dlg.reject)
+        layout.addWidget(bb)
+        self._display_dialog = dlg
+        dlg.finished.connect(self._dock_display_panel)
+        dlg.show()
+
+    def _dock_display_panel(self, *_args) -> None:
+        """Return the panel to the main row after the popup closes."""
+        dlg = self._display_dialog
+        self._display_dialog = None
+        if dlg is not None:
+            try:
+                self._display_geometry = base64.b64encode(
+                    bytes(dlg.saveGeometry())
+                ).decode("ascii")
+                if callable(self.on_display_geometry_changed):
+                    self.on_display_geometry_changed(self._display_geometry)
+            except Exception:  # noqa: BLE001 — never block docking
+                pass
+            layout = dlg.layout()
+            if layout is not None:
+                layout.removeWidget(self.panel_scroll)
+            dlg.deleteLater()
+        self._main_row.insertWidget(0, self.panel_scroll)
+        self.panel_scroll.setMaximumWidth(320)
+        self.panel_scroll.setVisible(self._layout_mode == "panel")
 
     def _ensure_render_window(self) -> bool:
         """Create the VTK Qt interactor once; False if unavailable/cannot init."""
@@ -892,6 +1324,13 @@ class VtkFieldViewer(QWidget):
         self._geom_prims = [dict(p) for p in (primitives or [])]
         self._geom_unit = float(unit_m or 1e-3)
         self._draw_geometry()
+        if self._geom_actors and self._renderer is not None:
+            # geometry may extend far beyond the field dump; fit once so the
+            # freshly added ghosts are actually inside the current view
+            try:
+                self.apply_view_preset("keep")
+            except Exception:  # noqa: BLE001 — never block on a camera fit
+                pass
 
     def _draw_geometry(self, *_args) -> None:
         if self._renderer is None:
@@ -908,21 +1347,9 @@ class VtkFieldViewer(QWidget):
             opacity = max(0.0, min(1.0, self.sld_geom.value() / 100.0))
         scale = float(getattr(self, "_geom_unit", 1e-3) or 1e-3)
         for pr in getattr(self, "_geom_prims", []):
-            if str(pr.get("kind", "box")) != "box":
+            actor = self._make_geometry_actor(vtk, pr, scale)
+            if actor is None:
                 continue
-            try:
-                s = [float(v) * scale for v in pr["start"]]
-                e = [float(v) * scale for v in pr["stop"]]
-            except (KeyError, TypeError, ValueError):
-                continue
-            lo = [min(s[i], e[i]) for i in range(3)]
-            hi = [max(s[i], e[i]) for i in range(3)]
-            cube = vtk.vtkCubeSource()
-            cube.SetBounds(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])
-            mapper = vtk.vtkPolyDataMapper()
-            mapper.SetInputConnection(cube.GetOutputPort())
-            actor = vtk.vtkActor()
-            actor.SetMapper(mapper)
             prop = actor.GetProperty()
             prop.SetOpacity(opacity)
             prop.SetColor(0.62, 0.70, 0.88)
@@ -937,8 +1364,202 @@ class VtkFieldViewer(QWidget):
         except Exception:  # noqa: BLE001 - never block on a redraw
             pass
 
+    def _make_geometry_actor(self, vtk, pr: dict, scale: float):
+        """Polydata actor for one project primitive (box/cylinder/sphere/polygon/stl)."""
+        kind = str(pr.get("kind", "box") or "box")
+        mapper = None
+        try:
+            if kind == "box":
+                s = [float(v) * scale for v in pr["start"]]
+                e = [float(v) * scale for v in pr["stop"]]
+                lo = [min(s[i], e[i]) for i in range(3)]
+                hi = [max(s[i], e[i]) for i in range(3)]
+                src = vtk.vtkCubeSource()
+                src.SetBounds(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputConnection(src.GetOutputPort())
+            elif kind == "cylinder":
+                s = [float(v) * scale for v in pr["start"]]
+                e = [float(v) * scale for v in pr["stop"]]
+                radius = abs(float(pr.get("radius", 0.5))) * scale
+                line = vtk.vtkLineSource()
+                line.SetPoint1(*s)
+                line.SetPoint2(*e)
+                tube = vtk.vtkTubeFilter()
+                tube.SetInputConnection(line.GetOutputPort())
+                tube.SetRadius(radius)
+                tube.SetNumberOfSides(20)
+                tube.CappingOn()
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputConnection(tube.GetOutputPort())
+            elif kind == "sphere":
+                center = pr.get("center")
+                if not center:
+                    s = [float(v) for v in pr.get("start", [0, 0, 0])]
+                    e = [float(v) for v in pr.get("stop", s)]
+                    center = [(s[i] + e[i]) / 2.0 for i in range(3)]
+                src = vtk.vtkSphereSource()
+                src.SetCenter(*[float(v) * scale for v in center])
+                src.SetRadius(abs(float(pr.get("radius", 0.5))) * scale)
+                src.SetThetaResolution(24)
+                src.SetPhiResolution(16)
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputConnection(src.GetOutputPort())
+            elif kind == "polygon":
+                pd = self._polygon_polydata(vtk, pr, scale)
+                if pd is None:
+                    return None
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputData(pd)
+            elif kind == "stl":
+                pd = self._stl_polydata(vtk, pr, scale)
+                if pd is None:
+                    return None
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputData(pd)
+            else:
+                return None
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            return actor
+        except (KeyError, TypeError, ValueError, IndexError):
+            return None
+
+    @staticmethod
+    def _stl_polydata(vtk, pr: dict, scale: float):
+        """Triangle mesh from ``kind=stl`` (npy triangle array or stl/obj file)."""
+        import numpy as np
+        from vtk.util import numpy_support as ns
+
+        path = str(pr.get("path") or pr.get("mesh_path") or "")
+        stl_path = str(pr.get("stl_path") or "")
+        tris = None
+        for candidate in (path, stl_path):
+            if not candidate or not Path(candidate).exists():
+                continue
+            try:
+                if Path(candidate).suffix.lower() == ".npy":
+                    tris = np.load(candidate)
+                else:
+                    from app.freecad_io.freecad_mesh import load_stl_or_obj_triangles
+
+                    tris = load_stl_or_obj_triangles(candidate)
+                break
+            except Exception:  # noqa: BLE001 — try the next candidate
+                tris = None
+        if tris is None:
+            return None
+        tri = np.asarray(tris, dtype=float).reshape(-1, 3, 3) * float(scale)
+        n = len(tri)
+        if n == 0:
+            return None
+        points = tri.reshape(-1, 3)
+        cells = np.empty((n, 4), dtype=np.int64)
+        cells[:, 0] = 3
+        cells[:, 1:] = np.arange(3 * n, dtype=np.int64).reshape(n, 3)
+        pd = vtk.vtkPolyData()
+        pts = vtk.vtkPoints()
+        pts.SetData(ns.numpy_to_vtk(points, deep=True))
+        pd.SetPoints(pts)
+        ca = vtk.vtkCellArray()
+        ca.SetCells(n, ns.numpy_to_vtkIdTypeArray(cells.ravel(), deep=True))
+        pd.SetPolys(ca)
+        return pd
+
+    @staticmethod
+    def _polygon_polydata(vtk, pr: dict, scale: float):
+        """Extruded 2-D polygon (``kind=polygon``) as closed polydata."""
+        pts2 = pr.get("points") or []
+        if len(pts2) < 3:
+            return None
+        axis = str(pr.get("axis", "z") or "z").lower()
+        ai = {"x": 0, "y": 1, "z": 2}.get(axis, 2)
+        start = pr.get("start") or [0, 0, 0]
+        stop = pr.get("stop") or [0, 0, 0]
+        coord = float(pr.get("coord", start[ai]))
+        length = float(pr.get("length", float(stop[ai]) - float(start[ai])))
+        c0 = (ai + 1) % 3
+        c1 = (ai + 2) % 3
+        n = len(pts2)
+        points = []
+        for plane in (coord, coord + length):
+            for pt in pts2:
+                p = [0.0, 0.0, 0.0]
+                p[ai] = plane
+                p[c0] = float(pt[0])
+                p[c1] = float(pt[1])
+                points.append([v * float(scale) for v in p])
+        cells = [list(range(n)), list(range(n, 2 * n))]
+        for i in range(n):
+            j = (i + 1) % n
+            cells.append([i, j, n + j, n + i])
+        pd = vtk.vtkPolyData()
+        vpts = vtk.vtkPoints()
+        for p in points:
+            vpts.InsertNextPoint(*p)
+        pd.SetPoints(vpts)
+        ca = vtk.vtkCellArray()
+        for cell in cells:
+            ca.InsertNextCell(len(cell))
+            for idx in cell:
+                ca.InsertCellPoint(idx)
+        pd.SetPolys(ca)
+        return pd
+
     def set_work_dir(self, work_dir: Path | None) -> None:
         self.work_dir = Path(work_dir) if work_dir else None
+        self._load_workdir_geometry()
+
+    def _load_workdir_geometry(self) -> None:
+        """Fallback: reuse the project's primitives when no project is open.
+
+        Opening a dump directly (Field Viewer → Open…) used to leave the
+        *Geometry* overlay empty because only the project hands primitives to
+        the viewer. Load ``geometry_primitives.json`` / ``project*.json`` from
+        the dump's work folder so the ghosts still show.
+        """
+        if getattr(self, "_geom_prims", None):
+            return
+        work = getattr(self, "work_dir", None)
+        if work is None:
+            return
+        prims: list[dict] = []
+        unit = 1e-3
+        try:
+            geo = work / "geometry_primitives.json"
+            if geo.exists():
+                data = json.loads(geo.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    prims = [dict(p) for p in data if isinstance(p, dict)]
+        except Exception:  # noqa: BLE001 — fall back to the project JSON
+            prims = []
+        try:
+            for name in ("project.fcsim.json", "project_copy.json", "project.json"):
+                proj = work / name
+                if not proj.exists():
+                    continue
+                data = json.loads(proj.read_text(encoding="utf-8"))
+                if not prims:
+                    prims = [
+                        dict(p)
+                        for p in (data.get("primitives") or [])
+                        if isinstance(p, dict)
+                    ]
+                drawing = str((data.get("mesh") or {}).get("drawing_unit") or "mm")
+                unit = {
+                    "m": 1.0,
+                    "cm": 1e-2,
+                    "mm": 1e-3,
+                    "um": 1e-6,
+                    "nm": 1e-9,
+                }.get(drawing, 1e-3)
+                break
+        except Exception:  # noqa: BLE001 — never block loading the dump
+            pass
+        if prims:
+            self._geom_prims = prims
+            self._geom_unit = unit
+            self._draw_geometry()
 
     def set_autoplay_default(self, on: bool) -> None:
         """Apply the Settings default for the Auto-play checkbox."""
@@ -961,7 +1582,7 @@ class VtkFieldViewer(QWidget):
                     continue
                 value = options[key]
                 try:
-                    if key in ("show", "corner", "labels", "ruler"):
+                    if key in ("show", "corner", "labels", "ruler", "origin_back"):
                         value = bool(value)
                     elif key == "font":
                         value = max(6, min(72, int(value)))
@@ -1020,12 +1641,20 @@ class VtkFieldViewer(QWidget):
         if self._marker is None:
             return
         if show:
+            self._marker.SetEnabled(1)
             style_axes_triad(
                 self._marker_axes,
                 show_labels=bool(self._axes["labels"]),
                 font_size=int(self._axes["font"]),
             )
-            self._marker.SetEnabled(1)
+            # the marker ignores SetTotalLength (it normalises the actor), so
+            # the size preset scales its viewport instead
+            try:
+                factor = max(0.5, min(8.0, float(self._axes["scale"])))
+                width = min(0.45, 0.16 * math.sqrt(factor))
+                self._marker.SetViewport(0.0, 0.0, width, width * 1.375)
+            except Exception:  # noqa: BLE001 — older VTK / no render window
+                pass
         else:
             self._marker.SetEnabled(0)
 
@@ -1034,7 +1663,11 @@ class VtkFieldViewer(QWidget):
         cube = vtk.vtkCubeAxesActor()
         cube.SetBounds(self._grid.GetBounds())
         cube.SetCamera(self._renderer.GetActiveCamera())
-        cube.SetFlyModeToClosestTriad()
+        if self._axes.get("origin_back"):
+            # axes/labels on the far edges -> behind the field like the triad
+            cube.SetFlyModeToFurthestTriad()
+        else:
+            cube.SetFlyModeToClosestTriad()
         cube.SetUseTextActor3D(False)
         cube.SetPickable(False)
         font = int(self._axes["font"])
@@ -1051,6 +1684,27 @@ class VtkFieldViewer(QWidget):
             getattr(cube, f"Get{axis}AxesLinesProperty")().SetColor(*color)
         self._renderer.AddActor(cube)
 
+    def build_views_menu(self, parent=None) -> QMenu:
+        """Standard-view submenu (same presets as the View combo/View menu)."""
+        menu = QMenu("Views", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        current = self.view_preset()
+        for key, label in VIEW_PRESETS:
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(key == current)
+            group.addAction(act)
+            act.triggered.connect(
+                lambda _checked=False, key=key: self._apply_view_from_menu(key)
+            )
+        return menu
+
+    def _apply_view_from_menu(self, key: str) -> None:
+        """Apply a standard view picked in the context menu and remember it."""
+        self.set_view_default(key)
+        self._on_view_preset_changed()
+
     def build_axes_menu(self, parent=None) -> QMenu:
         """Menu with all axes options (View menu + Field Viewer context menu).
 
@@ -1065,6 +1719,11 @@ class VtkFieldViewer(QWidget):
             "Show a small orientation triad in the lower-left corner instead of "
             "the triad inside the 3D scene."
         )
+        acts["origin_back"] = menu.addAction("Origin behind object")
+        acts["origin_back"].setToolTip(
+            "Place the in-scene triad on the far bounding-box corner (away from "
+            "the camera), so it sits behind the field instead of in front of it."
+        )
         acts["labels"] = menu.addAction("Labels X/Y/Z")
         acts["labels"].setToolTip("Show the X/Y/Z captions on the axes (colours stay).")
         acts["ruler"] = menu.addAction("Coordinate ruler (numbers)")
@@ -1076,6 +1735,7 @@ class VtkFieldViewer(QWidget):
         acts["size"] = {}
         size_group = QActionGroup(size_menu)
         size_group.setExclusive(True)
+        self._axes_size_group = size_group  # keep alive (PySide ownership)
         for text, factor in AXES_SCALES:
             act = size_menu.addAction(text)
             act.setCheckable(True)
@@ -1085,23 +1745,26 @@ class VtkFieldViewer(QWidget):
         acts["font"] = {}
         font_group = QActionGroup(font_menu)
         font_group.setExclusive(True)
+        self._axes_font_group = font_group  # keep alive (PySide ownership)
         for size in AXES_FONT_SIZES:
             act = font_menu.addAction(f"{size} pt")
             act.setCheckable(True)
             font_group.addAction(act)
             acts["font"][size] = act
 
-        for key in ("show", "corner", "labels", "ruler"):
+        for key in ("show", "corner", "origin_back", "labels", "ruler"):
             act = acts[key]
             act.setCheckable(True)
             act.toggled.connect(lambda on, k=key: self.set_axes_option(k, bool(on)))
         for factor, act in acts["size"].items():
-            act.toggled.connect(
-                lambda on, f=factor: on and self.set_axes_option("scale", f)
+            act.triggered.connect(
+                lambda _checked=False, f=factor: self.set_axes_option("scale", f)
             )
         for size, act in acts["font"].items():
-            act.toggled.connect(
-                lambda on, s=size: on and self.set_axes_option("font", s)
+            act.triggered.connect(
+                lambda _checked=False, s=size: self.set_axes_options(
+                    {"font": s, "labels": True}, notify=True
+                )
             )
 
         menu._axes_actions = acts  # type: ignore[attr-defined]
@@ -1113,7 +1776,7 @@ class VtkFieldViewer(QWidget):
         acts = getattr(menu, "_axes_actions", None)
         if not acts:
             return
-        for key in ("show", "corner", "labels", "ruler"):
+        for key in ("show", "corner", "origin_back", "labels", "ruler"):
             act = acts[key]
             act.blockSignals(True)
             act.setChecked(bool(self._axes[key]))
@@ -1153,9 +1816,11 @@ class VtkFieldViewer(QWidget):
         self._has_vectors = False
         self.lbl_level.setText("")
         self.lbl_time_info.setText("")
+        self.lbl_motion.setText("")
         self.lbl_sim_time.setText("")
         self.lbl_field.setText("")
         self.lbl_field.setToolTip("No field loaded.")
+        self._set_header_detail("")
         self._set_time_visible(False)
         self.btn_video.setEnabled(False)
         self.cmb_array.blockSignals(True)
@@ -1229,6 +1894,7 @@ class VtkFieldViewer(QWidget):
             menu.addAction("Pop out view", self.popout)
         menu.addAction("Reset view", self._reset_camera)
         menu.addSeparator()
+        menu.addMenu(self.build_views_menu(menu))
         menu.addMenu(self.build_axes_menu(menu))
         menu.exec(self.mapToGlobal(pos))
 
@@ -1252,6 +1918,10 @@ class VtkFieldViewer(QWidget):
             lambda: self.chk_autoplay.setChecked(other.chk_autoplay.isChecked()),
             lambda: self.set_axes_options(other.axes_options()),
             lambda: self.set_vector_options(other.vector_options()),
+            lambda: self.set_color_scale_options(other.color_scale_options()),
+            lambda: self.set_bar_title_options(other.bar_title_options()),
+            lambda: self.set_color_bar_options(other.color_bar_options()),
+            lambda: self.set_layout_mode(other.layout_mode()),
             lambda: self.set_view_default(other.view_preset()),
         ):
             try:
@@ -1359,6 +2029,9 @@ class VtkFieldViewer(QWidget):
         if not self._read_into_grid(path, show_errors=True):
             return
         self._current_path = path
+        if self.work_dir is None and path.parent.name.lower() == "vtk":
+            self.work_dir = path.parent.parent
+        self._load_workdir_geometry()
         if self._series:
             self.slider_time.blockSignals(True)
             self.slider_time.setRange(0, len(self._series) - 1)
@@ -1599,9 +2272,17 @@ class VtkFieldViewer(QWidget):
     def _lookup_table(self):
         vtk = self._vtk
         lut = vtk.vtkLookupTable()
-        lut.SetNumberOfTableValues(256)
-        lut.SetHueRange(0.667, 0.0)  # blue -> red (ParaView "jet"-ish)
-        lut.Build()
+        colors = colormap_colors(
+            str(self._color_scale.get("cmap", DEFAULT_COLOR_SCALE["cmap"])),
+            int(self._color_scale.get("steps", DEFAULT_COLOR_SCALE["steps"])),
+            bool(self._color_scale.get("reverse", False)),
+        )
+        if colors:
+            fill_lookup_table(lut, colors)
+        else:  # defensive: keep the old fixed blue -> red table
+            lut.SetNumberOfTableValues(256)
+            lut.SetHueRange(0.667, 0.0)
+            lut.Build()
         lo, hi = self._effective_range()
         if self.chk_log.isChecked() and lo > 0 and hi > lo:
             lut.SetScaleToLog10()
@@ -1700,7 +2381,6 @@ class VtkFieldViewer(QWidget):
             "overlay": bool(self.chk_vec_overlay.isChecked()),
             "min_pct": int(self.spn_vec_min.value()),
             "random": bool(self.chk_vec_random.isChecked()),
-            "title_left": bool(self.chk_title_left.isChecked()),
             "geom_opacity": int(self.sld_geom.value()),
         }
 
@@ -1719,22 +2399,20 @@ class VtkFieldViewer(QWidget):
             opts["enabled"] = bool(opts["enabled"])
             opts["normalize"] = bool(opts["normalize"])
             opts["overlay"] = bool(opts["overlay"])
+            opts["random"] = bool(opts["random"])
             opts["size"] = min(8.0, max(0.1, float(opts["size"])))
             opts["max_arrows"] = min(50000, max(50, int(opts["max_arrows"])))
+            opts["min_pct"] = max(0, min(99, int(opts["min_pct"])))
+            opts["geom_opacity"] = max(0, min(40, int(opts["geom_opacity"])))
         except (TypeError, ValueError):
             opts = dict(DEFAULT_VECTORS)
         for widget, value in (
             (self.chk_vectors, opts["enabled"]),
             (self.spn_vec_size, opts["size"]),
             (self.spn_vec_count, opts["max_arrows"]),
-            (self.spn_vec_min, opts.get("min_pct", 0)),
-            (self.chk_vec_random, bool(opts.get("random", False))),
-            (self.chk_title_left, bool(opts.get("title_left", False))),
-            (self.sld_geom, opts.get("geom_opacity", 12)),
-            (self.spn_vec_min, opts.get("min_pct", 0)),
-            (self.chk_vec_random, bool(opts.get("random", False))),
-            (self.chk_title_left, bool(opts.get("title_left", False))),
-            (self.sld_geom, opts.get("geom_opacity", 12)),
+            (self.spn_vec_min, opts["min_pct"]),
+            (self.chk_vec_random, opts["random"]),
+            (self.sld_geom, opts["geom_opacity"]),
             (self.chk_vec_norm, opts["normalize"]),
             (self.chk_vec_overlay, opts["overlay"]),
         ):
@@ -1774,6 +2452,125 @@ class VtkFieldViewer(QWidget):
             getattr(self, "_vec_tip", "")
             + ("" if has else "\n\n(this dump has no 3-component field array)")
         )
+
+    # ------------------------------------------------------------ colour scale
+    def color_scale_options(self) -> dict:
+        """Current colour scale settings (JSON-serialisable)."""
+        return dict(self._color_scale)
+
+    def set_color_scale_options(self, options: dict | None, *, notify: bool = False) -> None:
+        """Apply colour map / reverse / steps (Settings dialog, pop-out mirror).
+
+        Unknown maps and out-of-range step counts fall back to valid values;
+        the field is redrawn immediately when one is loaded.
+        """
+        opts = dict(DEFAULT_COLOR_SCALE)
+        if isinstance(options, dict):
+            if "cmap" in options:
+                name = str(options.get("cmap") or "")
+                if name in colormap_names():
+                    opts["cmap"] = name
+            if "reverse" in options:
+                opts["reverse"] = bool(options.get("reverse"))
+            if "steps" in options:
+                try:
+                    steps = int(options.get("steps"))
+                except (TypeError, ValueError):
+                    steps = int(DEFAULT_COLOR_SCALE["steps"])
+                opts["steps"] = max(
+                    COLOR_SCALE_MIN_STEPS, min(COLOR_SCALE_MAX_STEPS, steps)
+                )
+        self._color_scale = opts
+        if self._grid is not None:
+            self._refresh_display()
+        if notify and callable(self.on_color_scale_changed):
+            self.on_color_scale_changed(self.color_scale_options())
+
+    # ---------------------------------------------------------- colour bar title
+    def bar_title_options(self) -> dict:
+        """Current colour-bar title settings (JSON-serialisable)."""
+        return dict(self._bar_title_opts)
+
+    def set_bar_title_options(self, options: dict | None) -> None:
+        """Apply title side / position / size / rotation (Viewer settings).
+
+        ``left`` puts the title rotated next to the bar at normalized viewport
+        ``x``/``y``; otherwise it sits above the bar. ``size`` is the title font
+        size in points, ``rotation`` the left-mode text angle (90 = vertical).
+        """
+        opts = dict(self._bar_title_opts)
+        if isinstance(options, dict):
+            if "left" in options:
+                opts["left"] = bool(options.get("left"))
+            for key, lo, hi in (("x", 0.0, 1.0), ("y", 0.0, 1.0)):
+                if key not in options:
+                    continue
+                try:
+                    value = float(options.get(key))
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(value):
+                    opts[key] = max(lo, min(hi, value))
+            if "size" in options:
+                try:
+                    opts["size"] = max(6, min(72, int(options.get("size"))))
+                except (TypeError, ValueError):
+                    pass
+            if "rotation" in options:
+                try:
+                    rotation = float(options.get("rotation"))
+                except (TypeError, ValueError):
+                    rotation = 90.0
+                if math.isfinite(rotation):
+                    opts["rotation"] = rotation % 360.0
+        self._bar_title_opts = opts
+        if self._grid is not None:
+            self._refresh_display()
+
+    # ---------------------------------------------------------------- colour bar
+    def color_bar_options(self) -> dict:
+        """Current colour-bar geometry/font settings (JSON-serialisable)."""
+        return dict(self._color_bar_opts)
+
+    def set_color_bar_options(self, options: dict | None) -> None:
+        """Apply colour-bar position/size/font (Viewer settings).
+
+        Position and size use normalized viewport coordinates; the width/height
+        describe the whole bar including its labels. Missing keys keep their
+        current value, invalid values are clamped or ignored.
+        """
+        opts = dict(self._color_bar_opts)
+        if isinstance(options, dict):
+            for key in ("x", "y"):
+                if key not in options:
+                    continue
+                try:
+                    value = float(options.get(key))
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(value):
+                    opts[key] = max(0.0, min(1.0, value))
+            for key, lo, hi in (("width", 0.02, 1.0), ("height", 0.02, 1.0)):
+                if key not in options:
+                    continue
+                try:
+                    value = float(options.get(key))
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(value):
+                    opts[key] = max(lo, min(hi, value))
+            if "font" in options:
+                family = str(options.get("font") or "")
+                if family in COLOR_BAR_FONTS:
+                    opts["font"] = family
+            if "font_size" in options:
+                try:
+                    opts["font_size"] = max(6, min(72, int(options.get("font_size"))))
+                except (TypeError, ValueError):
+                    pass
+        self._color_bar_opts = opts
+        if self._grid is not None:
+            self._refresh_display()
 
     def _vector_array_name(self) -> str | None:
         """Name of the 3-component point array used for the arrows."""
@@ -2066,18 +2863,26 @@ class VtkFieldViewer(QWidget):
 
     # ------------------------------------------------------------- rendering
     def _apply_bar_title(self, bar):
-        """Title above the bar, or rotated to its left (switch in the toolbar)."""
+        """Title above the bar, or rotated beside it (Viewer settings)."""
         text = getattr(self, "_bar_title", "") or bar.GetTitle()
         self._bar_title = text
         if self._renderer is None:
             return bar
+        opts = self._bar_title_opts
+        size = int(opts.get("size", DEFAULT_BAR_TITLE["size"]))
+        family = str(self._color_bar_opts.get("font", "Arial"))
+        bar.GetTitleTextProperty().SetFontSize(size)
+        try:
+            bar.GetTitleTextProperty().SetFontFamilyAsString(family)
+        except Exception:  # noqa: BLE001 - older VTK text property
+            pass
         if self._title_actor is None:
             vtk = self._vtk or _vtk()
             self._title_actor = vtk.vtkTextActor()
             prop = self._title_actor.GetTextProperty()
             prop.SetColor(1, 1, 1)
-            prop.SetFontSize(12)
-            prop.SetOrientation(90)
+            prop.SetFontSize(size)
+            prop.SetOrientation(float(opts.get("rotation", 90.0)))
             prop.SetJustificationToCentered()
             prop.SetVerticalJustificationToCentered()
             # The bar is placed in normalized viewport coordinates (0.84..0.99),
@@ -2091,25 +2896,34 @@ class VtkFieldViewer(QWidget):
         except Exception:  # noqa: BLE001
             pass
         self._renderer.AddActor2D(self._title_actor)
-        if self.chk_title_left.isChecked():
+        if bool(opts.get("left")):
             bar.SetTitle("")
             self._title_actor.SetInput(text)
-            # bar spans x 0.84..0.99, y 0.06..0.94 (see _make_scalar_bar)
-            self._title_actor.SetPosition(0.826, 0.5)
+            prop = self._title_actor.GetTextProperty()
+            prop.SetFontSize(size)
+            prop.SetOrientation(float(opts.get("rotation", 90.0)))
+            try:
+                prop.SetFontFamilyAsString(family)
+            except Exception:  # noqa: BLE001 - older VTK text property
+                pass
+            self._title_actor.SetPosition(
+                float(opts.get("x", 0.826)), float(opts.get("y", 0.5))
+            )
             self._title_actor.SetVisibility(1)
         else:
             bar.SetTitle(text)
             self._title_actor.SetVisibility(0)
         return bar
 
-    @staticmethod
-    def _make_scalar_bar(vtk, lut, name: str, unit: str = ""):
+    def _make_scalar_bar(self, vtk, lut, name: str, unit: str = ""):
         """Compact colour bar: VTK otherwise scales title/labels with the bar
         height, which produced a huge "field" filling the pane.
 
         ``unit`` (e.g. "V/m") is appended to the title so the physical unit of
-        the displayed values is visible.
+        the displayed values is visible. Position, size and font come from the
+        Viewer settings (:data:`DEFAULT_COLOR_BAR`).
         """
+        opts = self._color_bar_opts
         bar = vtk.vtkScalarBarActor()
         bar.SetLookupTable(lut)
         kind = ""
@@ -2120,15 +2934,20 @@ class VtkFieldViewer(QWidget):
         bar.SetTitle(f"{kind}{name} [{unit}]" if unit else f"{kind}{name}")
         bar.SetNumberOfLabels(5)
         bar.UnconstrainedFontSizeOn()  # font size in points, not bar-relative
-        # Pin the bar to the right edge in normalised viewport coordinates.
+        # Normalised viewport coordinates (0 = left/bottom, 1 = right/top).
         # (MaximumWidth/HeightInPixels override the position and centre the bar,
         # which is why it drifted into the middle of the pane.)
-        bar.SetPosition(0.84, 0.06)
-        bar.SetPosition2(0.15, 0.88)
+        bar.SetPosition(float(opts.get("x", 0.84)), float(opts.get("y", 0.06)))
+        bar.SetPosition2(
+            float(opts.get("width", 0.15)), float(opts.get("height", 0.88))
+        )
         bar.SetBarRatio(0.15)
-        bar.GetTitleTextProperty().SetFontSize(12)
+        family = str(opts.get("font", "Arial"))
+        title_size = int(self._bar_title_opts.get("size", 12))
+        label_size = int(opts.get("font_size", 10))
+        bar.GetTitleTextProperty().SetFontSize(title_size)
         bar.GetTitleTextProperty().SetColor(1, 1, 1)
-        bar.GetLabelTextProperty().SetFontSize(10)
+        bar.GetLabelTextProperty().SetFontSize(label_size)
         bar.GetLabelTextProperty().SetColor(1, 1, 1)
         bar.SetLabelFormat("%.2g")
         bar.SetDrawTickLabels(True)
@@ -2137,9 +2956,13 @@ class VtkFieldViewer(QWidget):
         bar.SetVerticalTitleSeparation(6)
         try:
             bar.GetTitleTextProperty().SetItalic(0)
-            bar.GetTitleTextProperty().SetFontFamilyToArial()
         except Exception:  # noqa: BLE001 - older VTK text property
             pass
+        for prop in (bar.GetTitleTextProperty(), bar.GetLabelTextProperty()):
+            try:
+                prop.SetFontFamilyAsString(family)
+            except Exception:  # noqa: BLE001 - older VTK text property
+                pass
         bar.SetTextPad(3)
         bar.SetVerticalTitleSeparation(4)
         return bar
@@ -2258,7 +3081,7 @@ class VtkFieldViewer(QWidget):
         actor.GetProperty().SetLineWidth(1.0)
         return actor
 
-    def _streamline_actor(self, vtk, name: str):
+    def _streamline_actor(self, vtk, name: str, lut=None):
         """Field lines through the volume, seeded on a plane near the centre."""
         try:
             # the tracer needs a VECTOR array; a scalar (e.g. "magnitude")
@@ -2274,31 +3097,68 @@ class VtkFieldViewer(QWidget):
                 return None
             b = self._grid.GetBounds()
             dx, dy, dz = b[1] - b[0], b[3] - b[2], b[5] - b[4]
-            x0 = b[0] + 0.12 * dx
-            seed = vtk.vtkPlaneSource()
-            seed.SetOrigin(x0, b[2] + 0.10 * dy, b[4] + 0.50 * dz)
-            seed.SetPoint1(x0, b[3] - 0.10 * dy, b[4] + 0.50 * dz)
-            seed.SetPoint2(x0, b[2] + 0.10 * dy, b[5] - 0.50 * dz)
-            seed.SetXResolution(7)
-            seed.SetYResolution(7)
+            try:
+                n = max(2, min(10, int(self.spn_stream_seeds.value())))
+            except (TypeError, ValueError):
+                n = 6
+            # n³ start points spread evenly through the whole volume (6 % margin
+            # keeps the seeds/integration away from the domain boundary). A small
+            # deterministic jitter breaks the regular lattice look.
+            import numpy as np
+
+            rng = np.random.default_rng(12345)
+            cell = [dx / max(1, n - 1), dy / max(1, n - 1), dz / max(1, n - 1)]
+            pts = vtk.vtkPoints()
+            lo, span = 0.06, 0.88
+            for ix in range(n):
+                x = b[0] + (lo + span * ix / (n - 1)) * dx
+                for iy in range(n):
+                    y = b[2] + (lo + span * iy / (n - 1)) * dy
+                    for iz in range(n):
+                        z = b[4] + (lo + span * iz / (n - 1)) * dz
+                        jitter = (rng.random(3) - 0.5) * 0.55 * np.asarray(cell)
+                        pts.InsertNextPoint(
+                            x + float(jitter[0]),
+                            y + float(jitter[1]),
+                            z + float(jitter[2]),
+                        )
+            seed_pd = vtk.vtkPolyData()
+            seed_pd.SetPoints(pts)
+            diag = math.sqrt(dx * dx + dy * dy + dz * dz)
             tracer = vtk.vtkStreamTracer()
             tracer.SetInputData(self._grid)
-            tracer.SetSourceConnection(seed.GetOutputPort())
+            tracer.SetSourceData(seed_pd)
             tracer.SetInputArrayToProcess(
                 0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, vec_name
             )
             tracer.SetIntegrationDirectionToBoth()
-            tracer.SetIntegratorTypeToRungeKutta4()
-            tracer.SetMaximumPropagation(2.0 * max(dx, dy, dz))
-            tracer.SetInitialIntegrationStep(0.01 * dx)
+            tracer.SetIntegratorTypeToRungeKutta2()
+            # long enough for closed loops, but bounded steps keep playback usable
+            tracer.SetMaximumPropagation(8.0 * diag)
+            tracer.SetMaximumNumberOfSteps(3000)
+            tracer.SetInitialIntegrationStep(0.01 * diag)
+            tracer.SetMinimumIntegrationStep(1e-6 * diag)
+            tracer.SetMaximumIntegrationStep(0.05 * diag)
+            tracer.SetTerminalSpeed(1e-12)
             tracer.Update()
             tube = vtk.vtkTubeFilter()
             tube.SetInputConnection(tracer.GetOutputPort())
             tube.SetRadius(0.0025 * dx)
             tube.SetNumberOfSides(6)
+            tube.Update()
             mapper = vtk.vtkPolyDataMapper()
             mapper.SetInputConnection(tube.GetOutputPort())
-            mapper.ScalarVisibilityOff()
+            colored = bool(
+                name and tube.GetOutput().GetPointData().GetArray(name) is not None
+            )
+            if colored and lut is not None:
+                mapper.SetLookupTable(lut)
+                mapper.SetScalarModeToUsePointFieldData()
+                mapper.SelectColorArray(name)
+                mapper.SetScalarRange(*self._effective_range())
+                mapper.ScalarVisibilityOn()
+            else:
+                mapper.ScalarVisibilityOff()
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
             actor.GetProperty().SetColor(0.25, 0.65, 1.0)
@@ -2366,7 +3226,7 @@ class VtkFieldViewer(QWidget):
                 break
         self.chk_stream.setEnabled(bool(has_vec))
         if self.chk_stream.isChecked() and name and has_vec:
-            sa = self._streamline_actor(vtk, name)
+            sa = self._streamline_actor(vtk, name, lut)
             if sa is not None:
                 self._renderer.AddActor(sa)
         if mapper is not None and name:
@@ -2401,7 +3261,27 @@ class VtkFieldViewer(QWidget):
             axes = vtk.vtkAxesActor()
             length = axes_total_length(bounds, self._axes["scale"])
             axes.SetTotalLength(length, length, length)
-            axes.SetPosition(bounds[0], bounds[2], bounds[4])
+            origin = (bounds[0], bounds[2], bounds[4])
+            if self._axes.get("origin_back"):
+                try:
+                    cam = self._renderer.GetActiveCamera().GetPosition()
+                    corners = [
+                        (bounds[i], bounds[j], bounds[k])
+                        for i in (0, 1)
+                        for j in (2, 3)
+                        for k in (4, 5)
+                    ]
+                    origin = max(
+                        corners,
+                        key=lambda p: (
+                            (p[0] - cam[0]) ** 2
+                            + (p[1] - cam[1]) ** 2
+                            + (p[2] - cam[2]) ** 2
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 — keep the near corner
+                    pass
+            axes.SetPosition(*origin)
             style_axes_triad(
                 axes,
                 show_labels=bool(self._axes["labels"]),
@@ -2463,16 +3343,26 @@ class VtkFieldViewer(QWidget):
             self._iren.GetRenderWindow().Render()
 
     # -------------------------------------------------------------- field info
+    def _set_header_detail(self, detail: str = "") -> None:
+        """Show the loaded field next to the tab header, e.g. "Field Viewer (J [A/m²])"."""
+        lbl = getattr(self, "_help_header_label", None)
+        if lbl is None:
+            return
+        title = str(getattr(self, "_help_header_title", "Field Viewer") or "Field Viewer")
+        lbl.setText(f"{title} ({detail})" if detail else title)
+
     def _update_field_label(self, path: Path | None = None) -> None:
-        """Show "Field: E_substrate [V/m]" — the name without the frame number."""
+        """Show "Field: E_substrate [V/m]" - the name without the frame number."""
         p = path or self._current_path
         if p is None:
             self.lbl_field.setText("")
             self.lbl_field.setToolTip("No field loaded.")
+            self._set_header_detail("")
             return
         kind = _field_kind(p)
         unit = f" [{self._field_unit}]" if self._field_unit else ""
         self.lbl_field.setText(f"Field: {kind}{unit}")
+        self._set_header_detail(f"{kind}{unit}")
         tip = [f"Field on screen: {kind}", f"File: {Path(p).name}"]
         if self._series:
             tip.append(
@@ -2486,6 +3376,9 @@ class VtkFieldViewer(QWidget):
         if self._scalar_name:
             tip.append(f"Array: {self._scalar_name}")
         self.lbl_field.setToolTip("\n".join(tip))
+        header = getattr(self, "_help_header_label", None)
+        if header is not None:
+            header.setToolTip("\n".join(tip))
 
     # ------------------------------------------------------------ time series
     def _on_time_slider(self, idx: int) -> None:
@@ -2537,11 +3430,17 @@ class VtkFieldViewer(QWidget):
             self.lbl_level.setText(f"{n} points")
         if self._series:
             i = self.slider_time.value()
-            info = f"{i + 1}/{len(self._series)}  ({self._step_label(i)})"
+            self.lbl_time_info.setText(
+                f"{i + 1}/{len(self._series)}  ({self._step_label(i)})"
+            )
             motion = self._vector_motion_text(i)
-            if motion:
-                info += f"   |   {motion}"
-            self.lbl_time_info.setText(info)
+            self.lbl_motion.setText(motion)
+            self.lbl_motion.setToolTip(
+                motion or "Arrow motion compared with the previous step."
+            )
+        else:
+            self.lbl_motion.setText("")
+            self.lbl_motion.setToolTip("Arrow motion compared with the previous step.")
         self._update_sim_time_label()
         self._update_field_label(path)
         print(f"VTK viewer: loaded {path.name} ({n} points, scalar={name})")

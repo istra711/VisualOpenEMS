@@ -37,6 +37,15 @@ class AppSettings:
     window_geometry: str = ""  # base64 QByteArray from QMainWindow.saveGeometry()
     #: remembered sizes of resizable dialogs {key: [width, height]}
     dialog_sizes: dict = field(default_factory=dict)
+    #: remembered geometry (base64 QByteArray) of dialogs {key: string}
+    dialog_geometry: dict = field(default_factory=dict)
+    #: main window layout: [left pane, tabs] and [tabs, log panel] widths/heights
+    main_splitter_sizes: list[int] = field(default_factory=list)
+    log_splitter_sizes: list[int] = field(default_factory=list)
+    #: last active main tab (title, survives tab order changes)
+    current_tab: str = ""
+    #: last active tab in the Viewer settings dialog (0 Viewer / 1 Colour / 2 Bar)
+    viewer_settings_tab: int = 0
     log_panel_visible: bool = True  # simulator log panel under the tabs
     #: left "Project / Geometry" pane (View menu / its right-click menu)
     project_panel_visible: bool = True
@@ -52,6 +61,22 @@ class AppSettings:
     #: vector glyph options (see app.ui.vtk_viewer.DEFAULT_VECTORS):
     #: enabled / size / max_arrows / normalize
     field_viewer_vectors: dict = field(default_factory=dict)
+    #: colour scale of the field plot (see app.ui.vtk_viewer.DEFAULT_COLOR_SCALE):
+    #: cmap / reverse / steps
+    field_viewer_color_scale: dict = field(default_factory=dict)
+    #: colour-bar title (see app.ui.vtk_viewer.DEFAULT_BAR_TITLE):
+    #: left / x / y / size / rotation
+    field_viewer_title: dict = field(default_factory=dict)
+    #: colour-bar geometry/font (see app.ui.vtk_viewer.DEFAULT_COLOR_BAR):
+    #: x / y / width / height / font / font_size
+    field_viewer_color_bar: dict = field(default_factory=dict)
+    #: Field Viewer layout: "panel" (B) or "minimal" (C, Display… popup)
+    field_viewer_layout: str = "panel"
+    #: playback defaults (Viewer settings): frames per second and loop mode
+    field_viewer_fps: int = 4
+    field_viewer_loop: bool = True
+    #: remembered geometry (base64 QByteArray) of the Display popup
+    field_viewer_display_geometry: str = ""
 
     # --- Port defaults (Settings dialog + FreeCAD import fallbacks) ---
     default_port_type: str = "lumped"  # lumped | msl | rect_waveguide

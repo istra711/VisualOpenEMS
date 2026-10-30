@@ -1321,6 +1321,9 @@ def inject_help_button(page: QWidget, tab_title: str, parent: QWidget | None) ->
     hl.setContentsMargins(0, 0, 0, 0)
     lbl = QLabel(tab_title)
     lbl.setStyleSheet("font-weight: bold;")
+    #: let the page update the header with a status/detail in parentheses
+    page._help_header_label = lbl
+    page._help_header_title = tab_title
     hl.addWidget(lbl)
     hl.addStretch(1)
     hl.addWidget(make_help_button(tab_title, lambda _=False, t=tab_title: show_tab_help(parent, t)))

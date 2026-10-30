@@ -9,6 +9,158 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No changes yet._
 
+## [0.9.0] - 2026-10-31
+
+### Added
+
+- **WR62 waveguide example** (`examples/run_wr62_waveguide_example.py`): straight
+  rectangular guide 100 mm between the port planes, a = 15.7988 mm, b = 7.8994 mm,
+  TE10 at 10 GHz (f_c = 9.488 GHz, λ_g = 94.9 mm). Four PEC walls, two
+  `rect_waveguide` ports 100 mm apart, PML at the x ends, 9.5–11.5 GHz band, an
+  E-field dump at 10 GHz and two excitation runs merged into a complete
+  `sparams.s2p`. It is also a GUI preset (*Presets → WR62 Waveguide (10 GHz)*)
+  built by `app.csxcad_builder.primitives.wr62_waveguide_primitives` with
+  **Et, Ht and Jt** field dumps. Verified: S21/S12 ≈ 0 dB and S11/S22 ≈ −34 dB at
+  10 GHz.
+
+- **Field Viewer: configurable colour scale** (`app/colormaps.py`,
+  `app/ui/vtk_viewer.py`, `app/ui/main_window.py`): the Settings menu has a new
+  **Viewer settings…** entry. It now holds all Field Viewer defaults — the
+  existing auto-play / standard-view / vectors options (moved out of the main
+  Settings dialog, which is short again) plus a colour-map choice (jet, turbo,
+  viridis, plasma, inferno, magma, coolwarm, rainbow, greyscale), a reverse
+  switch, the number of colour steps (2…256, for discrete bands) and a live
+  preview swatch. The colour-bar title is configured there too: left of the bar
+  or above it, with X/Y position in normalized viewport coordinates, text size
+  and rotation (the old toolbar checkbox moved into this dialog). The bar itself
+  is configurable too: X/Y position, width/height (normalized viewport), font
+  family (Arial/Times/Courier) and label font size. A **Preview** button applies
+  the dialog to the viewer without saving; **Cancel** restores the previous
+  state, **Save** keeps the preview. The choice is stored in
+  `AppSettings.field_viewer_color_scale` and applied to the VTK lookup table, so
+  plot and colour bar switch together; it is mirrored to the pop-out view. The
+  default stays the previous blue → red table (jet), so existing screenshots and
+  videos are unchanged.
+
+### Changed
+
+- **Field Viewer layout cleaned up** (`app/ui/vtk_viewer.py`): the six flat
+  control rows became a top action bar plus a collapsible **display panel** on
+  the left (*Data*, *Slice / Iso*, *Colour*, *Vectors*) and a fixed playback bar
+  at the bottom. The slice/iso section appears only for the Slice and Iso-surface
+  representations (and auto-expands on the first switch); the colour-range
+  readout now sits in the *Colour* group instead of the far right of the slice
+  row. `Export ▾` opens a menu with *Per-step series* and *Step stride*, so those
+  export details no longer occupy the toolbar. Group headers, separators and
+  consistent widths replace the previous mix. The panel is 280–320 px wide:
+  colour min/max are stacked, geometry opacity is a spin box instead of a slider,
+  and the vector rows no longer repeat their labels inside the spin boxes
+  (`size` / `arrows` prefixes and the `% min` suffix are gone). No viewer function
+  was removed.
+
+  Tests: `tests/vtk_viewer_smoke.py` passes again (its vector-option assertions
+  compared the full dict against `DEFAULT_VECTORS`, which the viewer has long
+  extended with `min_pct` / `random` / `geom_opacity`; now it checks the default
+  keys).
+
+- **Field Viewer playback bar** (`app/ui/vtk_viewer.py`): Play comes first, the
+  time slider is capped, and the frame/step and simulation-time labels have
+  fixed widths. The variable-length arrow-motion diagnostic moved into its own
+  shrinkable label (full text in the tooltip), so the bar no longer jumps when
+  the text changes. The label uses a preferred (not ignored) size policy, so the
+  arrow-motion text is visible again instead of collapsing to zero width.
+
+- **Field Viewer layout modes (B / C)** (`app/ui/vtk_viewer.py`,
+  `app/ui/main_window.py`, `app/settings.py`): Viewer settings now has a
+  **Layout** selector. **Display panel (B)** docks the collapsible panel to the
+  left of the 3D view (previous behaviour); **Minimal — Display… popup (C)** hides it and
+  shows a `Display…` button in the top bar that opens the same panel in its own
+  window, giving the viewer the full width. Stored as
+  `AppSettings.field_viewer_layout` (`panel` / `minimal`), applied at startup,
+  mirrored to the pop-out and honoured by the Settings **Preview** button.
+
+- **Field Viewer defaults and panel polish** (`app/ui/vtk_viewer.py`): the
+  geometry-opacity spin box now stretches like the other form fields (no fixed
+  64 px width); **Outline** starts off; vector glyphs default to **random**
+  sampling (fixed seed) with **Hide below = 5 %** (`DEFAULT_VECTORS` now carries
+  `min_pct`, `random` and `geom_opacity`, so these defaults also restore
+  correctly from `AppSettings.field_viewer_vectors`).
+
+- **Playback defaults moved to Viewer settings** (`app/ui/vtk_viewer.py`,
+  `app/ui/main_window.py`, `app/settings.py`): fps, Loop and Auto-play are no
+  longer in the playback bar. They live in the new **Playback** group of
+  *Settings → Viewer settings…* and persist as `field_viewer_fps`,
+  `field_viewer_loop` and `field_viewer_autoplay`; the bar keeps Play, the time
+  slider, frame/step, simulation time and the arrow-motion diagnostic.
+
+- **Streamlines available for Iso-surface too** (`app/ui/vtk_viewer.py`): the
+  *Streamlines* checkbox + seed spin moved out of the slice-only container, so
+  they are also shown for `Show = Iso-surface` (the tracer always worked on the
+  whole volume; only the UI was hidden).
+
+- **Streamlines across the whole volume** (`app/ui/vtk_viewer.py`): the
+  *Streamlines* switch seeds **n³ jittered points through the entire volume**
+  (default 6³ = 216 lines, adjustable with the new **seeds** spin, 2³…10³)
+  instead of the old degenerate seed plane. The tracer uses a long propagation
+  (8 × volume diagonal, max 3000 steps, RK2) so closed loops are traced like in
+  ParaView; the tubes are coloured by the selected scalar/LUT and are rebuilt
+  for every time/frequency step, so playback shows them moving through the
+  volume.
+
+- **Field Viewer geometry ghosts for all primitive kinds** (`app/ui/vtk_viewer.py`):
+  the *Geometry* overlay used to draw only `kind=box` primitives, so imported
+  STL/OBJ parts (the normal FreeCAD path) stayed invisible even with the checkbox
+  on. It now also draws **stl/obj/npy triangle meshes**, **cylinders**, **spheres**
+  and extruded **polygons**; unsupported/missing files are skipped instead of
+  breaking the overlay. If a dump is opened without a project, the viewer now
+  falls back to `<work>/geometry_primitives.json` / `project*.json` for the
+  primitives, and `set_geometry` fits the camera once so ghosts outside the dump
+  volume are visible.
+
+- **Axes: origin behind the object** (`app/ui/vtk_viewer.py`): the Axes menu has
+  a new **Origin behind object** switch (`DEFAULT_AXES["origin_back"]`). It
+  places the in-scene triad on the bounding-box corner farthest from the camera;
+  the numeric **coordinate ruler** follows by switching `vtkCubeAxesActor` to
+  its furthest-triad fly mode, so both sit behind the field instead of in front
+  of it.
+
+- **Axes menu Size / Label font fixed** (`app/ui/vtk_viewer.py`): the size and
+  font actions now use `triggered` and keep their `QActionGroup`s alive, so the
+  choice reliably reaches `set_axes_option`; picking a font also switches the
+  X/Y/Z labels on (otherwise the change is invisible), and the **Corner** marker
+  now scales with the Size preset by adjusting its viewport (it ignores
+  `SetTotalLength`).
+
+- **Views submenu in the Field Viewer context menu** (`app/ui/vtk_viewer.py`):
+  alongside *Axes*, the right-click menu now has **Views** with the standard
+  view presets (Fit, Isometric, From ±X/±Y/±Z). Picking one applies it and
+  updates the remembered default view.
+
+- **Display popup keeps a usable minimum size** (`app/ui/vtk_viewer.py`): the
+  popup defaults to **380 × 760** and refuses to restore a saved geometry below
+  **340 × 620**, so it no longer opens as a tiny box that clips the Data section.
+
+- **Field indicator in the tab header** (`app/ui/vtk_viewer.py`,
+  `app/ui/tab_help.py`): the loaded field is shown next to the page title, e.g.
+  **Field Viewer (J_tee [A/m²])**, instead of in the top action bar. The full
+  file/series/array details remain in the label tooltip; the top bar keeps its
+  width for the viewer.
+
+- **Viewer settings dialog split into tabs** (`app/ui/main_window.py`,
+  `app/settings.py`): the long single page became three tabs — **Viewer**
+  (layout, default view/vectors, playback), **Colour** (map, reverse, steps,
+  preview) and **Colour bar** (geometry/font + title). The last tab is remembered
+  in `AppSettings.viewer_settings_tab`; dialog size/position use a fresh
+  `viewer_settings_tabs` geometry key.
+
+- **Window/dialog geometry is remembered** (`app/settings.py`,
+  `app/ui/main_window.py`, `app/ui/vtk_viewer.py`): the main window restores its
+  geometry, splitter sizes (`main_splitter_sizes` / `log_splitter_sizes`), log and
+  project-panel visibility and the last active tab (`current_tab`). The main
+  Settings dialog, the Viewer settings dialog and the Field Viewer `Display…`
+  popup store size and position in `AppSettings.dialog_geometry` /
+  `field_viewer_display_geometry` and restore them on the next open.
+
 ## [0.8.0] - 2026-10-29
 
 ### Added

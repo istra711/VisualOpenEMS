@@ -101,6 +101,7 @@ def test_menu_structure_and_shortcuts() -> None:
         "Preset: PCB Bandpass (5.6 GHz)\u2026",
         "Preset: PCB Hairpin Bandpass (2.4 GHz)\u2026",
         "Preset: GPS L1 Patch (1.57542 GHz)\u2026",
+        "Preset: WR62 Waveguide (10 GHz)\u2026",
     ], presets
     tabs = [_strip(a.text()) for a in _menu("View").actions()]
     for name in ("Geometry", "Mesh Viewer", "S-Params"):
@@ -496,6 +497,26 @@ def test_pcb_hairpin_preset() -> None:
     print("PCB HAIRPIN PRESET OK")
 
 
+def test_wr62_waveguide_preset() -> None:
+    """Presets → WR62 Waveguide loads the TE10 guide with E/H/J dumps."""
+    w = _win()
+    w._on_load_wr62()
+    assert w.project.name == "wr62_waveguide"
+    assert len(w.project.ports) == 2
+    assert all(p.type == "rect_waveguide" for p in w.project.ports)
+    assert [d.quantity for d in w.project.dumps] == ["E", "H", "J"]
+    assert len(w.primitives) == 4
+    from app.settings import AppSettings
+
+    saved = (
+        AppSettings.load().work_path()
+        / "wr62_waveguide"
+        / "wr62_waveguide.fcsim.json"
+    )
+    assert saved.exists(), saved
+    print("WR62 WAVEGUIDE PRESET OK")
+
+
 def test_tree_selection_highlights_only_objects() -> None:
     """Only Prim/Port rows highlight the viewer — not materials or others."""
     from PySide6.QtCore import Qt
@@ -561,6 +582,7 @@ def main() -> int:
         test_mesh_menu_repair_options,
         test_new_project_starts_empty,
         test_pcb_hairpin_preset,
+        test_wr62_waveguide_preset,
         test_tree_selection_highlights_only_objects,
     ):
         try:

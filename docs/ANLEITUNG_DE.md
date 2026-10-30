@@ -590,6 +590,8 @@ bzw. nachdem der Solver gelaufen ist:
 
 **|Et| im Substrat, Schnitt aus dem Felddump Et_substrate (2,45-GHz-Beispiel).** Zwei Maxima links und rechts der Mitte, dazwischen die Moden-Null. Die Achsen stehen in Metern, die Farbskala in V/m. Solche Schnitte schreibt das Postprocessing als PNG neben den Dump (`work/<projekt>/fields/`). Die interaktive Ansicht bietet der Tab **Field Viewer**: Schnittflächen und Iso-Flächen, Vektorpfeile („Vectors") für die Feldrichtung, Serien-Playback über die Zeit- oder Frequenzschritte, Export als VTK-Serie inklusive ParaView-Collection (`<dump>.pvd`) und als MP4.
 
+Aufbau: oben die Aktionsleiste (`Open`, `Export ▾`, `Video`, `Pop out`, `Reset view`), links das einklappbare Display-Panel mit **Data**, **Slice / Iso**, **Colour** und **Vectors**, unten die Playback-Leiste. Der Slice-/Iso-Block erscheint nur bei den passenden Darstellungen; die Export-Details (per-step, step stride) liegen im `Export ▾`-Menü. Unter `Settings` → **Viewer settings…** → **Layout** ist wählbar: **B** = Panel fest links, **C** = Minimal-Ansicht mit `Display…`-Popup.
+
 Drei Schalter erweitern die Ansicht in Richtung ParaView:
 
 | Schalter | Wirkung |
@@ -599,6 +601,8 @@ Drei Schalter erweitern die Ansicht in Richtung ParaView:
 | **Streamlines** | zeichnet Feldlinien durch das Volumen (`vtkStreamTracer`, als Röhrchen), eingefärbt vom Feldwert; Start ist eine Seed-Ebene durch die Mitte |
 
 Die Stromlinien brauchen ein Vektor-Array mit drei Komponenten. Der VTK-Export schreibt es als `field`, sobald der Dump xyz-Komponenten enthält — genau dann ist der Schalter aktiv. Ein Dump, der nur den Betrag speichert, lässt ihn ausgegraut, und der Tooltip nennt den Grund.
+
+Unter `Settings` → **Viewer settings…** liegen alle Field-Viewer-Defaults (Auto-play, Standardansicht, Vektorpfeile) und die **Farbskala**: Colormap (jet, turbo, viridis, plasma, inferno, magma, coolwarm, rainbow, grayscale), **Reverse the colours**, Anzahl der **Colour steps** (256 = weicher Verlauf, bis 2 = diskrete Farbbänder) und eine Live-Vorschau. Die Einstellung wirkt sofort auf Fläche und Farbleiste und wird gespeichert; der Default bleibt die klassische Blau-nach-Rot-Tabelle. Die Zahlen-Grenzen bleiben im Viewer (`Auto`, `min`, `max`, `Log scale`). Der Farbleisten-Titel wird im selben Fenster unter **Colour bar title** eingestellt: links neben oder über dem Balken, mit X/Y-Position (normierte Viewport-Koordinaten), Textgröße und Drehwinkel. Der Balken selbst hat unter **Colour bar** X/Y-Position, Breite/Höhe, Schriftart (Arial/Times/Courier) und Label-Schriftgröße. **Preview** wendet die Einstellungen ohne Speichern auf den Viewer an; **Cancel** stellt den vorherigen Zustand wieder her, **Save** übernimmt sie. Das Fenster ist in die Tabs **Viewer**, **Colour** und **Colour bar** gegliedert.
 
 ![Magic Tee 10 GHz](images/field_viewer_magic_tee.png)
 

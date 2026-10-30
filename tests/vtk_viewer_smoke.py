@@ -224,7 +224,9 @@ def main() -> int:
 
     from app.ui.vtk_viewer import DEFAULT_VECTORS
 
-    assert v.vector_options() == dict(DEFAULT_VECTORS), v.vector_options()
+    rendered_vec = v.vector_options()
+    for key, value in DEFAULT_VECTORS.items():
+        assert rendered_vec[key] == value, (key, rendered_vec)
     assert v._vector_array_name() == "field", v._vector_array_name()
     assert v.chk_vectors.isEnabled(), "vectors must be offered for the Et-E dump"
     seen_vec: list[dict] = []
@@ -274,9 +276,10 @@ def main() -> int:
     # option round-trip (clamping + widget state)
     v.set_vector_options({"enabled": True, "size": 2.5, "max_arrows": 500,
                           "normalize": False})
-    assert v.vector_options() == {"enabled": True, "size": 2.5,
-                                  "max_arrows": 500, "normalize": False,
-                                  "overlay": False}
+    vec = v.vector_options()
+    assert vec["enabled"] is True and vec["size"] == 2.5
+    assert vec["max_arrows"] == 500 and vec["normalize"] is False
+    assert vec["overlay"] is False
     v.set_vector_options({"size": 999.0, "max_arrows": 1})
     assert v.vector_options()["size"] == 8.0 and v.vector_options()["max_arrows"] == 50
     v.set_vector_options(dict(DEFAULT_VECTORS))
@@ -428,20 +431,37 @@ def main() -> int:
     bar_u = v._make_scalar_bar(_vtk, v._lookup_table(), "magnitude", v._field_unit)
     assert bar_u.GetTitle() == "E-Field magnitude [V/m]", bar_u.GetTitle()
 
+    # geometry and font are configurable from Viewer settings
+    v.set_color_bar_options(
+        {"x": 0.7, "y": 0.1, "width": 0.2, "height": 0.6,
+         "font": "Times", "font_size": 14}
+    )
+    bar_cfg = v._make_scalar_bar(_vtk, v._lookup_table(), "field")
+    assert tuple(round(c, 3) for c in bar_cfg.GetPosition()) == (0.7, 0.1)
+    assert tuple(round(c, 3) for c in bar_cfg.GetPosition2()) == (0.2, 0.6)
+    assert bar_cfg.GetLabelTextProperty().GetFontSize() == 14
+    assert bar_cfg.GetLabelTextProperty().GetFontFamilyAsString() == "Times"
+    assert v.color_bar_options()["font"] == "Times"
+
     # the left-hand title must live in normalized viewport coordinates: an
     # actor2D defaults to display pixels, which put "Titel der Grafik" at the
     # bottom-left corner instead of beside the bar
     v._renderer = _vtk.vtkRenderer()
-    v.chk_title_left.setChecked(True)
+    v.set_bar_title_options(
+        {"left": True, "x": 0.8, "y": 0.25, "size": 18, "rotation": 90}
+    )
     v._bar_title = "Titel der Grafik"
     v._apply_bar_title(bar)
     coord = v._title_actor.GetPositionCoordinate()
     assert coord.GetCoordinateSystemAsString() == "Normalized Viewport", \
         coord.GetCoordinateSystemAsString()
+    assert tuple(round(c, 3) for c in coord.GetValue())[:2] == (0.8, 0.25), coord.GetValue()
+    assert v._title_actor.GetTextProperty().GetFontSize() == 18
     assert v._title_actor.GetVisibility() == 1
-    v.chk_title_left.setChecked(False)
+    v.set_bar_title_options({"left": False})
     v._apply_bar_title(bar)
     assert v._title_actor.GetVisibility() == 0
+    assert v.bar_title_options()["size"] == 18, "other title options must survive"
     v._renderer = None
     print("  compact colour bar OK (title beside the bar)")
 
