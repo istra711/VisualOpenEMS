@@ -1886,6 +1886,19 @@ class MainWindow(QMainWindow):
         """Right-click on the Project / Geometry pane → panel options."""
         self._build_project_panel_menu().exec(QCursor.pos())
 
+    def _set_log_word_wrap(self, on: bool) -> None:
+        """Wrap the log views at the widget width, or keep long lines."""
+        mode = (
+            QPlainTextEdit.LineWrapMode.WidgetWidth
+            if on
+            else QPlainTextEdit.LineWrapMode.NoWrap
+        )
+        for view in (self.log_view, self.log_mesh_report, self.mesh_viewer_scene_info):
+            try:
+                view.setLineWrapMode(mode)
+            except Exception:  # noqa: BLE001 - a missing view must not break it
+                pass
+
     # ----- log area (panel + bottom edge) menu ---------------------------
     def _add_log_area_actions(self, menu: QMenu) -> None:
         """Panel switches + log tabs + auto-scroll + tools (shared by the
@@ -1910,6 +1923,12 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _checked=False, k=i: self._show_log_tab(k))
 
         menu.addSeparator()
+        act_wrap = menu.addAction("Word wrap")
+        act_wrap.setCheckable(True)
+        act_wrap.setChecked(
+            self.log_view.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
+        )
+        act_wrap.toggled.connect(self._set_log_word_wrap)
         act_scroll = menu.addAction("Auto-scroll")
         act_scroll.setCheckable(True)
         act_scroll.setChecked(self.btn_log_autoscroll.isChecked())
