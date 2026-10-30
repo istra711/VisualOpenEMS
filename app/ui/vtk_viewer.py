@@ -1932,12 +1932,8 @@ class VtkFieldViewer(QWidget):
             idx = rng.choice(n_all, size=take, replace=False)
             sel = np.zeros(n_all, dtype=bool)
             sel[idx] = True
-            self._logmsg(f"random: cloud {n_all} pts, select {take}")
             try:
                 sampled = self._subset_points(vtk, ns, cloud, sel)
-                self._logmsg(
-                    f"random: sampled {sampled.GetNumberOfPoints()} pts"
-                )
             except Exception as exc:  # noqa: BLE001
                 self._logmsg(f"random: subset failed: {exc!r}")
                 return None
