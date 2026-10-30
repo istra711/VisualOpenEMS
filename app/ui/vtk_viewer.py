@@ -2068,7 +2068,13 @@ class VtkFieldViewer(QWidget):
             prop.SetOrientation(90)
             prop.SetJustificationToCentered()
             prop.SetVerticalJustificationToCentered()
-            self._renderer.AddActor2D(self._title_actor)
+        # _refresh_display calls RemoveAllViewProps, which also drops 2D actors -
+        # so the title has to be attached again on every refresh.
+        try:
+            self._renderer.RemoveActor2D(self._title_actor)
+        except Exception:  # noqa: BLE001
+            pass
+        self._renderer.AddActor2D(self._title_actor)
         if self.chk_title_left.isChecked():
             bar.SetTitle("")
             self._title_actor.SetInput(text)
