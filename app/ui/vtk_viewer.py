@@ -1913,6 +1913,11 @@ class VtkFieldViewer(QWidget):
         # Magnitude threshold in NumPy: vtkThresholdPoints kept dropping every
         # point here, whatever the array name, so the cut is done by hand.
         mags_all = np.linalg.norm(vals, axis=1)
+        keep = np.ones(mags_all.size, dtype=bool)
+        if self.chk_vec_norm.isChecked():
+            # "same length" draws an arrow at every point; where |v| is zero the
+            # direction is undefined, so those arrows carry no information.
+            keep &= mags_all > 0.0
         if min_pct > 0.0:
             lo = float(np.nanmin(mags_all))
             hi = float(np.nanmax(mags_all))
@@ -1924,18 +1929,13 @@ class VtkFieldViewer(QWidget):
                 )
             else:
                 cut = lo + (hi - lo) * (min_pct / 100.0)
-            keep = mags_all >= cut
-            print(
-                f"vector threshold: {min_pct:.0f} % ({'log' if self.chk_log.isChecked() else 'lin'})"
-                f" -> cut {cut:.3e}, keep {int(keep.sum())}/{mags_all.size}",
-                flush=True,
-            )
-            if 2 <= int(keep.sum()) < mags_all.size:
-                sampled = self._subset_points(vtk, ns, sampled, keep)
-                arr = sampled.GetPointData().GetArray(name)
-                if arr is None:
-                    return None
-                vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
+            keep &= mags_all >= cut
+        if 2 <= int(keep.sum()) < mags_all.size:
+            sampled = self._subset_points(vtk, ns, sampled, keep)
+            arr = sampled.GetPointData().GetArray(name)
+            if arr is None:
+                return None
+            vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
         # vtkGlyph3D orients along the *active* vectors of its input; a filter
         # chain or an older export may have lost that flag, which leaves the
         # arrows pointing in a constant direction while only their length
