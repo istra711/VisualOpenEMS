@@ -1852,6 +1852,34 @@ class VtkFieldViewer(QWidget):
         """
         return data
 
+    @staticmethod
+    def _subset_points(vtk, ns, poly, keep):
+        """New polydata with only the points where ``keep`` is true."""
+        import numpy as np
+
+        pts = ns.vtk_to_numpy(poly.GetPoints().GetData())[keep]
+        out = vtk.vtkPolyData()
+        vpts = vtk.vtkPoints()
+        vpts.SetData(ns.numpy_to_vtk(np.ascontiguousarray(pts), deep=True))
+        out.SetPoints(vpts)
+        cells = vtk.vtkCellArray()
+        cells.InsertNextCell(int(pts.shape[0]))
+        for i in range(int(pts.shape[0])):
+            cells.InsertCellPoint(i)
+        out.SetVerts(cells)
+        pdata = poly.GetPointData()
+        for i in range(pdata.GetNumberOfArrays()):
+            src = pdata.GetArray(i)
+            if src is None:
+                continue
+            v = ns.vtk_to_numpy(src)
+            if v.shape[0] != keep.size:
+                continue
+            dst = ns.numpy_to_vtk(np.ascontiguousarray(v[keep]), deep=True)
+            dst.SetName(src.GetName())
+            out.GetPointData().AddArray(dst)
+        return out
+
     def _make_vector_actor(self, vtk, data, rep: str, lut):
         """Arrow glyphs for the current representation (ParaView "Glyph")."""
         import numpy as np
@@ -1872,44 +1900,37 @@ class VtkFieldViewer(QWidget):
         mask.GenerateVerticesOff()
         mask.Update()
         sampled = mask.GetOutput()
-        # Threshold: the near-zero points show up as long blue arrows (same
-        # length mode) and hide everything behind them. Cut them by their share
-        # of the peak magnitude before the glyph filter runs.
+        arr = sampled.GetPointData().GetArray(name)
+        if arr is None or arr.GetNumberOfTuples() == 0:
+            return None
         try:
             min_pct = float(self.spn_vec_min.value())
         except Exception:  # noqa: BLE001
             min_pct = 0.0
-        if min_pct > 0.0:
-            scal = sampled.GetPointData().GetArray("magnitude")
-            if scal is not None:
-                lo, hi = scal.GetRange()
-                # The colour scale is logarithmic and the data spans decades, so
-                # a linear cut at 1 % already removed almost everything. Cut in
-                # log space instead: 1 % sits just above the smallest value.
-                if self.chk_log.isChecked() and hi > 0.0:
-                    base = lo if lo > 0.0 else hi * 1e-9
-                    cut = 10.0 ** (
-                        math.log10(base)
-                        + (math.log10(hi) - math.log10(base)) * (min_pct / 100.0)
-                    )
-                else:
-                    cut = lo + (hi - lo) * (min_pct / 100.0)
-                thr = vtk.vtkThresholdPoints()
-                thr.SetInputData(sampled)
-                thr.SetInputArrayToProcess(
-                    0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, "magnitude"
-                )
-                thr.SetLowerThreshold(cut)
-                thr.SetUpperThreshold(hi * 10.0 + 1.0)
-                thr.Update()
-                out = thr.GetOutput()
-                # Never let the threshold empty the view: a cut that removes
-                # every arrow looks like a broken switch, not like a filter.
-                if out is not None and out.GetNumberOfPoints() >= 2:
-                    sampled = out
-        arr = sampled.GetPointData().GetArray(name)
-        if arr is None or arr.GetNumberOfTuples() == 0:
+        vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
+        if vals.ndim != 2 or vals.shape[0] == 0:
             return None
+        # Magnitude threshold in NumPy: vtkThresholdPoints kept dropping every
+        # point here, whatever the array name, so the cut is done by hand.
+        mags_all = np.linalg.norm(vals, axis=1)
+        if min_pct > 0.0:
+            lo = float(np.nanmin(mags_all))
+            hi = float(np.nanmax(mags_all))
+            if self.chk_log.isChecked() and hi > 0.0:
+                base = lo if lo > 0.0 else hi * 1e-9
+                cut = 10.0 ** (
+                    math.log10(base)
+                    + (math.log10(hi) - math.log10(base)) * (min_pct / 100.0)
+                )
+            else:
+                cut = lo + (hi - lo) * (min_pct / 100.0)
+            keep = mags_all >= cut
+            if 2 <= int(keep.sum()) < mags_all.size:
+                sampled = self._subset_points(vtk, ns, sampled, keep)
+                arr = sampled.GetPointData().GetArray(name)
+                if arr is None:
+                    return None
+                vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
         # vtkGlyph3D orients along the *active* vectors of its input; a filter
         # chain or an older export may have lost that flag, which leaves the
         # arrows pointing in a constant direction while only their length
