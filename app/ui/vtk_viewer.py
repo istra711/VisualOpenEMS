@@ -2053,7 +2053,12 @@ class VtkFieldViewer(QWidget):
         """
         bar = vtk.vtkScalarBarActor()
         bar.SetLookupTable(lut)
-        bar.SetTitle(f"{name} [{unit}]" if unit else name)
+        kind = ""
+        if unit.startswith("V"):
+            kind = "E-Field "
+        elif unit.startswith("A/m"):
+            kind = "H-Field " if unit.strip() == "A/m" else "J-Field "
+        bar.SetTitle(f"{kind}{name} [{unit}]" if unit else f"{kind}{name}")
         bar.SetNumberOfLabels(5)
         bar.UnconstrainedFontSizeOn()  # font size in points, not bar-relative
         # Pin the bar to the right edge in normalised viewport coordinates.
