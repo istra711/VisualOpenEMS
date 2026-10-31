@@ -3133,6 +3133,9 @@ class VtkFieldViewer(QWidget):
             )
             tracer.SetIntegrationDirectionToBoth()
             tracer.SetIntegratorTypeToRungeKutta2()
+            # VTK defaults to CELL_LENGTH_UNIT; our propagation/step values are
+            # in metres, otherwise lines stop after a fraction of a cell.
+            tracer.SetIntegrationStepUnit(vtk.vtkStreamTracer.LENGTH_UNIT)
             # long enough for closed loops, but bounded steps keep playback usable
             tracer.SetMaximumPropagation(8.0 * diag)
             tracer.SetMaximumNumberOfSteps(3000)

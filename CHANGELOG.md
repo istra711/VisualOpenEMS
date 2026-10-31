@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No changes yet._
 
+## [0.9.1] - 2026-10-31
+
+### Fixed
+
+- **Streamlines were tiny sticks** (`app/ui/vtk_viewer.py`): `vtkStreamTracer`
+  defaults to `CELL_LENGTH_UNIT`, so the metre-based propagation/step values were
+  interpreted as fractions of a cell and every line stopped almost immediately.
+  The tracer now uses `LENGTH_UNIT`, giving full volume-spanning loops; measured
+  6³ seeds: ~127k points in 0.08 s for the WR62 H-field.
+
 ## [0.9.0] - 2026-10-31
 
 ### Added
@@ -102,10 +112,11 @@ _No changes yet._
   *Streamlines* switch seeds **n³ jittered points through the entire volume**
   (default 6³ = 216 lines, adjustable with the new **seeds** spin, 2³…10³)
   instead of the old degenerate seed plane. The tracer uses a long propagation
-  (8 × volume diagonal, max 3000 steps, RK2) so closed loops are traced like in
-  ParaView; the tubes are coloured by the selected scalar/LUT and are rebuilt
-  for every time/frequency step, so playback shows them moving through the
-  volume.
+  (8 × volume diagonal, max 3000 steps, RK2, **length units** —
+  `SetIntegrationStepUnit(LENGTH_UNIT)`; VTK's cell-length default made every
+  line a tiny stick) so closed loops are traced like in ParaView; the tubes are
+  coloured by the selected scalar/LUT and are rebuilt for every time/frequency
+  step, so playback shows them moving through the volume.
 
 - **Field Viewer geometry ghosts for all primitive kinds** (`app/ui/vtk_viewer.py`):
   the *Geometry* overlay used to draw only `kind=box` primitives, so imported
