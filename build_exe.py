@@ -4,7 +4,7 @@ Usage (with the simulation Python that has all dependencies installed):
 
     python build_exe.py
 
-Output: dist/VisualOpenEMS.exe  (windowed, single file)
+Output: dist/VisualopenEMS.exe  (windowed, single file)
 
 The bundle contains the GUI (PySide6, matplotlib, numpy, scipy, h5py,
 CSXCAD/openEMS bindings, easyMesh) plus *source* copies of app/, examples/,
@@ -33,7 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 BUILD = ROOT / "build" / "pyi"
-SPEC = BUILD / "VisualOpenEMS.spec"
+SPEC = BUILD / "VisualopenEMS.spec"
 
 # The WinPython environment contains the full scientific/AI stack; the GUI only
 # needs PySide6 + numpy/scipy/pandas/matplotlib/h5py/skrf/CSXCAD/VTK. Without
@@ -154,7 +154,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="VisualOpenEMS",
+    name="VisualopenEMS",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -184,7 +184,7 @@ def main() -> int:
 
     DIST.mkdir(parents=True, exist_ok=True)
     # stale onefile output locks the target on Windows — drop it first
-    exe = DIST / "VisualOpenEMS.exe"
+    exe = DIST / "VisualopenEMS.exe"
     if exe.exists():
         try:
             exe.unlink()

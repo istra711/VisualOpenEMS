@@ -1,4 +1,4 @@
-# VisualOpenEMS — Development Prompt (living document)
+# VisualopenEMS — Development Prompt (living document)
 
 > **Purpose:** Capture context, decisions, and progress so work can be continued
 > (by a developer or AI agent) without re-deriving the whole project.
@@ -604,7 +604,7 @@ PowerShell: avoid complex `-c` one-liners with nested quotes — write scripts u
 - **NF2FF "egg" root cause = stale box `center` (not the box shape):** matching the dipole against the CST report (`CST/Report 1.html.pdf`; Dmax 2.21 dBi @ 90°, HPBW 78.3°, η≈1.0) exposed that our far field came out *distorted* (Dmax 3.3–3.6 dBi, HPBW 45°, a notch at θ=45°). Isolated it by (a) re-running the **current** postproc on the old good `_sym` recorded fields (reproduced Dmax 2.13 dBi → postproc fine), (b) comparing meshes (identical) and (c) the run metadata: the project stored `nf2ff.center = [0,0,6.15]` — the midpoint of the **old asymmetric "Fit" box** (`−45.4…+57.7`). `CalcNF2FF` expands the far field around `center`, so an off-centre reference distorts the pattern: on the **same** recorded fields, `center z 0 → 6.15` alone moved Dmax 2.13 → 3.30 dBi and HPBW 78° → 45°. Fix/safeguard: pure `app.meshing.bounds.nf2ff_box_center` / `nf2ff_center_offset` (box-geometry only — the source may be arbitrarily asymmetric) + a run-script check that warns and snaps `center` to the box centre. With the correct centre the dipole matches CST (2.13 dBi @ 90°, 78.0°, η 1.00). Tests `tests/test_nf2ff_fit_margin.py` (+3). `_on_fit_nf2ff` already sets `center` = the (now symmetric) box centre, so a fresh *Fit NF2FF to Geometry* repairs an old project.
 
 ### 2026-10-31
-- **Branding: VisualOpenEMS** — `APP_NAME`, `setApplicationName`, window title, About, docs/tool footers and PyInstaller output (`dist/VisualOpenEMS.exe`) renamed; internal packages/repo folder unchanged. Streamline unit fix: `vtkStreamTracer` now uses `LENGTH_UNIT` (v0.9.1), 6³ seeds span the volume (~127k points, 0.08 s).
+- **Branding: VisualopenEMS** — `APP_NAME`, `setApplicationName`, window title, About, docs/tool footers and PyInstaller output (`dist/VisualopenEMS.exe`) renamed; internal packages/repo folder unchanged. Streamline unit fix: `vtkStreamTracer` now uses `LENGTH_UNIT` (v0.9.1), 6³ seeds span the volume (~127k points, 0.08 s).
 
 ### 2026-10-30
 - **WR62 waveguide example + GUI preset** (`examples/run_wr62_waveguide_example.py`, `app/csxcad_builder/primitives.wr62_waveguide_primitives`): straight guide, port planes 100 mm apart, a=15.7988 mm / b=7.8994 mm, TE10 at 10 GHz (fc 9.488 GHz, λg 94.9 mm), four 2 mm PEC walls, PML x ends/PEC y/z, 9.5–11.5 GHz, **Et/Ht/Jt** dumps at 10 GHz. Preset menu entry `Presets → WR62 Waveguide (10 GHz)…`. Two excitation runs merge to `work/wr62_waveguide/sparams/sparams.s2p`; verified S21/S12 ≈ 0 dB, S11/S22 ≈ −34 dB @ 10 GHz.

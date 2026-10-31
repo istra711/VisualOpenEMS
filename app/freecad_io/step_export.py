@@ -3,7 +3,7 @@
 openEMS/CSXCAD geometry is stored in *drawing units* (mm/um/m/cm) as analytic
 primitives (box/cylinder/sphere/polygon) plus triangle meshes. STEP is the
 neutral CAD format CST Studio Suite reads natively, so it is the exchange
-format for the VisualOpenEMS <-> CST round-trip.
+format for the VisualopenEMS <-> CST round-trip.
 
 Two properties make the file usable on the other side:
 

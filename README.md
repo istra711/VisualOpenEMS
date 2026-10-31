@@ -1,8 +1,8 @@
-# VisualOpenEMS
+# VisualopenEMS
 
 > **⚠️ Pre-Alpha — Work in Progress**
 >
-> VisualOpenEMS is currently in **pre-alpha** development. The code is a work in progress and **not suitable for production use**. APIs, project file formats, and GUI layouts may change without notice. Simulation results should be independently verified.
+> VisualopenEMS is currently in **pre-alpha** development. The code is a work in progress and **not suitable for production use**. APIs, project file formats, and GUI layouts may change without notice. Simulation results should be independently verified.
 >
 > **Found a bug?** Please [open an issue](https://github.com/istra711/VisualOpenEMS/issues) with a description of the problem, steps to reproduce, and — if possible — a suggested fix or pull request. Contributions are welcome!
 
@@ -137,7 +137,7 @@ separately, a right click on a marked cell opens the repair actions.*
 ## Architecture
 
 ```
-VisualOpenEMS/
+VisualopenEMS/
 ├── app/
 │   ├── main.py                    # GUI entry point (PySide6)
 │   ├── paths.py                   # App root resolution
@@ -600,7 +600,7 @@ build a single file).
 
 ## External Sources & Dependencies
 
-VisualOpenEMS builds on the following open-source projects:
+VisualopenEMS builds on the following open-source projects:
 
 ### Core Simulation Engine
 
@@ -648,7 +648,7 @@ VisualOpenEMS builds on the following open-source projects:
 
 | Component | License |
 |-----------|---------|
-| **VisualOpenEMS** (this code) | See repository license |
+| **VisualopenEMS** (this code) | See repository license |
 | **openEMS** | [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html) |
 | **CSXCAD** | [LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.html) |
 | **easyMesh4openEMS** | [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html) |

@@ -44,7 +44,7 @@ def main() -> int:
     check("openEMS.exe", lambda: (oe, oe.exists()))
 
     failed = 0
-    print("=== VisualOpenEMS — environment check ===")
+    print("=== VisualopenEMS — environment check ===")
     for label, ok, info in checks:
         status = "OK " if ok else "FAIL"
         print(f"[{status}] {label}: {info}")

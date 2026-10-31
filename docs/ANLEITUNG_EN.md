@@ -1,6 +1,6 @@
 # Guide: Draw an antenna in FreeCAD and simulate it with the GUI
 
-**Project:** VisualOpenEMS  
+**Project:** VisualopenEMS  
 **Goal:** model a 3D antenna in FreeCAD, import it as STEP, simulate with openEMS and evaluate the S-parameters  
 **GUI language:** English (guide: English)
 

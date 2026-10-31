@@ -1,4 +1,4 @@
-"""VisualOpenEMS — English desktop application entry point."""
+"""VisualopenEMS — English desktop application entry point."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def main() -> int:
     from app.settings import AppSettings
 
     app = QApplication(sys.argv)
-    app.setApplicationName("VisualOpenEMS")
+    app.setApplicationName("VisualopenEMS")
     # window/taskbar icon (same asset PyInstaller embeds as the EXE icon)
     icon_path = app_root() / "assets" / "app_icon.ico"
     if icon_path.is_file():

@@ -251,9 +251,9 @@ def build(md_path: Path | None = None, docx_path: Path | None = None) -> Path:
     # Footer note (language follows the source file name)
     rel = md_path.relative_to(ROOT).as_posix() if md_path.is_relative_to(ROOT) else md_path.name
     if md_path.name.endswith("_DE.md"):
-        footer = f"Generiert aus {rel} — VisualOpenEMS"
+        footer = f"Generiert aus {rel} — VisualopenEMS"
     else:
-        footer = f"Generated from {rel} — VisualOpenEMS"
+        footer = f"Generated from {rel} — VisualopenEMS"
     doc.add_paragraph()
     p = doc.add_paragraph()
     run = p.add_run(footer)
