@@ -271,7 +271,7 @@ def write_touchstone(
         print(f"skrf touchstone write failed ({e}); using built-in writer")
 
     lines: list[str] = []
-    lines.append("! FreeCAD OpenEMS GUI — S-parameters")
+    lines.append("! VisualOpenEMS — S-parameters")
     lines.append(f"! ports={n} z0={z0} ohm")
     for c in comments or []:
         lines.append(f"! {c}")

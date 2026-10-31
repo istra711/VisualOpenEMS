@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
             name = "no project"
         path = getattr(self, "_current_file_path", None)
         suffix = f"  —  {Path(path).name}" if path else ""
-        self.setWindowTitle(f"FreeCAD OpenEMS GUI — {name}{suffix}")
+        self.setWindowTitle(f"VisualOpenEMS — {name}{suffix}")
 
     def _screen_avail(self):
         screen = self.screen()

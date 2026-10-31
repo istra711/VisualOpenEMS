@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes yet._
+### Changed
+
+- **Branding renamed to VisualOpenEMS**: application name, window title, About
+  dialog, docs/tool footers and the PyInstaller output (`dist/VisualOpenEMS.exe`)
+  now use **VisualOpenEMS**. Internal package/module names and the repository
+  folder stay unchanged for compatibility.
 
 ## [0.9.1] - 2026-10-31
 

@@ -1,4 +1,4 @@
-"""FreeCAD OpenEMS GUI — entry point for direct runs and the PyInstaller bundle.
+"""VisualOpenEMS — entry point for direct runs and the PyInstaller bundle.
 
 Delegates to :func:`app.main.main` (same code path as ``python app\\main.py``);
 adds a crash log for the windowed frozen EXE, which has no console.

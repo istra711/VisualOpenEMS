@@ -44,7 +44,7 @@ def main() -> int:
     check("openEMS.exe", lambda: (oe, oe.exists()))
 
     failed = 0
-    print("=== FreeCAD OpenEMS GUI — environment check ===")
+    print("=== VisualOpenEMS — environment check ===")
     for label, ok, info in checks:
         status = "OK " if ok else "FAIL"
         print(f"[{status}] {label}: {info}")

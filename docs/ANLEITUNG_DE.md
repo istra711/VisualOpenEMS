@@ -2,7 +2,7 @@
 
 > English version: **[ANLEITUNG_EN.md](ANLEITUNG_EN.md)**
 
-**Projekt:** FreeCAD OpenEMS GUI  
+**Projekt:** VisualOpenEMS  
 **Ziel:** 3D-Antenne in FreeCAD modellieren, als STEP importieren, mit openEMS simulieren und S-Params auswerten  
 **Sprache der GUI:** Englisch (Anleitung: Deutsch)
 
