@@ -135,7 +135,7 @@ Two symptoms were reported; three defects were measured:
 coloured slice/surface/volume plot; an opaque cut or body covers every arrow
 pointing into it. Now: `_show_field_actor()` — with vectors on, the field
 representation is **not** drawn (the arrows *are* the representation, as in
-ParaView). The new checkbox **"field underneath"** (`DEFAULT_VECTORS["overlay"]`,
+ParaView). The new checkbox **"field below"** (`DEFAULT_VECTORS["overlay"]`,
 default **off**) brings the overlay back. The colour bar stays because it
 explains the arrow colours.
 

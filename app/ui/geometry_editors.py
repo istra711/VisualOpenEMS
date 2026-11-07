@@ -32,7 +32,10 @@ from app.ui.primitive_preview import PolygonPreview
 
 MATERIAL_KINDS = ["pec", "dielectric", "conducting_sheet", "lumped_rlc", "ignore"]
 PORT_TYPES = ["lumped", "msl", "rect_waveguide"]
-DUMP_QTY = ["E", "H", "J", "Jtot", "D", "B", "SAR", "custom"]
+DUMP_QTY = [
+    "E", "H", "J", "Jtot", "D", "B",
+    "SAR", "SAR1g", "SAR10g", "SARraw", "custom",
+]
 
 
 def _axis_suffixes(coord_system: str) -> tuple[str, str, str]:
@@ -204,6 +207,17 @@ class PortDialog(QDialog):
         )
         self.chk_excite = QCheckBox("Excite port")
         self.chk_excite.setChecked(bool(p.excite_port))
+        self.spn_exc_phase = QDoubleSpinBox()
+        self.spn_exc_phase.setRange(-360.0, 360.0)
+        self.spn_exc_phase.setDecimals(2)
+        self.spn_exc_phase.setSuffix(" °")
+        self.spn_exc_phase.setValue(float(getattr(p, "excite_phase_deg", 0.0) or 0.0))
+        self.spn_exc_phase.setToolTip(
+            "Excitation phase at the project's target frequency.\n"
+            "Used when several ports are excited at once (e.g. two feeds of a\n"
+            "CP patch with a 90° hybrid). openEMS gets an equivalent\n"
+            "non-negative excitation delay; 0° means no delay."
+        )
         self.chk_reverse = QCheckBox("Reverse (swap Start/Stop)")
         self.chk_reverse.setChecked(bool(getattr(p, "reverse", False)))
         self.chk_reverse.setToolTip(
@@ -237,6 +251,7 @@ class PortDialog(QDialog):
         form.addRow("Excitation dir (MSL)", self.cmb_exc)
         form.addRow(self.chk_active)
         form.addRow(self.chk_excite)
+        form.addRow("Excitation phase", self.spn_exc_phase)
         form.addRow(self.chk_reverse)
         form.addRow("Mesh dirs", self.cmb_mesh)
         self.spn_start = _vec3_row(form, "Start", p.start, coord_system=coord_system)
@@ -281,6 +296,7 @@ class PortDialog(QDialog):
             prop_direction=self.cmb_prop.currentData() or "",
             exc_direction=self.cmb_exc.currentData() or "",
             excite_port=self.chk_excite.isChecked(),
+            excite_phase_deg=float(self.spn_exc_phase.value()),
             active=self.chk_active.isChecked(),
             reverse=self.chk_reverse.isChecked(),
             mesh_dirs=self.cmb_mesh.currentText(),
@@ -654,21 +670,27 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         display: dict | None = None,
         unit: str = "mm",
         size: tuple[int, int] | None = None,
+        extruded: bool = False,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Polygon primitive")
         # compact default; a size the user picked before (``size``) wins
         _fit_dialog(self, tuple(size) if size else (760, 520))
         self._coord_system = coord_system
         self._unit = unit or "mm"
         p = prim or {
-            "name": "poly1",
+            "name": "extruded_poly1" if extruded else "poly1",
             "material": "copper",
             "axis": "z",
             "coord": 0.0,
-            "length": 0.0,
+            "length": 1.0 if extruded else 0.0,
             "points": [[0, 0], [20, 0], [20, 10], [0, 10]],
         }
+        is_extruded = bool(extruded) or float(p.get("length") or 0.0) > 0.0
+        self.setWindowTitle(
+            "Extruded polygon primitive"
+            if is_extruded
+            else "Polygon primitive"
+        )
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
         form = QFormLayout(self)
@@ -808,6 +830,174 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         self.accept()
 
 
+class PrimitivePolylineDialog(QDialog, _DisplayMixin):
+    """Add/edit a 3-D ``wire`` or ``curve`` primitive.
+
+    Both kinds store a polyline of arbitrary 3-D points.  A wire additionally
+    has a radius (CSXCAD ``AddWire``); a curve is a zero-thickness PEC curve
+    (``AddCurve``).
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        prim: dict[str, Any] | None = None,
+        kind: str = "wire",
+        coord_system: str = "cartesian",
+        display: dict | None = None,
+        unit: str = "mm",
+        size: tuple[int, int] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        kind = str(kind or "wire").lower()
+        if kind not in ("wire", "curve"):
+            kind = "wire"
+        self._kind = kind
+        self._coord_system = coord_system
+        self._unit = unit or "mm"
+        self.setWindowTitle(
+            "Wire primitive" if kind == "wire" else "Curve primitive"
+        )
+        _fit_dialog(self, tuple(size) if size else (620, 500))
+        p = prim or {
+            "name": "wire1" if kind == "wire" else "curve1",
+            "material": "copper",
+            "priority": 10,
+            "radius": 0.5,
+            "points": [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
+        }
+        self._keep_extra = dict(p) if prim else {}
+        self.result: dict[str, Any] | None = None
+
+        form = QFormLayout(self)
+        self.ed_name = QLineEdit(str(p.get("name", p.get("name", kind + "1"))))
+        self.cmb_mat = QComboBox()
+        self.cmb_mat.setEditable(True)
+        self.cmb_mat.addItems(["copper", "substrate", "vacuum"])
+        self.cmb_mat.setCurrentText(str(p.get("material", "copper")))
+        self.spn_pri = QSpinBox()
+        self.spn_pri.setRange(0, 200)
+        self.spn_pri.setValue(int(p.get("priority", 10)))
+        form.addRow("Name", self.ed_name)
+        form.addRow("Material", self.cmb_mat)
+        form.addRow("Priority", self.spn_pri)
+
+        self.spn_radius: QDoubleSpinBox | None = None
+        if kind == "wire":
+            self.spn_radius = QDoubleSpinBox()
+            self.spn_radius.setRange(0.001, 1_000.0)
+            self.spn_radius.setDecimals(4)
+            self.spn_radius.setSingleStep(0.05)
+            self.spn_radius.setValue(float(p.get("radius", 0.5) or 0.5))
+            self.spn_radius.setToolTip(
+                "Wire radius in the current drawing unit. CSXCAD AddWire\n"
+                "sweeps a circular cross-section around the polyline."
+            )
+            form.addRow("Wire radius", self.spn_radius)
+
+        self.ed_points = QPlainTextEdit()
+        self.ed_points.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
+        pts = p.get("points") or []
+        self.ed_points.setPlainText(
+            "\n".join(
+                f"{float(pt[0]):g}, {float(pt[1]):g}, {float(pt[2]):g}"
+                for pt in pts
+                if len(pt) >= 3
+            )
+        )
+        self.ed_points.setPlaceholderText(
+            "x, y, z  (one 3-D point per line, >= 2 points)"
+        )
+        self.ed_points.setMinimumHeight(180)
+        self.ed_points.setToolTip(
+            "One point per line: x, y, z in the current drawing unit.\n"
+            "The points are connected in order; at least two are required."
+        )
+        form.addRow("Points (3-D)", self.ed_points)
+        self._add_display(form, display)
+
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        form.addRow(bb)
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+
+    @staticmethod
+    def _parse_points(text: str) -> list[list[float]]:
+        pts: list[list[float]] = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [s for s in re.split(r"[,;\s]+", line) if s]
+            if len(parts) < 3:
+                continue
+            try:
+                vals = [float(parts[0]), float(parts[1]), float(parts[2])]
+            except ValueError:
+                continue
+            if all(math.isfinite(v) for v in vals):
+                pts.append(vals)
+        return pts
+
+    def _accept(self) -> None:
+        pts = self._parse_points(self.ed_points.toPlainText())
+        if len(pts) < 2:
+            QMessageBox.warning(
+                self,
+                "Wire/Curve primitive",
+                "A wire or curve needs at least 2 points "
+                "(one \"x, y, z\" per line).",
+            )
+            return
+        radius = (
+            max(0.0, float(self.spn_radius.value()))
+            if self.spn_radius is not None
+            else 0.0
+        )
+        xs = [pt[0] for pt in pts]
+        ys = [pt[1] for pt in pts]
+        zs = [pt[2] for pt in pts]
+        start = [min(xs), min(ys), min(zs)]
+        stop = [max(xs), max(ys), max(zs)]
+        if self._kind == "wire":
+            start = [v - radius for v in start]
+            stop = [v + radius for v in stop]
+        prim: dict[str, Any] = {
+            "kind": self._kind,
+            "name": self.ed_name.text().strip()
+            or ("wire1" if self._kind == "wire" else "curve1"),
+            "material": self.cmb_mat.currentText().strip() or "copper",
+            "priority": self.spn_pri.value(),
+            "points": pts,
+            "start": start,
+            "stop": stop,
+        }
+        if self._kind == "wire":
+            prim["radius"] = radius
+        for k, v in (self._keep_extra or {}).items():
+            if k not in prim:
+                prim[k] = v
+        self.result = prim
+        self.accept()
+
+
+class PrimitiveWireDialog(PrimitivePolylineDialog):
+    def __init__(self, parent=None, **kwargs) -> None:  # noqa: ANN001
+        kwargs["kind"] = "wire"
+        super().__init__(parent, **kwargs)
+
+
+class PrimitiveCurveDialog(PrimitivePolylineDialog):
+    def __init__(self, parent=None, **kwargs) -> None:  # noqa: ANN001
+        kwargs["kind"] = "curve"
+        super().__init__(parent, **kwargs)
+
+
 class DumpDialog(QDialog):
     def __init__(
         self,
@@ -819,7 +1009,7 @@ class DumpDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Field dump")
-        self.resize(380, 470)
+        self.resize(440, 620)
         self._coord_system = coord_system
         self._fit_box = fit_box
         self._nf2ff_box = nf2ff_box
@@ -830,6 +1020,21 @@ class DumpDialog(QDialog):
         self.cmb_qty = QComboBox()
         self.cmb_qty.addItems(DUMP_QTY)
         self.cmb_qty.setCurrentText(d.quantity)
+        self.cmb_qty.setToolTip(
+            "Field type. J = electric current density (CSXCAD 12), "
+            "Jtot = total current density rot(H) (13).\n"
+            "SAR = local SAR (20), SAR1g/SAR10g = averaged SAR (21/22), "
+            "SARraw = raw SAR data (29).\n"
+            "SAR dumps are frequency-domain only; custom exposes the numeric "
+            "CSXCAD DumpType."
+        )
+        self.spn_custom_type = QSpinBox()
+        self.spn_custom_type.setRange(0, 99)
+        self.spn_custom_type.setValue(int(getattr(d, "custom_dump_type", 10) or 10))
+        self.spn_custom_type.setToolTip(
+            "Numeric CSXCAD DumpType when Quantity = custom.\n"
+            "Examples: 12 = J, 21 = 1 g SAR, 29 = raw SAR."
+        )
         self.chk_fd = QCheckBox("Frequency domain")
         self.chk_fd.setChecked(bool(d.frequency_domain))
         self.chk_en = QCheckBox("Enabled")
@@ -860,6 +1065,7 @@ class DumpDialog(QDialog):
         )
         form.addRow("Name", self.ed_name)
         form.addRow("Quantity", self.cmb_qty)
+        form.addRow("Custom DumpType", self.spn_custom_type)
         form.addRow("File type", self.cmb_file_type)
         form.addRow("Interpolation", self.cmb_mode)
         form.addRow("Frequency unit", self.cmb_freq_unit)
@@ -893,6 +1099,24 @@ class DumpDialog(QDialog):
             sub_row.addWidget(sp)
         sub_row.addStretch(1)
         form.addRow("Spatial sub-sampling", sub_row)
+        opt = list(getattr(d, "opt_resolution", None) or [0.0, 0.0, 0.0])
+        self.spn_opt = []
+        opt_row = QHBoxLayout()
+        for i, ax in enumerate("xyz"):
+            sp = QDoubleSpinBox()
+            sp.setRange(0.0, 1_000_000.0)
+            sp.setDecimals(4)
+            sp.setValue(float(opt[i]) if i < len(opt) else 0.0)
+            sp.setToolTip(
+                f"Optional spatial dump resolution on {ax} in drawing units.\n"
+                "0 = use the mesh resolution. Values > 0 resample the dump "
+                "box with CSXCAD OptResolution."
+            )
+            self.spn_opt.append(sp)
+            opt_row.addWidget(QLabel(ax))
+            opt_row.addWidget(sp)
+        opt_row.addStretch(1)
+        form.addRow("Opt. resolution", opt_row)
         form.addRow(self.chk_fd)
         form.addRow(self.chk_en)
         self.spn_start = _vec3_row(form, "Start", d.start, coord_system=coord_system)
@@ -946,7 +1170,21 @@ class DumpDialog(QDialog):
                 w.setEnabled(on)
 
         self.chk_fd.toggled.connect(lambda _on: _sync_freq_enabled())
-        _sync_freq_enabled()
+
+        def _sync_qty() -> None:
+            qty = self.cmb_qty.currentText()
+            self.spn_custom_type.setEnabled(qty == "custom")
+            # SAR dumps only exist in the frequency domain (types 20..22, 29).
+            is_sar = qty in {"SAR", "SAR1g", "SAR10g", "SARraw"}
+            if is_sar:
+                self.chk_fd.setChecked(True)
+                self.chk_fd.setEnabled(False)
+            else:
+                self.chk_fd.setEnabled(True)
+            _sync_freq_enabled()
+
+        self.cmb_qty.currentTextChanged.connect(lambda *_: _sync_qty())
+        _sync_qty()
 
     def _accept(self) -> None:
         from app.postproc.nf2ff import parse_freq_list
@@ -954,6 +1192,8 @@ class DumpDialog(QDialog):
 
         unit = getattr(self, "_freq_unit_prev", "GHz") or "GHz"
         freqs = parse_freq_list(self.ed_freqs.text()) or None
+        opt = [float(s.value()) for s in self.spn_opt]
+        opt_res = opt if all(v > 0.0 for v in opt) else None
         self.result = DumpDef(
             name=self.ed_name.text().strip() or "dump",
             quantity=self.cmb_qty.currentText(),  # type: ignore[arg-type]
@@ -966,6 +1206,8 @@ class DumpDialog(QDialog):
             dump_mode=int(self.cmb_mode.currentData()),
             sub_sampling=[int(s.value()) for s in self.spn_sub],
             frequencies=freqs,
+            custom_dump_type=int(self.spn_custom_type.value()),
+            opt_resolution=opt_res,
         )
         self.accept()
 

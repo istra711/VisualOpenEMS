@@ -223,6 +223,21 @@ def build_mesh_and_validate(
                 float(pr.get("radius", 0.5)),
                 priority=pri,
             )
+        elif kind in ("wire", "curve"):
+            pts = [pt for pt in (pr.get("points") or []) if len(pt) >= 3]
+            if len(pts) < 2:
+                raise ValueError(
+                    f"{kind.capitalize()} primitive '{name}' needs >= 2 points"
+                )
+            cols = [[_f32(pt[k]) for pt in pts] for k in range(3)]
+            if kind == "wire":
+                prop.AddWire(
+                    cols,
+                    float(pr.get("radius", 0.5)),
+                    priority=pri,
+                )
+            else:
+                prop.AddCurve(cols, priority=pri)
         elif kind == "polygon":
             pts = pr.get("points") or []
             if len(pts) < 3:
@@ -371,11 +386,29 @@ def build_mesh_and_validate(
         _log("Scene prepared (geometry + domain + NF2FF box; no mesh built)")
 
     # MSL ports need the grid: AddMSLPort(nr, metal, start, stop, prop_dir, exc_dir)
-    from app.simulation.msl import resolve_msl_axes
+    from app.simulation.msl import extend_zero_propagation, resolve_msl_axes
 
     for idx, port, start, stop in (deferred_msl_ports if build_mesh else []):
         try:
             prop_dir, exc_dir = resolve_msl_axes(port)
+            # A CST/mesh-viewer MSL port may sit exactly on a plane (zero length
+            # along the line).  The generator extends it by one grid cell; the
+            # preview must do the same, otherwise openEMS rejects it with
+            # "Start coordinate must not be equal to stop coordinate".
+            pi = ("x", "y", "z").index(prop_dir)
+            start, stop, widened = extend_zero_propagation(
+                start,
+                stop,
+                prop_dir,
+                CSX.GetGrid().GetLines(pi),
+                reverse=bool(getattr(port, "reverse", False)),
+            )
+            if widened:
+                _log(
+                    f"MSL port '{port.name}': zero length along {prop_dir} -> "
+                    f"extended by one cell"
+                )
+            start, stop = port.oriented(start, stop)
             metal = CSX.AddMetal(f"msl_{idx}_{port.name}_strip")
             FDTD.AddMSLPort(
                 idx,

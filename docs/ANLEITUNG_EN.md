@@ -547,7 +547,7 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
 5. **Field Viewer** — 3D view of the field dumps (F1 for the in-app help). The
    vector arrows ("Vectors") **replace** the coloured field representation
    (ParaView style), so no opaque slice/surface covers the arrows that point
-   into it; tick "field underneath" to get the overlay back. While stepping
+   into it; tick "field below" to get the overlay back. While stepping
    through a series by hand, the step label reports how many arrows flipped
    compared to the previous step — that makes it obvious whether the arrows
    really follow the field. With "same length" switched off the arrow length
@@ -578,7 +578,7 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
 
 ![E field in the substrate](images/e_field_slice.png)
 
-**|Et| in the substrate, a slice from the field dump Et_substrate (2.45 GHz example).** Two maxima left and right of the centre, with the mode null between them. The axes are in metres, the colour bar in V/m. The post-processing writes such slices as PNG next to the dump (`work/<project>/fields/`). The interactive view is the **Field Viewer** tab: slices and iso-surfaces, vector glyphs ("Vectors") for the field direction, series playback over the time or frequency steps, and export as a VTK series including the ParaView collection (`<dump>.pvd`) and as MP4.
+**|Et| in the substrate, a slice from the field dump Et_substrate (2.45 GHz example).** Two maxima left and right of the centre, with the mode null between them. The axes are in metres, the colour bar in V/m. The post-processing writes such slices as PNG next to the dump (`work/<project>/fields/`). The interactive view is the **Field Viewer** tab: slices and iso-surfaces, vector glyphs ("Vectors") for the field direction, series playback over the time or frequency steps, and export as a VTK series including the ParaView collection (`<dump>.pvd`) and as MP4/GIF.
 
 Layout: an action bar on top (`Open`, `Export ▾`, `Video`, `Pop out`, `Reset view`), the collapsible display panel with **Data**, **Slice / Iso**, **Colour** and **Vectors** on the left, and the playback bar at the bottom. The slice/iso block appears only for those representations; export details (per-step, step stride) live in the `Export ▾` menu. Choose **Layout** under `Settings` → **Viewer settings…**: **B** = docked panel, **C** = minimal UI with a `Display…` popup.
 
@@ -746,7 +746,7 @@ exactly where the two solvers would otherwise disagree.
 Writes the full CSXCAD model (geometry + grid, no field data) for AppCSXCAD or
 ParaView — useful for review and for handing the model over.
 
-### 12.4 Field data — VTK, `.pvd`, MP4
+### 12.4 Field data — VTK, `.pvd`, MP4/GIF
 
 **Simulation → Export field dumps to VTK…**
 
@@ -764,8 +764,11 @@ ParaView — useful for review and for handing the model over.
 - Point data: scalar `magnitude` (active) and, for xyz dumps, the vector `field`
   (real part), in raw openEMS SI units (E in V/m …).
 
-**Simulation → Export field video (MP4)…** renders the loaded series with the
-current Field Viewer view (fps from *Settings*).
+**Simulation → Export field video (MP4)…** or **Export field animation
+(GIF)…** renders the loaded series with the current Field Viewer view (fps
+from *Settings*). The "Video…" dialog offers both formats; GIF only needs
+Pillow, MP4 needs imageio-ffmpeg. GIF is 256-colour and gets large for long
+series.
 
 ### 12.5 Network data — Touchstone
 

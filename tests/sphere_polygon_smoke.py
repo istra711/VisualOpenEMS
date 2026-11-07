@@ -64,6 +64,25 @@ POLY_PRISM = {
     "start": [-8.0, -4.0, -6.0],
     "stop": [8.0, 4.0, -4.5],
 }
+WIRE_PRIM = {
+    "kind": "wire",
+    "name": "wire",
+    "material": "copper",
+    "priority": 10,
+    "radius": 0.4,
+    "points": [[0.0, 0.0, 20.0], [0.0, 0.0, 30.0], [0.0, 8.0, 30.0]],
+    "start": [-0.4, -0.4, 19.6],
+    "stop": [0.4, 8.4, 30.4],
+}
+CURVE_PRIM = {
+    "kind": "curve",
+    "name": "curve",
+    "material": "copper",
+    "priority": 10,
+    "points": [[-25.0, 0.0, 20.0], [-15.0, 0.0, 25.0], [-5.0, 0.0, 20.0]],
+    "start": [-25.0, 0.0, 20.0],
+    "stop": [-5.0, 0.0, 25.0],
+}
 
 
 def _base_project(coord: str = "cartesian") -> Project:
@@ -113,7 +132,11 @@ def _test_dialogs() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
 
     from app.ui import geometry_editors
-    from app.ui.geometry_editors import PrimitivePolygonDialog, PrimitiveSphereDialog
+    from app.ui.geometry_editors import (
+        PrimitivePolygonDialog,
+        PrimitivePolylineDialog,
+        PrimitiveSphereDialog,
+    )
 
     # --- sphere ------------------------------------------------------------
     d = PrimitiveSphereDialog()
@@ -155,6 +178,38 @@ def _test_dialogs() -> None:
     _assert(pr["start"] == [0.0, 0.0, 0.0], f"bbox start: {pr['start']}")
     _assert(pr["stop"] == [20.0, 10.0, 0.0], f"bbox stop: {pr['stop']}")
     print("[dialog] polygon sheet OK")
+
+    # --- dedicated extruded-polygon entry starts as a prism ---------------
+    pd_ex = PrimitivePolygonDialog(extruded=True)
+    _assert(
+        pd_ex.windowTitle() == "Extruded polygon primitive",
+        f"extruded title: {pd_ex.windowTitle()}",
+    )
+    _assert(pd_ex.spn_length.value() > 0.0, "extruded length default is 0")
+    pd_ex._accept()
+    _assert(
+        pd_ex.result is not None and pd_ex.result["length"] > 0.0,
+        pd_ex.result,
+    )
+    print("[dialog] extruded polygon entry OK")
+
+    # --- wire / curve dialogs: 3-D points, radius only on wire -------------
+    wd = PrimitivePolylineDialog(kind="wire")
+    wd.ed_points.setPlainText("0, 0, 0\n10, 0, 0\n10, 8, 2")
+    wd._accept()
+    _assert(wd.result is not None, "wire dialog produced no result")
+    _assert(wd.result["kind"] == "wire", wd.result)
+    _assert(len(wd.result["points"]) == 3, wd.result["points"])
+    _assert(wd.result["radius"] > 0.0, wd.result)
+    _assert(wd.result["start"] == [-0.5, -0.5, -0.5], wd.result["start"])
+    _assert(wd.result["stop"] == [10.5, 8.5, 2.5], wd.result["stop"])
+    cd = PrimitivePolylineDialog(kind="curve")
+    cd.ed_points.setPlainText("0, 0, 0\n10, 0, 0")
+    cd._accept()
+    _assert(cd.result is not None and cd.result["kind"] == "curve", cd.result)
+    _assert("radius" not in cd.result, "curve must not store a radius")
+    _assert(cd.result["start"] == [0.0, 0.0, 0.0], cd.result["start"])
+    print("[dialog] wire/curve entry OK")
 
     # --- compact default size + remembered size ----------------------------
     pd_size = PrimitivePolygonDialog()
@@ -235,6 +290,8 @@ def _test_gui_gate() -> None:
     win.project.mesh.coord_system = "cylindrical"
     _assert(win._polar_prim_blocked("sphere") is True, "sphere must be gated in polar mode")
     _assert(win._polar_prim_blocked("polygon") is True, "polygon must be gated in polar mode")
+    _assert(win._polar_prim_blocked("wire") is True, "wire must be gated in polar mode")
+    _assert(win._polar_prim_blocked("curve") is True, "curve must be gated in polar mode")
     _assert(win._polar_prim_blocked("box") is False, "box must stay allowed in polar mode")
     win.project.mesh.coord_system = "cartesian"
     _assert(win._polar_prim_blocked("sphere") is False, "sphere must be allowed in cartesian")
@@ -246,7 +303,13 @@ def _test_run_path() -> None:
     settings = AppSettings.load()
     work = settings.work_path() / "sphere_poly_smoke"
     work.mkdir(parents=True, exist_ok=True)
-    prims = [dict(SPHERE_PRIM), dict(POLY_SHEET), dict(POLY_PRISM)]
+    prims = [
+        dict(SPHERE_PRIM),
+        dict(POLY_SHEET),
+        dict(POLY_PRISM),
+        dict(WIRE_PRIM),
+        dict(CURVE_PRIM),
+    ]
 
     # 1. cartesian mesh-only
     p = _base_project("cartesian")

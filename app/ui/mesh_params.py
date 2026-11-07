@@ -1,9 +1,10 @@
 """Mesh parameters panel + standalone window (Mesh menu).
 
-The panel mirrors every editable field on the Mesh tab (preset, frequency
-unit, f0/fc/start/stop, drawing unit) plus an auto-computed readout (lambda at
-target freq, max/target cell, effective boundary notes). Values are stored in
-the project exactly like the Mesh tab widgets (frequencies always in Hz).
+The panel mirrors every editable field on the Mesh tab (three checkmarked
+profiles, frequency unit, f0/fc/start/stop, drawing unit) plus an
+auto-computed readout (lambda at target freq, max/target cell, effective
+boundary notes). Values are stored in the project exactly like the Mesh tab
+widgets (frequencies always in Hz).
 
 :class:`MeshParamsDialog` is the modeless window opened from
 Mesh -> Mesh Parameters... (Ctrl+Shift+M). ``Apply`` emits
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -34,7 +36,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.meshing.rules import air_margin_units, compute_targets
+from app.meshing.rules import (
+    MESH_PROFILES,
+    air_margin_units,
+    compute_targets,
+    mesh_profile,
+    resolve_mesh_profile,
+)
 from app.models.project import Project
 from app.simulation.excitation import (
     available_kinds,
@@ -54,9 +62,22 @@ from app.ui.freq_units import (
 )
 from app.ui.tab_help import show_tab_help
 
-MESH_PRESETS: list[str] = ["low", "medium", "high", "very_high"]
+DENSITY_PRESETS: list[str] = ["low", "medium", "high", "very_high"]
 DRAWING_UNITS: list[str] = ["mm", "um", "m"]
 COORD_SYSTEMS: list[str] = ["cartesian", "cylindrical"]
+
+
+def _set_row_tooltip(
+    form: QFormLayout, field: QWidget, text: str
+) -> None:
+    """Set the same explanation on a field and its QFormLayout label."""
+    field.setToolTip(text)
+    try:
+        label = form.labelForField(field)
+    except Exception:  # noqa: BLE001 - label lookup is cosmetic only
+        label = None
+    if label is not None:
+        label.setToolTip(text)
 
 
 class MeshParamsPanel(QWidget):
@@ -70,14 +91,70 @@ class MeshParamsPanel(QWidget):
         self._freq_unit_name = "GHz"
         self._freq_unit_factor = float(FREQ_UNITS["GHz"])
         self._freq_guard = False
+        self._profile_guard = False
+        self._selected_profile = "default"
 
         root = QVBoxLayout(self)
+        self.setToolTip(
+            "Hover over a field or its label for an explanation of the value."
+        )
 
         freq_box = QGroupBox("Frequencies")
         form = QFormLayout(freq_box)
-        self.cmb_preset = QComboBox()
-        self.cmb_preset.addItems(MESH_PRESETS)
-        self.cmb_preset.setCurrentText("high")
+        # Hidden density mirror for compatibility with the project model and
+        # the old density presets. The visible control is the profile row.
+        self.cmb_preset = QComboBox(self)
+        self.cmb_preset.addItems(DENSITY_PRESETS)
+        self.cmb_preset.setCurrentText("medium")
+        self.cmb_preset.hide()
+
+        self.chk_profile_default = QCheckBox("Default")
+        self.chk_profile_default.setToolTip(
+            "Balanced general-purpose mesh:\n"
+            "- medium air density (15 cells/lambda)\n"
+            "- automatic refined/min/max cell sizes\n"
+            "- grading 2.0, no circle/arc detection\n"
+            "- metal-edge handling and graded interfaces on"
+        )
+        self.chk_profile_antenna = QCheckBox("Antenna")
+        self.chk_profile_antenna.setToolTip(
+            "Mesh for antennas and open radiating structures:\n"
+            "- high air density (20 cells/lambda)\n"
+            "- 0.1 mm minimum cell (also Z)\n"
+            "- grading 1.5, circle/arc detection\n"
+            "- graded metal interfaces, edge handling on\n"
+            "- max/refined cells stay automatic"
+        )
+        self.chk_profile_pcb = QCheckBox("PCB")
+        self.chk_profile_pcb.setToolTip(
+            "Mesh for a typical PCB:\n"
+            "- high air density (20 cells/lambda)\n"
+            "- max cell 0.5 mm (frequency-capped)\n"
+            "- refined cell 0.25 mm around edges/gaps\n"
+            "- min cell 0.05 mm (thin copper, small gaps)\n"
+            "- grading 1.3, circle/arc detection, graded metal interfaces"
+        )
+        self._profile_checks = {
+            "default": self.chk_profile_default,
+            "antenna": self.chk_profile_antenna,
+            "pcb": self.chk_profile_pcb,
+        }
+        self.profile_group = QButtonGroup(self)
+        self.profile_group.setExclusive(True)
+        for key in MESH_PROFILES:
+            chk = self._profile_checks[key]
+            chk.setProperty("mesh_profile", key)
+            self.profile_group.addButton(chk)
+        self.chk_profile_default.setChecked(True)
+
+        preset_row = QWidget()
+        preset_layout = QHBoxLayout(preset_row)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.setSpacing(14)
+        for key in MESH_PROFILES:
+            preset_layout.addWidget(self._profile_checks[key])
+        preset_layout.addWidget(self.cmb_preset)
+        preset_layout.addStretch(1)
         self.cmb_freq_unit = QComboBox()
         unit_combo_items(self.cmb_freq_unit)
         self.cmb_freq_unit.setCurrentText(self._freq_unit_name)
@@ -130,7 +207,7 @@ class MeshParamsPanel(QWidget):
         exc_file_layout.addWidget(self.btn_excite_file)
         self.wdg_excite_file = exc_file_row
 
-        form.addRow("Mesh preset", self.cmb_preset)
+        form.addRow("Mesh preset", preset_row)
         form.addRow("Frequency unit", self.cmb_freq_unit)
         form.addRow("Center frequency f0", self.spn_f0)
         form.addRow("Corner frequency fc", self.spn_fc)
@@ -254,6 +331,154 @@ class MeshParamsPanel(QWidget):
         fm.addRow(self.chk_enforce_min)
         root.addWidget(g_m)
 
+        # Explanations for the frequency/form fields (also on the left labels,
+        # so hovering "Center frequency f0" or "Start frequency" shows help).
+        _set_row_tooltip(
+            form,
+            preset_row,
+            "High-level mesh profiles (one checkmark active):\n"
+            "Default = 15 cells/lambda, automatic sizes, grading 2.0,\n"
+            "graded metal interfaces on.\n"
+            "Antenna = 20 cells/lambda, 0.1 mm min cell, grading 1.5,\n"
+            "circle/arc detection, graded metal interfaces.\n"
+            "PCB = 20 cells/lambda, 0.5 mm max cell, 0.25 mm refined,\n"
+            "0.05 mm min cell, grading 1.3, circle/arc detection.\n"
+            "Selecting a profile fills the override fields below.",
+        )
+        self.cmb_preset.setToolTip(
+            "Internal air-cell density mirror for the active mesh profile."
+        )
+        _set_row_tooltip(
+            form,
+            self.cmb_freq_unit,
+            "Display unit for the frequency fields (Hz/kHz/MHz/GHz).\n"
+            "The project always stores frequencies in Hz.",
+        )
+        _set_row_tooltip(
+            form,
+            self.spn_f0,
+            "Center/design frequency f0. Used as the Gauss excitation centre\n"
+            "and as the mesh target frequency. Editing f0 or fc updates\n"
+            "Start/Stop as f0 - fc and f0 + fc.",
+        )
+        _set_row_tooltip(
+            form,
+            self.spn_fc,
+            "Gauss corner frequency = half the pulse bandwidth fc.\n"
+            "Start = f0 - fc, Stop = f0 + fc. For Sinus/Step/Dirac this value\n"
+            "is not used by the waveform, but Start/Stop still define the mesh\n"
+            "and the S-parameter band.",
+        )
+        _set_row_tooltip(
+            form,
+            self.cmb_excite,
+            "FDTD excitation waveform:\n"
+            "Gauss - broadband pulse defined by f0/fc (best for S-params).\n"
+            "Sinus - single frequency f0; S-params only meaningful near f0.\n"
+            "Step / Dirac - broadband, normalised to the highest band frequency.\n"
+            "Custom - two-column CSV (time [s], amplitude).",
+        )
+        _set_row_tooltip(
+            form,
+            exc_file_row,
+            "Only used by the Custom waveform excitation.\n"
+            "Two columns: time in seconds and amplitude; comma, semicolon,\n"
+            "tab or space separated, optional header, # comments.",
+        )
+        _set_row_tooltip(
+            form,
+            self.spn_start_f,
+            "Lower simulation-band frequency. Start/Stop define the S-param\n"
+            "sweep and the mesh reference. Air margin uses the higher of the\n"
+            "two frequencies (normally Stop).",
+        )
+        _set_row_tooltip(
+            form,
+            self.spn_stop_f,
+            "Upper simulation-band frequency. The free-space wavelength at\n"
+            "Stop sets the automatic lambda/4 air margin and the max-cell\n"
+            "target. Start/Stop define the S-param sweep.",
+        )
+        _set_row_tooltip(
+            form,
+            self.cmb_unit,
+            "Drawing unit for all geometry and mesh lengths (mm, um or m).\n"
+            "Values are not converted automatically when you change the unit.",
+        )
+        _set_row_tooltip(
+            form,
+            self.cmb_coords,
+            "Coordinate system:\n"
+            "cartesian - x/y/z grid (easyMesh), full geometry support.\n"
+            "cylindrical - openEMS CoordSystem=1 (rho/phi/z) for rotationally\n"
+            "symmetric structures; no STL/polygon/polyhedron and no NF2FF.",
+        )
+        _set_row_tooltip(
+            fm,
+            self.spn_refined,
+            "Target cell size around edges and gaps (drawing units).\n"
+            "Overrides the preset target. 0/auto = derive from the preset.",
+        )
+        _set_row_tooltip(
+            fm,
+            self.spn_min_cell,
+            "Minimum allowed cell size (drawing units). 0/auto = let easyMesh\n"
+            "decide. Small values resolve thin copper and narrow gaps but cost\n"
+            "runtime; the PCB profile uses 0.05 mm.",
+        )
+        _set_row_tooltip(
+            fm,
+            self.spn_min_cell_z,
+            "Separate minimum cell size along Z (drawing units). 0/auto = use\n"
+            "the normal minimum. Useful for thin substrates or copper layers.",
+        )
+        _set_row_tooltip(
+            fm,
+            self.spn_max_cell,
+            "Maximum cell size (drawing units). 0/auto = derive from frequency\n"
+            "and preset. Lower values refine the whole model; larger values\n"
+            "reduce RAM/runtime but may under-resolve features.",
+        )
+        _set_row_tooltip(
+            fm,
+            self.spn_grading,
+            "Maximum ratio between neighbouring cell sizes (1.05 ... 10).\n"
+            "Smaller values give smoother transitions and more cells.\n"
+            "1.0 is invalid because it breaks the lambda/10 cell cap.",
+        )
+        _set_row_tooltip(
+            fm,
+            self.spn_num_lines,
+            "Extra mesh lines inserted per edge gap (easyMesh num_lines, >= 2).\n"
+            "Higher values refine metal edges but increase the cell count.",
+        )
+        _set_row_tooltip(
+            fm,
+            self.cmb_dirs,
+            "Axes that receive mesh lines. xyz = full 3-D; plane/axis choices\n"
+            "are mainly for special 2-D or 1-D setups.",
+        )
+        _set_row_tooltip(
+            fm,
+            self.cmb_smooth,
+            "Metal-edge smoothing strategy:\n"
+            "one_third_two_thirds - recommended (one-third/two-thirds rule).\n"
+            "extra_lines - add more lines at the edges.\n"
+            "False - no smoothing (may leave coarse metal edges).",
+        )
+        self.chk_circle.setToolTip(
+            "Detect circular edges (vias, round pads) and refine the mesh\n"
+            "around them. Can add cells but improves curved copper."
+        )
+        self.chk_arc.setToolTip(
+            "Detect arc-shaped edges (curved tracks/outlines) and place mesh\n"
+            "lines along them. Useful for imported PCB arcs."
+        )
+        self.chk_edges.setToolTip(
+            "Handle closely placed edges separately so easyMesh does not merge\n"
+            "thin gaps or narrow copper features."
+        )
+
         self.readout = QPlainTextEdit()
         self.readout.setReadOnly(True)
         self.readout.setMaximumHeight(200)
@@ -263,6 +488,10 @@ class MeshParamsPanel(QWidget):
 
         for w in (self.cmb_preset, self.cmb_unit):
             w.currentTextChanged.connect(self._on_changed)
+        for key in MESH_PROFILES:
+            self._profile_checks[key].toggled.connect(
+                lambda checked, k=key: self._on_profile_toggled(k, checked)
+            )
         for w in (self.spn_f0, self.spn_fc):
             w.valueChanged.connect(self._on_f0fc_changed)
         for w in (self.spn_start_f, self.spn_stop_f):
@@ -303,6 +532,57 @@ class MeshParamsPanel(QWidget):
         set_spin_hz(spin, hz, self._unit())
 
     # --- signal handlers (lazy: widgets only, project untouched) ---------
+    def _on_profile_toggled(self, key: str, checked: bool) -> None:
+        if not checked or self._profile_guard:
+            return
+        self._apply_mesh_profile(key)
+
+    def _apply_mesh_profile(self, key: str) -> None:
+        """Fill the override widgets with one of the three profile presets."""
+        key = key if key in MESH_PROFILES else "default"
+        self._selected_profile = key
+        # Build the profile from the *current* frequency/unit widgets; the
+        # project is not touched until Apply.
+        self.sync_mesh_freqs(self._draft, "range")
+        profile = mesh_profile(self._draft.mesh, key)
+        self._profile_guard = True
+        try:
+            self.cmb_preset.setCurrentText(str(profile["preset"]))
+            self.spn_refined.setValue(float(profile["refined_cellsize"]))
+            self.spn_min_cell.setValue(float(profile["min_cellsize"]))
+            self.spn_min_cell_z.setValue(float(profile["min_cellsize_z"]))
+            self.spn_max_cell.setValue(float(profile["max_cellsize"]))
+            self.spn_grading.setValue(float(profile["max_grading_ratio"]))
+            self.spn_num_lines.setValue(int(profile["num_lines"]))
+            self.cmb_smooth.setCurrentText(str(profile["smooth_metal_edge"]))
+            self.cmb_dirs.setCurrentText(str(profile["dirs"]))
+            self.cmb_coords.setCurrentText(str(profile["coord_system"]))
+            self.chk_circle.setChecked(bool(profile["use_circle_detection"]))
+            self.chk_arc.setChecked(bool(profile["use_arc_detection"]))
+            self.chk_edges.setChecked(bool(profile["handle_closely_placed_edges"]))
+            self.chk_graded_transitions.setChecked(
+                bool(profile["add_graded_mesh_lines_at_material_transitions"])
+            )
+            self.chk_align_coords.setChecked(bool(profile["align_coordinates"]))
+            self.chk_diag_sources.setChecked(bool(profile["diagnose_cell_sources"]))
+            self.chk_enforce_min.setChecked(bool(profile["enforce_min_cellsize"]))
+        finally:
+            self._profile_guard = False
+        self._refresh_readout_from_draft()
+
+    def _set_profile_checked(self, key: str) -> None:
+        key = key if key in MESH_PROFILES else "default"
+        chk = self._profile_checks[key]
+        if chk.isChecked():
+            self._selected_profile = key
+            return
+        self._profile_guard = True
+        try:
+            chk.setChecked(True)
+        finally:
+            self._profile_guard = False
+        self._selected_profile = key
+
     def _on_changed(self, *_a: object) -> None:
         self._refresh_readout_from_draft()
 
@@ -423,6 +703,10 @@ class MeshParamsPanel(QWidget):
         """
         self._project = project
         m = project.mesh
+        profile = resolve_mesh_profile(
+            m, antenna_mode=bool(getattr(project.sim, "antenna_mode", False))
+        )
+        self._set_profile_checked(profile)
         f0 = m.target_frequency or 0.5 * (m.start_frequency + m.stop_frequency)
         fc = max(1e5, 0.5 * abs(m.stop_frequency - m.start_frequency))
         unit = suggest_freq_unit(f0) if self._freq_unit_name is None else self._freq_unit_name
@@ -493,6 +777,7 @@ class MeshParamsPanel(QWidget):
             self.sync_mesh_freqs(project, "range")
         # mesh overrides
         m = project.mesh
+        m.mesh_profile = self._selected_profile  # type: ignore[assignment]
         m.refined_cellsize = float(self.spn_refined.value()) or None
         m.min_cellsize = float(self.spn_min_cell.value()) or None
         m.min_cellsize_z = float(self.spn_min_cell_z.value()) or None
@@ -536,8 +821,8 @@ class MeshParamsPanel(QWidget):
             info.append(f"targets: {e!r}")
         info.append("")
         info.append(
-            f"preset={m.preset}, drawing_unit={m.drawing_unit}, "
-            f"f0={f0:.6g} Hz"
+            f"profile={self._selected_profile}, preset={m.preset}, "
+            f"drawing_unit={m.drawing_unit}, f0={f0:.6g} Hz"
         )
         info.append(
             describe_excitation(
@@ -587,9 +872,10 @@ class MeshParamsDialog(QDialog):
         hl.addWidget(help_btn)
         root.addWidget(header)
         hint = QLabel(
-            "All mesh parameters in one place. "
-            "<b>Apply</b> writes them into the project (and mirrors them to the "
-            "mesh form); <b>Close</b> discards unapplied changes."
+            "All mesh parameters in one place. Hover over a field or its label "
+            "for an explanation. <b>Apply</b> writes them into the project (and "
+            "mirrors them to the mesh form); <b>Close</b> discards unapplied "
+            "changes."
         )
         hint.setWordWrap(True)
         root.addWidget(hint)

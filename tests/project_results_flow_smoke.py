@@ -80,7 +80,20 @@ def main() -> int:
         # --- 0. saving creates the project folder (+ result subfolders) ------
         from PySide6.QtWidgets import QFileDialog
 
-        Project.new_default(name).save(proj_path)
+        project = Project.new_default(name)
+        # A real project has geometry; the Mesh Viewer restore path refuses an
+        # empty project on purpose (no ghost mesh from an earlier session).
+        project.primitives = [
+            {
+                "kind": "box",
+                "name": "base_box",
+                "material": "copper",
+                "priority": 10,
+                "start": [0.0, 0.0, 0.0],
+                "stop": [2.0, 2.0, 1.0],
+            }
+        ]
+        project.save(proj_path)
         win0 = MainWindow(settings)
         win0._open_project_path(proj_path)
         assert not (proj_dir / "sparams").exists(), "folder must not pre-exist"

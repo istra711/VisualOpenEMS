@@ -1,8 +1,11 @@
 from app.models.project import (
     BoundarySpec,
+    CstSpec,
     DumpDef,
     GeomAssignment,
     GeometryFile,
+    GerberSpec,
+    KiCadSpec,
     MaterialDef,
     MeshSpec,
     NF2FFDef,
@@ -22,4 +25,7 @@ __all__ = [
     "BoundarySpec",
     "SimSpec",
     "GeometryFile",
+    "GerberSpec",
+    "KiCadSpec",
+    "CstSpec",
 ]

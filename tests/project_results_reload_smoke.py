@@ -105,7 +105,20 @@ def main() -> int:
         touch = _write_sparams(sim_dir)
         assert touch is not None and Path(touch).exists(), "no touchstone written"
         proj_path = proj_dir / f"{name}.fcsim.json"
-        Project.new_default(name).save(proj_path)
+        project = Project.new_default(name)
+        # The Mesh Viewer restore path requires project geometry; an empty
+        # project is intentionally cleared to avoid a stale ghost mesh.
+        project.primitives = [
+            {
+                "kind": "box",
+                "name": "base_box",
+                "material": "copper",
+                "priority": 10,
+                "start": [0.0, 0.0, 0.0],
+                "stop": [2.0, 2.0, 1.0],
+            }
+        ]
+        project.save(proj_path)
 
         win = MainWindow(settings)
         win._on_new()

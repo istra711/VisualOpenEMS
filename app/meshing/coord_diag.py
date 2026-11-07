@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -285,8 +286,55 @@ def source_coordinates(
             plane = "".join(a for a in "xyz" if a != axis)
             for pt in pr.get("points") or []:
                 add(pt, tag, plane)
-            add([pr.get("coord")], tag, axis)
-        else:  # cylinder / sphere / stl -> bounding box faces
+            coord = float(pr.get("coord", 0.0))
+            add([coord], tag, axis)
+            # AddLinPoly extrudes from coord to coord + length; the mesher
+            # needs an authored line at both faces.
+            length = float(pr.get("length") or 0.0)
+            if length:
+                add([coord + length], tag, axis)
+        elif kind in ("wire", "curve"):
+            for pt in pr.get("points") or []:
+                add(pt, tag)
+        elif kind == "stl":
+            # Real triangle vertices, so easyMesh's new polyhedron vertex
+            # lines are treated as authored coordinates (protected from repair)
+            # and show up in the coordinate diagnostics.
+            path = (
+                pr.get("path")
+                or pr.get("mesh_path")
+                or pr.get("stl_path")
+                or ""
+            )
+            tris = None
+            if path:
+                try:
+                    p = Path(str(path))
+                    if p.suffix.lower() == ".npy":
+                        tris = np.load(str(p))
+                    else:
+                        from app.freecad_io.freecad_mesh import (
+                            load_stl_or_obj_triangles,
+                        )
+
+                        tris = load_stl_or_obj_triangles(p)
+                except Exception:  # noqa: BLE001 - diagnostics only
+                    tris = None
+            if tris is not None and len(tris):
+                verts = np.asarray(tris, dtype=float).reshape(-1, 3)
+                for i, ax in enumerate("xyz"):
+                    for value in sorted({round(float(v), 9) for v in verts[:, i]}):
+                        out[ax].append((value, tag))
+            else:
+                bb = None
+                try:
+                    bb = cartesian_primitive_bbox(pr)
+                except Exception:  # noqa: BLE001
+                    bb = None
+                if bb is not None:
+                    add(bb[0], tag)
+                    add(bb[1], tag)
+        else:  # cylinder / sphere -> bounding box faces
             bb = None
             try:
                 bb = cartesian_primitive_bbox(pr)

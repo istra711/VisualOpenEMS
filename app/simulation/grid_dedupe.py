@@ -25,7 +25,12 @@ def get_domain_box(CSX):
 
 
 def dedupe_grid_lines(
-    CSX, tol: float = 1e-12, frac: float = 0.1, *, ulp_align: bool = True
+    CSX,
+    tol: float = 1e-12,
+    frac: float = 0.1,
+    *,
+    ulp_align: bool = True,
+    protect: dict[str, list[float]] | None = None,
 ) -> None:
     """Remove duplicate / near-duplicate grid lines that create tiny FDTD cells.
 
@@ -47,9 +52,16 @@ def dedupe_grid_lines(
     (``MeshSpec.align_coordinates``).
 
     Domain-boundary lines are never touched — they define the FDTD box edges.
+    ``protect`` holds authored coordinates per axis (geometry vertices, ports,
+    manual lines).  They are kept even when the next cell is large: a 0.018 mm
+    copper trace next to a 0.7 mm substrate cell is a real thin metal layer, not
+    a numerical sliver.  Dropping its top line put the MSL port strip between
+    grid lines ("Unused primitive") and changed the whole S-parameter result.
+    Exact duplicates are still merged.
     """
     grid = CSX.GetGrid()
     dom = get_domain_box(CSX)
+    protected = protect or {}
     removed_total = 0
     for axis in range(3):
         raw = grid.GetLines(axis)
@@ -59,6 +71,11 @@ def dedupe_grid_lines(
         if vals.size < 2:
             continue
         axis_tol = max(tol, ulp_tolerance(vals)) if ulp_align else tol
+        protected_vals = [float(v) for v in protected.get("xyz"[axis], []) or []]
+
+        def _authored(value: float) -> bool:
+            return any(abs(value - p) <= axis_tol for p in protected_vals)
+
         keep: list[float] = []
         removed = 0
         # domain edges are structural: never drop them
@@ -79,6 +96,11 @@ def dedupe_grid_lines(
                 gap = abs(float(v) - keep[-1])
                 nxt = float(vals[i + 1]) - float(v) if i + 1 < vals.size else gap
                 if gap < max(axis_tol, frac * max(nxt, 0.0)):
+                    # Keep a real authored thin layer, but never keep a
+                    # zero-size duplicate or a numerically identical line.
+                    if gap > axis_tol and (_authored(float(v)) or _authored(keep[-1])):
+                        keep.append(float(v))
+                        continue
                     removed += 1
                     continue
             keep.append(float(v))

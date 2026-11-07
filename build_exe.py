@@ -50,7 +50,7 @@ EXCLUDES = [
     "netCDF4", "pyproj", "h5netcdf", "tables",
     # plotting / media extras not used by the GUI
     "bokeh", "panel", "pydeck", "plotly", "dash",
-    "moviepy", "av",  # imageio: needed for image export, not for video
+    "moviepy", "av",  # imageio + Pillow cover images/GIF; MP4 uses ffmpeg
     "tokenizers", "transformers",
     # dev / doc / notebook toolchain
     "IPython", "jedi", "black", "yapf", "astroid", "pylint",
@@ -103,7 +103,7 @@ def _write_spec() -> Path:
     if os.environ.get("OPENEMS_KEEP_OPENGL_SW", "") not in ("1", "true", "yes"):
         drop.append("PySide6/opengl32sw.dll")
     spec = f'''# -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 datas = [
     (r"{ROOT / 'app'}", "app"),
@@ -113,12 +113,23 @@ datas = [
     (r"{ROOT / 'docs'}", "docs"),
 ]
 binaries = []
-hiddenimports = ["imageio"]
+hiddenimports = [
+    "imageio",
+    "imageio.plugins.pillow",
+    "imageio.plugins.pillowmulti",
+    "PIL",
+    "PIL.Image",
+    "PIL.GifImagePlugin",
+]
 binaries += collect_dynamic_libs("CSXCAD")
 binaries += collect_dynamic_libs("openEMS")
 binaries += collect_dynamic_libs("vtk")
 hiddenimports += collect_submodules("openEMS")
 hiddenimports += collect_submodules("CSXCAD")
+# Gerber/Excellon import: gerbonara ships a font data file and optional
+# submodules that PyInstaller's static analysis may miss.
+datas += collect_data_files("gerbonara")
+hiddenimports += collect_submodules("gerbonara")
 
 a = Analysis(
     [r"{ROOT / 'main.py'}"],

@@ -47,8 +47,14 @@ class AppSettings:
     #: last active tab in the Viewer settings dialog (0 Viewer / 1 Colour / 2 Bar)
     viewer_settings_tab: int = 0
     log_panel_visible: bool = True  # simulator log panel under the tabs
+    #: prefix each new simulator-log block with [HH:MM:SS.mmm] (optional)
+    log_timestamps: bool = False
     #: left "Project / Geometry" pane (View menu / its right-click menu)
     project_panel_visible: bool = True
+    #: Mesh Viewer overlay colours: grid/domain/nf2ff/port/port_inactive/critical
+    mesh_viewer_colors: dict = field(default_factory=dict)
+    #: critical-cell visibility threshold (runtime penalty 1/10/100x)
+    mesh_critical_min_penalty: float = 1.0
 
     # --- Field Viewer (VTK) ---
     #: start playback automatically when a time series is loaded/exported
@@ -57,10 +63,13 @@ class AppSettings:
     field_viewer_axes: dict = field(default_factory=dict)
     #: standard view of the 3D pane (see app.ui.vtk_viewer.VIEW_PRESETS);
     #: "keep" only fits the camera and keeps the current direction
-    field_viewer_view: str = "keep"
+    field_viewer_view: str = "iso"
     #: vector glyph options (see app.ui.vtk_viewer.DEFAULT_VECTORS):
     #: enabled / size / max_arrows / normalize
     field_viewer_vectors: dict = field(default_factory=dict)
+    #: streamline appearance/seeding (see app.ui.vtk_viewer.DEFAULT_STREAMLINES):
+    #: representation / radius_pct / sides / opacity / colour / seeds
+    field_viewer_streamlines: dict = field(default_factory=dict)
     #: colour scale of the field plot (see app.ui.vtk_viewer.DEFAULT_COLOR_SCALE):
     #: cmap / reverse / steps
     field_viewer_color_scale: dict = field(default_factory=dict)

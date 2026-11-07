@@ -77,8 +77,12 @@ class SolverParamsDialog(QDialog):
             "factor (0<x<=1). Only ever reduces it — for marginally stable runs."
         )
         self.cmb_tsm = QComboBox()
-        self.cmb_tsm.addItems(["auto", "1 (CFL)", "3 (Rennings2)"])
-        self.cmb_tsm.setToolTip("openEMS(TimeStepMethod=…).")
+        self.cmb_tsm.addItems(["auto (CFL)", "1 (CFL)", "3 (Rennings2)"])
+        self.cmb_tsm.setToolTip(
+            "openEMS(TimeStepMethod=…).\n"
+            "auto uses CFL, the stable default for thin copper / high-grading "
+            "meshes; 3 (Rennings2) can inject late-time energy there."
+        )
         self.spn_max_time = QDoubleSpinBox()
         self.spn_max_time.setRange(0.0, 1e6)
         self.spn_max_time.setDecimals(3)
@@ -153,7 +157,11 @@ class SolverParamsDialog(QDialog):
         self.spn_over.setValue(int(g("over_sampling", 0) or 0))
         self.spn_tsf.setValue(float(g("time_step_factor", 0.0) or 0.0))
         tsm = g("time_step_method", None)
-        self.cmb_tsm.setCurrentText({1: "1 (CFL)", 3: "3 (Rennings2)"}.get(int(tsm) if tsm else 0, "auto"))
+        self.cmb_tsm.setCurrentText(
+            {1: "1 (CFL)", 3: "3 (Rennings2)"}.get(
+                int(tsm) if tsm else 0, "auto (CFL)"
+            )
+        )
         self.spn_max_time.setValue(float(g("max_time", 0.0) or 0.0) * 1e9)
         self.spn_verbose.setValue(int(g("verbose", 3) or 0))
         eng = str(g("engine", "") or "")

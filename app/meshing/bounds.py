@@ -17,7 +17,15 @@ from __future__ import annotations
 
 from typing import Any
 
-_ALLOWED_KINDS = ("box", "stl", "cylinder", "sphere", "polygon")
+_ALLOWED_KINDS = (
+    "box",
+    "stl",
+    "cylinder",
+    "sphere",
+    "polygon",
+    "wire",
+    "curve",
+)
 
 
 def _span(a: float, b: float) -> tuple[float, float]:
@@ -93,6 +101,49 @@ def domain_air_margin_units(mesh: Any, sim: Any, boundary: Any, targets: Any) ->
     air = air_margin_units(mesh, list(boundary.air_margin), targets)
     vals = [float(a) for a in air if isinstance(a, (int, float))]
     return min(vals) if vals else 0.0
+
+
+def domain_box_units(project: Any, primitives: list[dict]) -> tuple[list[float], list[float]] | None:
+    """FDTD domain box ``(lo, hi)`` in drawing units from geometry + boundary.
+
+    The mesh viewer uses this to redraw the domain outline immediately after a
+    boundary/air-margin edit, without rebuilding the CSX or the mesh.  Returns
+    ``None`` when no primitive carries a usable bounding box.
+    """
+    import math
+
+    lo = [math.inf] * 3
+    hi = [-math.inf] * 3
+    found = False
+    for prim in primitives:
+        bb = cartesian_primitive_bbox(prim)
+        if bb is None:
+            continue
+        found = True
+        for i in range(3):
+            lo[i] = min(lo[i], float(bb[0][i]))
+            hi[i] = max(hi[i], float(bb[1][i]))
+    if not found or not all(math.isfinite(v) for v in lo + hi):
+        return None
+    air = [0.0] * 6
+    try:
+        from app.meshing.rules import air_margin_units, compute_targets
+
+        targets = compute_targets(project.mesh)
+        air = [
+            float(v)
+            for v in air_margin_units(
+                project.mesh, list(project.boundary.air_margin), targets
+            )
+        ]
+    except Exception:  # noqa: BLE001 — the outline must not depend on meshing
+        air = [0.0] * 6
+    if len(air) != 6:
+        air = [0.0] * 6
+    return (
+        [lo[i] - air[2 * i] for i in range(3)],
+        [hi[i] + air[2 * i + 1] for i in range(3)],
+    )
 
 
 def nf2ff_fit_box(

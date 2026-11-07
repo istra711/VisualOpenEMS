@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 TAB_ORDER = [
     "Geometry",
     "Mesh Viewer",
+    "3D Design",
     "S-Params",
     "Antenna",
     "Polarization & Phase Center",
@@ -31,15 +32,63 @@ TAB_HELP: dict[str, str] = {
 
 Left panel (can be hidden)
   • Project / Geometry list — primitives, materials, ports, dumps, assignments.
-  • Right-click on empty space below the tree: **Hide Project / Geometry panel**
-    (also View → Project / Geometry Panel, Ctrl+B — that shows it again too).
+  - Right-click inside the panel: **Add** for new geometries/ports,
+    or **Geometries / Ports / Fields** to select an entry;
+    **Delete selected** removes it.
+  - Ctrl/Shift-click selects multiple objects. Right-click a selected row and
+    use **Show selected objects** / **Hide selected objects** to toggle the
+    Mesh Viewer visibility of the whole selection at once.
+  - Hide the panel only from the narrow handle at the far left edge or via
+    View -> Project / Geometry Panel (Ctrl+B).
   • Add Box / Cylinder / Sphere / Polygon Primitive — openEMS primitives in
     mm (project units). Polygon/sphere need the cartesian coordinate system.
     The polygon dialog previews the outline live while you type the points
     (grid in project units, numbered vertices, extruded prisms offset).
+   Add Extruded Polygon. - the same point editor with a positive extrusion
+    length preset: CSXCAD AddLinPoly (a solid prism along the chosen normal).
+    Add Polygon remains the flat-sheet variant; setting Length to 0 in the
+    dialog switches an extruded polygon back to a flat AddPolygon.
+  - Add Wire. / Add Curve. - 3-D polylines entered as "x, y, z" points.
+    Wire is a round conductor (CSXCAD AddWire, radius in project units);
+    Curve is a zero-thickness PEC path (AddCurve). Both are cartesian-only.
   • Add Assignment — bind FreeCAD mesh names to materials / boundary roles.
   • Add Material — PEC, dielectric, conducting sheet, lumped RLC, or ignore.
   • Add Port — lumped / MSL / waveguide port (also in the Ports / Dumps window).
+  • Import Gerber/Excellon… — import a PCB fabrication folder, ZIP or single
+    file as copper polygon sheets and via cylinders. The stackup dialog asks for
+    board/copper thickness, εr/tanδ, per-layer z and the via diameter limit;
+    these values are stored in the project file. Per-diameter Via-Spans
+    (through / blind / buried), Excellon slots and an optional solder-mask
+    dielectric are supported in the same dialog. The dialog lists the selected
+    folder/ZIP contents and marks each file as copper/outline/drill/mask or
+    ignored (CSV, JSON and pick-and-place data); the form scrolls and the
+    OK/Cancel buttons stay fixed.
+  • Import KiCad PCB… — native `.kicad_pcb` import with the real stackup,
+    tracks/arcs, SMD/PTH/NPTH pads, filled zones and exact per-via layer spans.
+    Gerber/Excellon is only needed for boards exported from other CAD tools.
+    Copper modes: sheet (AddPolygon), prism (AddLinPoly) or mesh (one
+    STL/Polyhedron per copper layer, best for large zones with many cutouts).
+  - Import CST Studio Package... - reads a CST *export package*, not the native
+    `.cst` container. The package is a folder or ZIP with `manifest.json` and
+    one STL per solid (`stl/<component>__<solid>.stl`; CST writes STL in
+    metres and the manifest declares the unit). The dialog previews objects,
+    materials, ports and warnings and lets you choose whether to import
+    materials, ports, the frequency range and boundary conditions. Object
+    names such as `PEC/trace1` are kept, STLs become Polyhedron primitives,
+    and a re-import replaces only primitives from the same package.
+    Floquet/unit-cell ports, dispersive/anisotropic materials, CST's own mesh,
+    schematic and field monitors are reported as warnings and are not guessed.
+    The matching CST VBA macro is `app/freecad_io/cst_export_macro.bas`; run it
+    with the 3D project open. Waveguide-port coordinates require a built CST
+    mesh, otherwise the macro writes a warning and skips that port.
+  • Ports from KiCad nets… — auto-suggest lumped/MSL/probe ports from RF/port
+    net names, connector footprints, pads, track endpoints and explicit
+    footprint properties (`openems_port`, `openems_port_type`). Review the
+    candidates in the table before adding them to the project.
+  • Ports from Gerber… — same confirmation dialog for Gerber/Excellon sets.
+    Uses Gerber X2 object attributes (`.Net`, `.ComponentRef`, `.Pin`), an
+    IPC-D-356 netlist if present, or a low-confidence board-edge fallback when
+    no net data exists.
   • Edit / Fit NF2FF box — far-field box around the antenna.
 
 This tab (right)
@@ -114,10 +163,10 @@ Navigation
     — so you can put the plane between mesh lines. The spinbox next to it shows
     the position in mm (always exact, no snapping); the hint "· fine" appears
     while Ctrl is held.
-  • Grid slider — strength of the mesh grid lines (opacity + line width) in the
-    slice; the % next to it is the current strength. Only active while
-    "Mesh grid" is ticked (next to Geometry / Ports / NF2FF, which show or hide
-    those overlays in the slice plots).
+  - Right-click in the plot area: **Mesh grid**, **Grid strength**
+    (opacity/line width), **Geometry**, **Ports**, **NF2FF**, **Mesh
+    editor** and **Pop-out viewer**. The viewer toolbar only keeps the
+    slice navigation (view, plane, plane slider).
   • Objects keep their real shape in every view: boxes as rectangles, cylinders
     as circles, and **polygons / extruded polylines with their own outline** — a
     hexagon patch stays a hexagon instead of turning into its bounding box. A
@@ -136,16 +185,28 @@ Navigation
     Overview and the pop-out, and never changes the simulation. Ports are not
     affected — they keep their own port colour.
 
-Mesh editor (right-hand panel) — manual mesh lines
+Mesh editor (right-hand panel) - manual mesh lines
+  • Mesh editor and "Port mode" are mutually exclusive: switching one on
+    switches the other off.
   • Pick an axis (x/y/z), type a coordinate and "Add line" to force a grid line.
   • In a slice: a single left-click in FREE space adds a line there (on the
     editor axis; if that axis is the slice normal, the first in-plane axis is
-    used); a click ON a line (within a narrow band, ~0.6 % of the axis) selects
+    used) **only while "Mesh editor" is enabled**. With the editor off, slice
+    clicks do not add or select mesh lines. A click ON a line (within a narrow
+    band, ~0.6 % of the visible axis by default) selects
     that line instead — highlighted orange; clicking the **same line again
     deselects** it. Shift+click always adds, so you can place several lines in a
-    row. The axis combo follows the click. A click near a geometry edge (within
-    ~1 % of the axis) snaps the NEW line exactly onto that edge (primitive AABB
-    faces + ports).
+    row. The axis combo follows the click. A click near a geometry edge (inside
+    the snap band, in the current slice) snaps the NEW line exactly onto that
+    edge: boxes/cylinders use their AABB faces, polygons/imported outlines use
+    their real contour, STL/Polyhedron primitives use their triangle edges cut
+    by the slice, plus port start/stop points. The band is set via right-click >
+    **Snap sensitivity**: **Zoom-relative (default)** uses the visible slice
+    axis, so the band stays the same width on screen at every zoom level. The
+    same span also sizes the click band that selects an existing mesh line.
+    Turn it off for domain-relative snapping, then Off, Fine (0.5 %), Normal
+    (1 %), Wide (2.5 %, at least 0.05 mm) or Very wide (5 %, at least 0.1 mm).
+    The absolute minimum applies only in domain-relative mode.
   • Lines can only be placed INSIDE the FDTD domain: the coordinate spin is
     limited to the domain range and a click/value outside is clamped to the
     domain edge (an out-of-domain line is also ignored on build).
@@ -155,8 +216,10 @@ Mesh editor (right-hand panel) — manual mesh lines
     "Restore selected" (undo a removal). Select several with Shift (range) or
     Ctrl (toggle); Del / Backspace removes the selection.
   • Right-click in the plot area opens a menu: toggle the Mesh editor, toggle
-    "Port mode", pick the port type, delete the selected line(s), pop the viewer
-    out (like the Antenna / S-Params viewers), **"Refresh view (keep zoom)"**
+    "Port mode", choose the **Snap sensitivity** (Zoom-relative default, then
+    Off / Fine / Normal / Wide / Very wide), delete the selected line(s), pop
+    the viewer out (like the
+    Antenna / S-Params viewers), **"Refresh view (keep zoom)"**
     (redraws the current view from the current mesh — view, zoom and pan stay,
     the line selection is dropped) and "Reset / Home view".
   • **Selecting an entry in the Project / Geometry list highlights that object in
@@ -172,6 +235,8 @@ Mesh editor (right-hand panel) — manual mesh lines
     the highlight.
 
 Port mode (right-click → "Port mode (click in a slice to place)")
+  • This mode and "Mesh editor" are mutually exclusive: arming Port mode
+    unchecks Mesh editor, enabling Mesh editor turns Port mode off.
   • Click ANYWHERE in an XY/XZ/YZ slice to place a port at exactly those
     coordinates — no snapping to mesh lines or geometry edges. The two in-plane
     coordinates come from the click, the third one from the current slice plane
@@ -189,33 +254,20 @@ Port mode (right-click → "Port mode (click in a slice to place)")
   • **The box is derived from the metal surfaces around the click.** The port
     runs into the screen (along the slice normal) and its length is found
     automatically: from the **bottom face of the clicked metal** to the **top
-    face of the next metal surface below** it (a metal that is not below is
-    looked for above — its bottom face is used then). So a click on a
-    microstrip line gives exactly the substrate height down to the ground plane.
+    face of the next metal surface below** it, including a **PEC simulation-box
+    wall** (a metal that is not below is looked for above — its bottom face is
+    used then). So a click on a microstrip line gives exactly the substrate
+    height down to the PEC ground plane.
     Without a second metal at that spot the click is used for Start and Stop
     (give the port a length by hand).
-  • Right-click → **"Port type"** decides what the click places:
-    - **Lumped (line)** (default): the line described above (Start/Stop on the two
-      metal faces, Direction = the slice normal);
-    - **Lumped, width along X/Y**: an **area lumped port** — the same length along
-      the slice normal, but as wide as the **clicked metal** along the chosen
-      in-plane axis, with zero thickness towards the other in-plane axis (a
-      sheet at the click, e.g. the strip width of a microstrip cross-section).
-      The port list/tree mark it "area along X/Y". openEMS distributes the
-      Resistance over the whole box, so a 50 Ω area port stays 50 Ω (no N-fold
-      splitting) — for wide metals this is often the better choice than a
-      single line;
-    - **MSL, width along X/Y**: the same box, but as wide as the **clicked
-      metal** along the chosen in-plane axis and **one mesh cell long** along the
-      other in-plane axis (the line/propagation axis — openEMS needs that cell
-      for its propagation sense and its strip). Propagation and excitation
-      direction are prefilled for the generator.
-    Picking any entry turns port mode on. The choice can be changed per port
-    later in the Port dialog ("Width (lumped)": Line / Area along x/y/z — the
-    box is rebuilt from the metal when the mode changes, hand-edited Start/Stop
-    values of an unchanged mode are kept).
-    The in-plane axes in the menu follow the slice you are in (XY → X/Y,
-    XZ → X/Z, YZ → Y/Z).
+  • The port type (lumped line / lumped area / MSL / probe) and the
+    width/propagation axes are chosen in the Port dialog after the click;
+    the right-click menu only switches "Port mode".
+    - Default: a lumped line from the clicked metal to the next metal face
+      (Start/Stop on the two faces, Direction = the slice normal).
+    - Area lumped / MSL: use "Width (lumped)", "Propagation dir (MSL)" and
+      "Excitation dir (MSL)" in the Port dialog; the box can also be widened
+      by editing Start/Stop.
   • A red dot with its (x, y) coordinates marks the spot, then the Port dialog
     opens with the computed box prefilled (drawing units) — edit anything
     (name/type/resistance/direction/width/reverse/ends) before OK; the red dot
@@ -224,8 +276,8 @@ Port mode (right-click → "Port mode (click in a slice to place)")
     in the Ports / Dumps window) and is drawn in the slices immediately. Start
     and Stop must differ (a zero-length port cannot be excited — the dialog
     re-opens with a warning).
-  • Turn port mode off in the same right-click menu (or via the log hint); the
-    normal line-editing click behaviour returns.
+  • Turn port mode off in the same right-click menu (or via the log hint); with
+    "Mesh editor" enabled, normal line-editing click behaviour returns.
   • Edits are applied to the CURRENT mesh immediately (the grid is re-derived
     from the last auto mesh + your overrides — no easyMesh re-run, the view is
     not reset), and stored in the project, so they survive everything.
@@ -249,7 +301,9 @@ Frames (overview + slices)
     Sim Params → Boundary conditions (see that tab's help).
   • Purple dash-dot — NF2FF box; updated right away after Fit/Edit NF2FF
     (build the mesh first — without a built mesh nothing is drawn).
-  • Colored rectangles — primitive bounding boxes; red dot — port center.
+  • Colored shapes - boxes as rectangles; STL/Polyhedron primitives with their true
+    triangle cross-section in slices and triangle projection in the overview
+    (not just their bounding box); red dot - port center.
   • Red outline + “OUTSIDE DOMAIN” note (red text, overview panel and slice
     title) — that primitive sticks out of the black frame; openEMS would clip
     it silently. Fix: bigger air margin (Sim Params) or smaller geometry,
@@ -309,16 +363,31 @@ Tab NF2FF-Parameter
         GHz (bare number = Hz), e.g. "2.4 GHz, 2.45 GHz, 2500 MHz".
     After Run: Antenna tab → Plot combo → "Gain vs Frequency".
   • NF2FF θ / φ steps — angular resolution of cuts and the 3D pattern.
-  • Fit to geometry + air margin / Edit box… — far-field box editor.
+  • Box placement:
+      - Automatic: enabling NF2FF immediately fits the box to the geometry
+        plus the configured air margin.
+      - Manual: keeps the explicit box; "Edit box…" switches to Manual
+        automatically, "Fit to geometry + air margin" switches back to
+        Automatic.
 
 Domain size (black dashed frame in the Mesh Viewer)
   • There is no direct box editor: domain = geometry bbox + air margin + cell
     rounding. This is where you control it.
-  • "Air margin auto (λ/4 free-space)" — ON: λ/4 at the STOP frequency, always
-    εr=1 (2.7 GHz → 27.76 mm per face). Changing Stop also changes the margin.
-  • Auto OFF → "Air margin (all faces)" — fixed mm value for all 6 faces.
-    In the project JSON: boundary.air_margin = [xmin,xmax,ymin,ymax,zmin,zmax]
-    (one value per face; the GUI writes the same value to all six).
+  - "Air margin auto (λ/4 free-space)" - ON: λ/4 at the STOP frequency, always
+    εr=1 (2.7 GHz -> 27.76 mm per face). Changing Stop also changes the margin.
+  - Auto OFF + "Global air margin: all six sides equal" - the single uniform
+    value applies to all six faces. The six per-side fields below are disabled
+    in this mode.
+  - Auto OFF + Global OFF - edit xmin/xmax/ymin/ymax/zmin/zmax individually.
+    This is how CST-imported boundary distances are represented. A value of 0
+    puts the boundary directly on the geometry (e.g. a PEC ground at the board
+    bottom). In the project JSON: boundary.air_margin = [xmin,xmax,ymin,ymax,
+    zmin,zmax].
+  - PCB simulation presets: "Apply sensible PCB defaults (open board)" sets
+    10 mm x/y, zmin=0 (PEC ground) and zmax=10 mm, with x/y/zmax MUR and zmin
+    PEC. "PCB in sheet-metal enclosure" sets all six boundaries to PEC,
+    xmin/xmax/ymin/ymax/zmin=0 and uses only the "Lid height above PCB top
+    (zmax)" value as the zmax margin.
   • PML size — each PML face gets PML_size+1 extra cells outside the air region
     (bigger domain). No effect on faces set to MUR.
   • Mesh preset — air cells grow up to λ/10…λ/40, so the outer frame line snaps
@@ -346,9 +415,11 @@ Tips
   • PML on the radiation sides;PEC often fine on ground.
   • Auto air margin = λ/4 at the STOP frequency (not geometry-based) — uncheck it
     if you need a fixed, reproducible domain size.
-  • Change max_timesteps / end_criteria here before a long run. The end
-    criterion is entered in dB (0 dB = energy at start; the run stops when the
-    residual energy has dropped by this much, e.g. -50 dB = linear 1e-5).
+  • Change max_timesteps / end_criteria here before a long run. **Suggest**
+    next to NrTS derives a value from the built mesh (smallest cell/timestep)
+    and the 201-point sweep's DFT window, plus a domain-crossing minimum.
+  • The end criterion is entered in dB (0 dB = energy at start; the run stops
+    when the residual energy has dropped by this much, e.g. -50 dB = linear 1e-5).
   • Threads (numThreads): 0 = Auto (all cores). Set e.g. 4 to leave cores free
     or to limit CPU load on shared machines — passed to FDTD.Run(numThreads=N).
 
@@ -371,7 +442,9 @@ Run script (toolbar: Script…)
 Progress (status bar)
   • During a run the status bar shows TWO bars + a TS/energy label parsed from
     the openEMS output, plus elapsed time and "converged" / "max TS reached".
-    – TS bar: timesteps done / max timesteps.
+    - TS bar: timesteps done / max timesteps.
+    - Bottom right: current engine wall-clock runtime (`Laufzeit …`) and
+      remaining estimate (`ETA ~…`) from the engine's live s/TS.
     – Energy bar: residual-energy convergence toward the end criterion
       (EndCriteria, e.g. 1e-5 → -50 dB) — the run's actual stopping condition,
       which the timestep count alone does not decide.
@@ -386,10 +459,24 @@ Run All Ports (Simulation menu → Ctrl+Shift+R)
     "Mesh Parameters": """MESH PARAMETERS — standalone window (Ctrl+Shift+M)
 
 Opened from Mesh menu → Mesh Parameters…. All mesh settings in one place;
-the dialog is lazy — edits never touch the project until you Apply.
+the dialog is lazy - edits never touch the project until you Apply.
+Hover over any field or its left label to see what the value does.
 
 Fields
-  • Mesh preset — low / medium / high / very_high (lambda sampling).
+  • Mesh preset - three checkmarked profiles; the active one is visible:
+    - **Default**: balanced general-purpose mesh, 15 cells/lambda, automatic
+      refined/min/max cell sizes, grading 2.0, graded metal interfaces on.
+    - **Antenna**: 20 cells/lambda, min cell 0.1 mm (also Z), grading 1.5,
+      circle/arc detection and graded metal interfaces; max/refined cells stay
+      automatic so large antennas remain affordable.
+    - **PCB**: 20 cells/lambda, max cell 0.5 mm (frequency-capped), refined
+      cell 0.25 mm, min cell 0.05 mm (also for Z), grading 1.3, circle/arc
+      detection and graded metal interfaces.
+   Selecting a profile fills the mesh overrides below. Values are in the
+   current drawing unit and are only applied when you press **Apply**.
+   Air margin/PML are not changed (Simulation Parameters -> Boundary
+   conditions); review the filled values and adjust for very thin or very
+   large boards/antennas.
   • Frequency unit — display only (Hz/kHz/MHz/GHz); values stored in Hz.
   • Center f0 / Corner fc — Gauss excitation; editing f0/fc sets
     start/stop = f0 ± fc.
@@ -651,14 +738,22 @@ Ports
     PCB filter preset (toolbar: Preset: PCB Filter…).
 
 Dumps
-  • Enable field dumps — writes E/H/J fields for AppCSXCAD / Paraview.
-  • Add Field Dump… — region + quantity (E, H, J, SAR, …) and the CSXCAD
-    AddDump parameters:
+  • Enable field dumps — writes E/H/J/D/B (and optional SAR) fields for
+    AppCSXCAD / ParaView.
+  • Add Field Dump… — region + quantity and the CSXCAD AddDump parameters:
+      – Quantity: E, H, J (electric current density), Jtot (rot H), D, B,
+        SAR (local), SAR1g, SAR10g, SARraw, custom.
+      – SAR1g/SAR10g/SARraw are frequency-domain only; the dialog forces
+        that automatically. SARraw is raw SAR integration data, not a normal
+        field plot.
+      – custom opens the numeric CSXCAD DumpType (e.g. 12 = J, 21 = 1 g SAR).
       – File type: HDF5 (.h5, default) or VTK (.vtr written directly by
         openEMS — handy for ParaView / the Field Viewer tab).
       – Interpolation: None / Node (default) / Cell.
       – Frequency (FD dumps) or an optional Frequencies list (e.g.
         "2.4 GHz, 2.45 GHz") that overrides it.
+      – Opt. resolution (x/y/z) uses CSXCAD OptResolution to resample the
+        dump box; leave all three at 0 to use the mesh.
     Start/Stop buttons: "Fit to geometry" (structure bbox + margin) and
     "Use NF2FF box" (reuse the NF2FF integration box) — start != stop in at
     least one axis, otherwise the dump is a single point and shows nothing.
@@ -691,6 +786,66 @@ Tips
   • Resistance 50 Ω default — change globally in Settings if your system differs.
   • After editing ports, rebuild the mesh before Run.
 """,
+    "3D Design": """3D DESIGN - read-only 3D inspection of the current project
+
+The tab uses the same embedded VTK pane as the Field Viewer, but without
+field, slice or playback controls. It always follows the current project;
+geometry / port / NF2FF edits are shown as soon as the tree refreshes.
+
+Scene
+  - Geometry: project boxes, cylinders, spheres, polygons and imported STL.
+    Per-object colour, transparency and visibility from the project are used.
+  - Opacity: global geometry opacity (100 % = solid).
+  - Domain box: exact simulation area when the Mesh Viewer has a built CSX;
+    otherwise the geometry bounds plus the project's boundary air margins.
+    When it is switched off, the numeric ruler, the in-scene triad and the
+    camera fit follow the visible geometry/port bounds.
+  - Ports: red boxes for active ports, grey for ports switched off.
+  - NF2FF box: purple wireframe while NF2FF is enabled.
+  - Selecting a Prim or Port row in the Project / Geometry list outlines the
+    object in yellow here (and in the Mesh Viewer). A second click on the
+    selected row toggles the highlight.
+
+Coordinate system / tape measure (right-click menu)
+  - Show axes (X/Y/Z), axis labels and a numeric coordinate ruler around the
+    scene. The static ruler is labelled in the project drawing unit (mm by
+    default); ruler, triad and camera fit follow the visible bounds when the
+    domain box is off.
+  - Optional "Corner axes": a small fixed-size X/Y/Z triad in the lower-left
+    corner, independent of the scene size and camera zoom.
+  - The ruler placement can be closest/farthest to the camera, on the outer
+    box edges or on static edges/triad; the tick marks can be outside, inside
+    or on both sides.
+  - A very short axis (e.g. the Z axis of a flat PCB, or any axis in a small
+    window) hides its numeric labels and minor ticks until you zoom in enough
+    for them to fit; the axis line and title stay visible.
+  - Axes size (0.5× … 3×), axes location (scene lower/upper corner, world
+    origin or scene center) and label size (10 … 24 pt) are selectable.
+  - Optional "Axis tape": tick marks and numeric coordinate values directly
+    on the X/Y/Z arrows (project drawing unit). "Axis tape uses" selects
+    X/Y/Z individually if the labels get crowded. This is independent of the
+    cube ruler around the scene bounds.
+  - "Reset coordinate options" restores the defaults.
+  - Measure distance (tape, 2 clicks): click two points on the geometry; the
+    line, end points and distance label stay in the scene. The measured value
+    is shown in the project drawing unit (mm by default). Clear measurement
+    removes all tape lines.
+  - Right-click on the side panel, the bottom strip or directly in the 3D
+    view (a short right-click without dragging opens the menu).
+
+Navigation
+  - Left mouse drag: rotate; middle drag: pan; wheel / right drag: zoom.
+  - View combo: isometric / axis views; Fit keeps the direction and fits the
+    current scene.
+  - Pop out: separate 3D window; AppCSXCAD opens the external full 3D editor
+    when a built CSX is available.
+
+Notes
+  - The view is intentionally read-only; edit objects in Geometry / Ports.
+  - Port / NF2FF boxes are shown in project drawing units. If the domain box
+    looks unlike the Mesh Viewer, build the mesh once so the exact CSX domain
+    can be used.
+""",
     "S-Params": """S-PARAMS — results, Smith chart, markers
 
 After a successful Run
@@ -702,13 +857,27 @@ After a successful Run
   • Marker style picks which format the marker list shows (dB, |S|,
     Phase, Γ, Z, Y, VSWR, RL — or All formats for every format at once).
   • Plot |S| in dB (and other formats), Smith chart.
-  • Marker: click the plot or use Go to min (deepest S11 / selected param).
-  • Cursor / markers show frequency + value; right-click a marker in the
-    list to delete it (Clear markers removes all).
+  • Marker: left-click the plot to snap a marker to the nearest data point.
+  • Right-click the plot for smart markers: add here, delta marker from the
+    selected marker, trace minimum/maximum, nearest peak/valley, the two
+    -3 dB points around the primary trace's peak/null, or the band center.
+    The marker list names the function (e.g. "S21 max", "S11 -3dB low",
+    "S11 valley"); delta rows show the reference/target frequency, Δf and
+    the dB difference only.
+  • Cursor / markers show frequency + value. Click a marker row to highlight
+    that marker in the plot; right-click a marker row for Copy marker value,
+    Copy frequency or Delete marker (Clear markers removes all). Markers and
+    their tags/delta references are saved in the project JSON (closing the GUI
+    with unsaved marker/settings changes asks Save / Discard / Cancel). The
+    analysis dialog and pop-out graph are also in the plot's right-click menu.
   • Pop-out S-Graph — separate window for a large plot.
 
 Tips
   • No data → run the simulation first; empty folder → set work dir in Settings.
+  • Starting a run or a New Project empties this viewer and forgets the old
+    result path. A failed/aborted run does not reload the newest old
+    sparams file from the reused work folder, so old values cannot be mistaken
+    for the new run. Files stay on disk for explicit loading.
   • Marker minimum near 2.45 GHz (or your f0) is the usual resonance check.
   • Logs tab / Log panel show export paths when Touchstone files are written.
   • Multi-port (n > 1): one run fills one column — the rest stay empty (NaN) in
@@ -720,10 +889,15 @@ Tips
 After a successful Run (with NF2FF enabled)
   • Loads the project folder's nf2ff/nf2ff.json written by the NF2FF
     post-processing (<work>/<project>/nf2ff/nf2ff.json).
+  • A run with NF2FF disabled, a failed run, or a New Project does not
+    auto-load an older nf2ff.json from the reused work folder.
   • Loaded files — starts EMPTY; "Scan work dir" fills it with every
     nf2ff.json in the work dir (subpath + name, tooltip = full path).
   • Details — header shows the current file name in parentheses; below it
     Dmax, Gmax, eta, Prad and theta/phi points for the selected frequency.
+  • Antenna help… — illustrated explanation of θ/φ, the E-/H-plane cuts,
+    the polar dBi scale, HPBW and VRV. Also reachable from
+    Help → "Antenna pattern angles (illustrated)".
   • Polarization… — axial ratio and phase center from the same result (see
     Help → "Polarization & Phase Center"); post-processing, no re-run.
   • Plots (combo): E-Plane (phi=90), H-Plane (phi=0), Azimuth (theta=90),
@@ -755,8 +929,8 @@ After a successful Run (with NF2FF enabled)
     (interpolated). Drawn as the grey −3 dB circle + crimson edge lines;
     value in the Details block and the plot title. Pattern-only (gain or
     directivity) — no S-parameters.
-  • VRV (F/B) — front-to-back ratio (Vorwärts-Rückwärts-Verhältnis) of the
-    current polar cut: Gmax − gain at Gmax+180°, in dB and as linear ratio.
+  • VRV (F/B) — front-to-back ratio of the current polar cut:
+    Gmax − gain at Gmax+180°, in dB and as linear ratio.
     Orange diamond marks the back lobe. Pattern-only, no S-parameters.
   • Pop out graph — separate window for a large plot; its top row mirrors the
     tab (Plot, Freq, cmap), so plot type and frequency stay selectable there.
@@ -788,6 +962,12 @@ Values
   • eta / radiated efficiency — fraction of the accepted power that is
     radiated (0..1, plotted as %); gain = Dmax + 10*log10(eta).
   • theta 0..180 deg, phi 0..360 deg; polar cuts are in dBi.
+    theta is measured from +z: 0° = zenith/boresight, 90° = xy plane
+    (horizon), 180° = −z. phi is measured in the xy plane from +x toward
+    +y. The polar cuts are full 360° planes (phi and phi+180 halves), so
+    the angle axis runs 0→180→0 while the labels still say 0/90/180/270.
+    HPBW is the −3 dB width around the peak; VRV = peak − level at peak+180°.
+    For a visual explanation of all angles open "Antenna help…".
 
 Polarization / phase center (button "Polarization…")
   • Axial ratio (AR) and phase center are derived from the complex
@@ -869,8 +1049,9 @@ Mirrors the openEMS "Field Dumps Analysis via ParaView" workflow.
 
 Buttons / controls
   • "Export project dumps → VTK": converts every dump in the current project's
-    simulation/ folder (*.h5, excluding nf2ff_*) into <project>/vtk/ and loads
-    the first one. For time-domain dumps it also writes one file per step
+    simulation/ folder (*.h5, excluding nf2ff_*) into its own folder
+    <project>/vtk/<dump-name>/ and loads the first one. For time-domain dumps it
+    also writes one file per step
     (<name>_0000.vtr …) plus <name>.series.json, so the steps can be animated.
     The conversion runs with a progress dialog (Cancel stops between files) and
     only rewrites outputs that are older than their dump — clicking it again is
@@ -900,7 +1081,7 @@ Buttons / controls
     Surface/Wireframe → on the outside of the volume, Iso-surface → on the
     contour. They replace the coloured field plot — an opaque slice, surface or
     volume covers every arrow that points into it, which is what made the
-    vectors hard to read. Tick "field underneath" to get the overlay back
+    vectors hard to read. Tick "field below" to get the overlay back
     (off by default; the colour bar stays either way because it also explains
     the arrow colours).
     During playback the arrows rotate with the field, so travelling/oscillating
@@ -960,12 +1141,17 @@ Buttons / controls
     range follows each frame (Auto); untick Auto to freeze it for a stable
     comparison across frames.
     With Loop off the playback stops on the last frame.
-  • "Video…" (also Simulation → "Export field video (MP4)…"): renders the
-    loaded sequence to an MP4 (H.264) with the CURRENT view: representation,
-    array, slice/iso position, colour range/log scale, outline, axes and
-    camera. Frame rate = the "fps" value next to Play. Choose the file in the
-    dialog; a progress window can cancel the render. The viewer is restored to
-    the frame/settings it showed before. Needs imageio + imageio-ffmpeg.
+  • "Video…" (also Simulation → "Export field video (MP4)…" /
+    "Export field animation (GIF)…"): opens the export dialog. Choose the
+    format (MP4/H.264 or animated GIF), output file, resolution (current view,
+    presets or custom), fps, target duration, and start/end frame range
+    (including every-Nth-frame). The dialog shows the resulting frame count
+    and duration before you start. Rendering uses the CURRENT view:
+    representation, array, slice/iso position, colour range/log scale, outline,
+    axes and camera. A progress window can cancel the render; the viewer is
+    restored to the frame/settings it showed before. MP4 needs imageio +
+    imageio-ffmpeg; GIF only needs Pillow (256 colours, so long series can
+    produce large files).
   • "Pop out": opens a second viewer in its own window, loaded with the same
     file and mirroring representation/array/slice/colour/playback settings (also
     Simulation -> "Field Viewer (pop-out)…"). The tab keeps its view; clicking
@@ -978,8 +1164,9 @@ Buttons / controls
     instead of the one inside the scene; "Labels X/Y/Z" toggles the captions
     and "Label font" sets their size; "Size" scales the in-scene triad
     (0.5x / 1x / 2x / 4x / 8x); "Coordinate ruler (numbers)" draws numeric
-    x/y/z ticks (in metres) around the dataset bounds. All choices are
-    remembered across sessions.
+    x/y/z ticks around the dataset bounds. The unit is selectable (m/cm/mm/µm/nm)
+    and follows the project's drawing unit on load (mm by default); planar dumps
+    omit the z ruler. All choices are remembered across sessions.
   • Right-click on the controls (not inside the 3D view) opens a menu: Open…,
     Export dumps, Pop out view / Dock view, Reset view, Axes. Inside the 3D
     view the right mouse button stays reserved for navigation.
@@ -1039,6 +1226,19 @@ Mesh → another FDTD solver
         "shape": [nx, ny, nz], "domain": { "start": [...], "stop": [...] } }
   • Mesh → **Export CSX XML…** writes the CSXCAD model for AppCSXCAD / ParaView
     (full geometry + grid, no field data).
+  • Mesh → **Mesh2FreeCAD** opens the built mesh directly in the FreeCAD GUI:
+    - each object becomes one mesh-cell solid (cell-centre rule, same
+      CellConstantMaterial semantics as the solver; PEC is a volume here),
+    - the file is written to a temporary folder and deleted when FreeCAD
+      closes (or when VisualopenEMS exits); "Keep temporary files" in
+      Mesh2FreeCAD Parameters is for debugging,
+    - **Mesh2FreeCAD Parameters…** selects:
+      Also write STEP, FCStd object type (Part solid / Mesh, the latter is
+      faster for large models), Add OpenEMS voxel grid (Boundary cells only /
+      All occupied cells), Include zero-thickness sheets (patch/ground planes),
+      Export port points (start/stop as PORT_<name>_start/_stop plus a
+      connecting line). The options are stored in the project file (.fcsim.json),
+    - only Cartesian meshes and millimetre projects are supported.
 
 Results → field data (VTK)
   • Simulation → **Export field dumps to VTK…** converts every HDF5 dump in
@@ -1056,8 +1256,9 @@ Results → field data (VTK)
       keeps only every N-th step.
     - Point data: the scalar "magnitude" (active) and, for xyz dumps, the vector
       "field" (real part). Values are raw openEMS SI units (E in V/m …).
-  • Simulation → **Export field video (MP4)…** renders the loaded series with the
-    current Field Viewer view (fps from Settings).
+  • Simulation → **Export field video (MP4)…** / **Export field animation
+    (GIF)…** renders the loaded series with the current Field Viewer view
+    (fps from Settings).
 
 Results → network data
   • The S-Params viewer exports **Touchstone** (.s1p / .s2p / …) — the standard
@@ -1093,7 +1294,8 @@ FDTD initialization (openEMS(...))
   • TimeStepFactor — multiply the stability (CFL/Rennings2) timestep by this
     factor (0<x<=1). It only ever REDUCES the timestep (safer, slower); for
     marginally stable runs. auto = 1.
-  • TimeStepMethod — 1 = CFL, 3 = Rennings2 (default). auto = engine default.
+  • TimeStepMethod — 1 = CFL, 3 = Rennings2. auto = CFL; Rennings2 can inject
+    late-time energy on meshes with very thin copper and high grading.
   • Max simulated time — SetMaxTime() caps the SIMULATED time (not wall-clock),
     seconds. The simulated duration T sets the frequency resolution df = 1/T,
     so a longer run resolves closer frequencies (typical RF: a few ns).

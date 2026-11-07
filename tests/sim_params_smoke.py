@@ -189,6 +189,58 @@ def main() -> int:
     assert win.project.sim.antenna_mode is False
     app.processEvents()
 
+    # --- Per-side air margins, global/auto gating and PCB presets ---------
+    panel = win.sim_params
+    panel.sync_from_project(win.project)
+    panel.chk_air_auto.setChecked(False)
+    panel.chk_air_uniform.setChecked(False)
+    assert all(sp.isEnabled() for sp in panel.spn_air_sides.values())
+    for axis, value in zip(
+        ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax"),
+        (0.0, 0.0, 0.0, 0.0, 0.0, 8.6614),
+    ):
+        panel.spn_air_sides[axis].setValue(value)
+    win._sync_project_from_form()
+    assert win.project.boundary.air_margin == [0.0, 0.0, 0.0, 0.0, 0.0, 8.6614]
+    panel.chk_air_uniform.setChecked(True)
+    assert not any(sp.isEnabled() for sp in panel.spn_air_sides.values())
+    assert panel.spn_air.isEnabled()
+    panel.chk_air_auto.setChecked(True)
+    assert not panel.chk_air_uniform.isEnabled()
+    assert not panel.spn_air.isEnabled()
+
+    panel.chk_pcb_defaults.setChecked(True)
+    assert [round(panel.spn_air_sides[a].value(), 4) for a in (
+        "xmin", "xmax", "ymin", "ymax", "zmin", "zmax"
+    )] == [10.0, 10.0, 10.0, 10.0, 0.0, 10.0]
+    assert panel.cmb_b["zmin"].currentText() == "PEC"
+    assert panel.cmb_b["xmin"].currentText() == "MUR"
+    panel.spn_pcb_lid_z.setValue(6.5)
+    panel.chk_pcb_case.setChecked(True)
+    assert [round(panel.spn_air_sides[a].value(), 4) for a in (
+        "xmin", "xmax", "ymin", "ymax", "zmin", "zmax"
+    )] == [0.0, 0.0, 0.0, 0.0, 0.0, 6.5]
+    assert all(cb.currentText() == "PEC" for cb in panel.cmb_b.values())
+    win._sync_project_from_form()
+    assert win.project.boundary.air_margin == [0.0, 0.0, 0.0, 0.0, 0.0, 6.5]
+
+    # NF2FF on -> automatic box fit; switching to Manual keeps the box.
+    app.processEvents()
+    win.chk_nf2ff.setChecked(False)
+    app.processEvents()
+    win.chk_nf2ff.setChecked(True)
+    app.processEvents()
+    assert win.project.nf2ff.enabled and win.project.sim.nf2ff_enabled
+    assert win.project.nf2ff.box_mode == "auto"
+    assert win.project.nf2ff.start != [-1.0, -1.0, -1.0], (
+        "enabling NF2FF must fit the box to the geometry, not keep the default"
+    )
+    manual_idx = panel.cmb_nf2ff_box_mode.findData("manual")
+    assert manual_idx >= 0
+    panel.cmb_nf2ff_box_mode.setCurrentIndex(manual_idx)
+    win._sync_project_from_form()
+    assert win.project.nf2ff.box_mode == "manual"
+
     win.close()
     print("SIM PARAMS OK", tabs, tab_labels)
     return 0

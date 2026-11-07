@@ -274,6 +274,58 @@ def analyse_lines(
     return rep
 
 
+def suggested_nr_ts(
+    rep: MeshTiming,
+    *,
+    safety: float = 1.2,
+    min_domain_crossings: float = 5.0,
+) -> tuple[int, str]:
+    """Recommend a max-timestep count from a built mesh.
+
+    The decisive number is usually the DFT window: a 201-point sweep across
+    ``f_start..f_stop`` has a step of ``(stop-start)/200``; resolving it needs
+    a simulated time of at least ``1/step`` (with a safety factor for the
+    transient).  The domain-crossing and excitation-settling requirements are
+    kept as lower bounds as well.
+    """
+    # The generated script enforces the conservative CFL step for the default
+    # (auto/1) path, including the dielectric slowdown by sqrt(eps_r).
+    dt = float(rep.dt_dielectric_s or rep.dt_courant_s or 0.0)
+    candidates: list[tuple[int, str]] = []
+    if dt > 0.0 and rep.target_resolution_hz > 0.0:
+        t_need = safety / rep.target_resolution_hz
+        n = int(math.ceil(t_need / dt))
+        candidates.append(
+            (
+                n,
+                f"DFT window for {rep.target_resolution_hz / 1e6:.2f} MHz steps "
+                f"(dt={dt * 1e12:.4g} ps, {safety:g}x safety)",
+            )
+        )
+    elif rep.nr_ts_for_resolution > 0:
+        candidates.append(
+            (
+                int(rep.nr_ts_for_resolution),
+                "DFT window for the configured S-parameter sweep",
+            )
+        )
+    if dt > 0.0 and rep.ts_cross_domain > 0.0:
+        n = int(math.ceil(min_domain_crossings * rep.ts_cross_domain))
+        candidates.append(
+            (
+                n,
+                f"{min_domain_crossings:g} domain crossings "
+                f"({rep.ts_cross_domain:.0f} steps/crossing)",
+            )
+        )
+    if not candidates:
+        return int(rep.nr_ts or 200_000), "no mesh timing available"
+    n, why = max(candidates, key=lambda item: item[0])
+    # Round up to a user-friendly increment.
+    n = int(math.ceil(n / 10_000.0) * 10_000)
+    return max(n, 1_000), why
+
+
 def analyse_mesh_timing(csx, mesh, sim, targets, eps_max: float | None = None) -> MeshTiming:
     """Analyse the built CSX grid (``csx.GetGrid()``) against mesh/sim settings.
 

@@ -555,7 +555,7 @@ bzw. nachdem der Solver gelaufen ist:
 5. **Field Viewer** — 3D-Ansicht der Felddumps (F1 für die Hilfe). Die
    Vektor-Pfeile („Vectors") **ersetzen** die farbige Felddarstellung
    (ParaView-Stil), damit keine opake Schnitt-/Oberflächenebene die Pfeile
-   verdeckt; mit „field underneath" läßt sich die Überlagerung wieder
+   verdeckt; mit „field below" läßt sich die Überlagerung wieder
    einschalten. Beim manuellen Durchschalten einer Serie meldet die
    Schritt-Anzeige, wie viele Pfeile sich gegenüber dem vorigen Schritt gedreht
    haben — damit ist sofort sichtbar, ob die Pfeile dem Feld wirklich folgen.
@@ -588,7 +588,7 @@ bzw. nachdem der Solver gelaufen ist:
 
 ![E-Feld im Substrat](images/e_field_slice.png)
 
-**|Et| im Substrat, Schnitt aus dem Felddump Et_substrate (2,45-GHz-Beispiel).** Zwei Maxima links und rechts der Mitte, dazwischen die Moden-Null. Die Achsen stehen in Metern, die Farbskala in V/m. Solche Schnitte schreibt das Postprocessing als PNG neben den Dump (`work/<projekt>/fields/`). Die interaktive Ansicht bietet der Tab **Field Viewer**: Schnittflächen und Iso-Flächen, Vektorpfeile („Vectors") für die Feldrichtung, Serien-Playback über die Zeit- oder Frequenzschritte, Export als VTK-Serie inklusive ParaView-Collection (`<dump>.pvd`) und als MP4.
+**|Et| im Substrat, Schnitt aus dem Felddump Et_substrate (2,45-GHz-Beispiel).** Zwei Maxima links und rechts der Mitte, dazwischen die Moden-Null. Die Achsen stehen in Metern, die Farbskala in V/m. Solche Schnitte schreibt das Postprocessing als PNG neben den Dump (`work/<projekt>/fields/`). Die interaktive Ansicht bietet der Tab **Field Viewer**: Schnittflächen und Iso-Flächen, Vektorpfeile („Vectors") für die Feldrichtung, Serien-Playback über die Zeit- oder Frequenzschritte, Export als VTK-Serie inklusive ParaView-Collection (`<dump>.pvd`) und als MP4/GIF.
 
 Aufbau: oben die Aktionsleiste (`Open`, `Export ▾`, `Video`, `Pop out`, `Reset view`), links das einklappbare Display-Panel mit **Data**, **Slice / Iso**, **Colour** und **Vectors**, unten die Playback-Leiste. Der Slice-/Iso-Block erscheint nur bei den passenden Darstellungen; die Export-Details (per-step, step stride) liegen im `Export ▾`-Menü. Unter `Settings` → **Viewer settings…** → **Layout** ist wählbar: **B** = Panel fest links, **C** = Minimal-Ansicht mit `Display…`-Popup.
 
@@ -756,7 +756,7 @@ unterscheiden.
 Schreibt das komplette CSXCAD-Modell (Geometrie + Gitter, ohne Felddaten) für
 AppCSXCAD oder ParaView — nützlich zur Kontrolle und zur Übergabe des Modells.
 
-### 12.4 Felddaten — VTK, `.pvd`, MP4
+### 12.4 Felddaten — VTK, `.pvd`, MP4/GIF
 
 **Simulation → Export field dumps to VTK…**
 
@@ -775,8 +775,11 @@ AppCSXCAD oder ParaView — nützlich zur Kontrolle und zur Übergabe des Modell
 - Punktdaten: Skalar `magnitude` (aktiv) und bei xyz-Dumps der Vektor `field`
   (Realteil), in rohen openEMS-SI-Einheiten (E in V/m …).
 
-**Simulation → Export field video (MP4)…** rendert die geladene Serie mit der
-aktuellen Field-Viewer-Ansicht (fps aus *Settings*).
+**Simulation → Export field video (MP4)…** bzw. **Export field animation
+(GIF)…** rendert die geladene Serie mit der aktuellen Field-Viewer-Ansicht
+(fps aus *Settings*). Der „Video…"-Dialog bietet beide Formate; GIF braucht
+nur Pillow, MP4 imageio-ffmpeg. GIF ist 256-farbig und wird bei langen Serien
+groß.
 
 ### 12.5 Netzwerkdaten — Touchstone
 

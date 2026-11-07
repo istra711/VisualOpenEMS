@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
 import traceback
 from datetime import datetime
@@ -10,7 +11,7 @@ from pathlib import Path
 from queue import Empty, Queue
 
 from PySide6 import QtCore
-from PySide6.QtCore import QUrl, QObject, Qt, QTimer, Signal, QThread
+from PySide6.QtCore import QEvent, QUrl, QObject, Qt, QTimer, Signal, QThread
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -22,8 +23,10 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -66,6 +69,20 @@ from app.ui.tab_help import show_tab_help
 # Tree kinds the context menu / geometry menu can duplicate (geom and nf2ff
 # are singleton/read-only entries).
 DUP_TREE_KINDS = frozenset({"prim", "assign", "mat", "port", "dump"})
+
+
+class _ConfirmDiscardDialog(QDialog):
+    """QDialog that asks before discarding unsaved edits on reject/close."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.confirm_reject = None  # callable() -> True = close, False = keep open
+
+    def reject(self) -> None:  # noqa: D401 - Qt override
+        callback = self.confirm_reject
+        if callback is not None and not callback():
+            return
+        super().reject()
 
 
 def _read_text(path: Path) -> str | None:
@@ -112,6 +129,13 @@ class MainWindow(QMainWindow):
         self._last_coord_diag = None
         #: text of the last post-run status block (Simulation menu -> Status)
         self._last_sim_report_text = ""
+        #: Auto-load the newest S-params for the CURRENT project when the
+        #: viewer is empty.  Off for a new/untitled project and while a run is
+        #: active, so old files from a reused work folder cannot reappear.
+        self._allow_auto_results = False
+        #: same guard for the Antenna/NF2FF viewer: a new or failed run must
+        #: not auto-load the previous run's nf2ff.json
+        self._allow_auto_nf2ff = False
         # reserved: Mesh-Editor edits are applied to the existing mesh directly
         # (no full rebuild), so no auto-build timer is needed anymore
         self._auto_mesh_build = False
@@ -125,6 +149,10 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._apply_window_geometry()
         self._update_window_title()
+        # Baseline for the "unsaved project changes" close prompt.  New/open/
+        # save refresh this snapshot; markers and form settings are part of it.
+        self._saved_project_sig: str | None = None
+        self._mark_project_saved()
         self.statusBar().showMessage("Ready")
 
     def _update_window_title(self) -> None:
@@ -255,7 +283,72 @@ class MainWindow(QMainWindow):
         if self.width() > avail.width() or self.height() > avail.height():
             self._fit_default(avail)
 
+    def _project_signature(self) -> str | None:
+        """Serialise the project state used to detect unsaved changes."""
+        try:
+            return json.dumps(
+                self.project.to_dict(), sort_keys=True, default=str
+            )
+        except Exception as e:  # noqa: BLE001 - never block closing
+            print("project signature failed:", e)
+            return None
+
+    def _mark_project_saved(self) -> None:
+        """Remember the current project state as the saved baseline."""
+        try:
+            # Use the same form→project sync as the close check, otherwise a
+            # fresh window could look "dirty" immediately after construction.
+            self._sync_project_from_form()
+            self.project.primitives = list(self.primitives)
+        except Exception as e:  # noqa: BLE001 - baseline is best effort
+            print("project baseline sync failed:", e)
+        self._saved_project_sig = self._project_signature()
+
+    def _has_unsaved_project_changes(self) -> bool:
+        """True when markers/settings/project data differ from the last save."""
+        try:
+            self._sync_project_from_form()
+            self.project.primitives = list(self.primitives)
+        except Exception as e:  # noqa: BLE001 - closing must stay possible
+            print("unsaved-change check failed:", e)
+            return False
+        baseline = getattr(self, "_saved_project_sig", None)
+        current = self._project_signature()
+        if baseline is None or current is None:
+            return False
+        return current != baseline
+
+    def _confirm_close_with_unsaved_changes(self) -> bool:
+        """Prompt before closing the main GUI with unsaved project state."""
+        if not self._has_unsaved_project_changes():
+            return True
+        reply = QMessageBox.warning(
+            self,
+            "Unsaved changes",
+            "The project has unsaved changes (for example S-parameter "
+            "markers or settings).\n\n"
+            "Save the project before closing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if reply == QMessageBox.StandardButton.Save:
+            self._on_save()
+            # A cancelled Save As must keep the window open.
+            return not self._has_unsaved_project_changes()
+        return reply == QMessageBox.StandardButton.Discard
+
     def closeEvent(self, event) -> None:  # noqa: N802
+        # Headless smoke tests close windows without a user to answer the
+        # modal Save/Discard/Cancel prompt; keep the production GUI guarded.
+        try:
+            headless = QApplication.platformName().lower() in ("offscreen", "minimal")
+        except Exception:  # noqa: BLE001
+            headless = False
+        if not headless and not self._confirm_close_with_unsaved_changes():
+            event.ignore()
+            return
         # Let a running background mesh build finish before tearing down the
         # CSX/FDTD objects and the GUI thread.
         thread = getattr(self, "_mesh_thread", None)
@@ -292,6 +385,12 @@ class MainWindow(QMainWindow):
             self.settings.save()
         except Exception as e:  # noqa: BLE001
             print("save geometry failed:", e)
+        try:
+            from app.freecad_io.mesh2freecad import cleanup_all
+
+            cleanup_all()
+        except Exception as e:  # noqa: BLE001
+            print("Mesh2FreeCAD cleanup failed:", e)
         super().closeEvent(event)
 
     def _build_ui(self) -> None:
@@ -397,7 +496,31 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter = splitter  # holds [Project/Geometry pane, tabs]
-        root.addWidget(splitter, 1)
+        # Dedicated narrow handle at the extreme left window edge.  Only this
+        # edge exposes the panel's hide/show menu; the pane itself is reserved
+        # for object selection/deletion.
+        shell = QWidget()
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        self.project_panel_edge = QWidget(shell)
+        self.project_panel_edge.setFixedWidth(6)
+        self.project_panel_edge.setStyleSheet("background-color: #c8c8c8;")
+        self.project_panel_edge.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.project_panel_edge.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.project_panel_edge.customContextMenuRequested.connect(
+            lambda pos, h=self.project_panel_edge: self._show_project_panel_edge_menu(
+                h, pos
+            )
+        )
+        self.project_panel_edge.setToolTip(
+            "Project panel edge\nRight-click: hide/show the panel"
+        )
+        shell_layout.addWidget(self.project_panel_edge)
+        shell_layout.addWidget(splitter, 1)
+        root.addWidget(shell, 1)
 
         # Left: project tree + geometry
         left = QWidget()
@@ -409,13 +532,19 @@ class MainWindow(QMainWindow):
         self.lbl_project_panel = QLabel("Project / Geometry")
         lv.addWidget(self.lbl_project_panel)
         self.tree = QListWidget()
+        self.tree.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         # No buttons below the tree any more: everything is reachable via the
         # Geometry menu (Add/Edit/Duplicate/Delete/NF2FF) or right-click.
         self.tree.setToolTip(
             "Project structure.\n"
-            "Double-click to edit · right-click for Edit/Duplicate/Remove · Delete key removes the selection.\n"
-            "Geom entries are imported CAD — edit geometry in FreeCAD.\n"
-            "Right-click on empty space: hide this panel (View → Project / Geometry Panel, Ctrl+B)."
+            "Double-click to edit; Ctrl/Shift-click selects multiple objects; "
+            "right-click for Show/Hide selected, Edit/Duplicate/Remove; "
+            "Delete key removes the selection.\n"
+            "Geom entries are imported CAD - edit geometry in FreeCAD.\n"
+            "Hide the panel from the narrow edge at the far left or via "
+            "View -> Project / Geometry Panel (Ctrl+B)."
         )
         lv.addWidget(self.tree)
         self.tree.itemDoubleClicked.connect(self._on_tree_double_clicked)
@@ -423,6 +552,10 @@ class MainWindow(QMainWindow):
         # click on the already selected row toggles only the viewer mark
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         self.tree.itemClicked.connect(self._on_tree_item_clicked)
+        # Clicking the empty area below the last entry clears the selection and
+        # the Mesh/3D viewer highlights as well (QListWidget otherwise keeps the
+        # current row selected).
+        self.tree.viewport().installEventFilter(self)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree.keyPressEvent = self._tree_key_press  # type: ignore[method-assign]
@@ -467,7 +600,7 @@ class MainWindow(QMainWindow):
         form = QFormLayout()
         self.cmb_preset = QComboBox()
         self.cmb_preset.addItems(["low", "medium", "high", "very_high"])
-        self.cmb_preset.setCurrentText("high")
+        self.cmb_preset.setCurrentText("medium")
         from app.ui.freq_units import (
             FREQ_UNITS,
             configure_freq_spin,
@@ -587,15 +720,38 @@ class MainWindow(QMainWindow):
         viewer_layout = QVBoxLayout(viewer_tab)
         viewer_layout.setContentsMargins(0, 0, 0, 0)
         self.mesh_viewer = MeshGeometryViewer(work_dir=self.settings.work_path())
+        self.mesh_viewer.set_colors(getattr(self.settings, "mesh_viewer_colors", None))
+        self.mesh_viewer.set_critical_threshold(
+            float(getattr(self.settings, "mesh_critical_min_penalty", 1.0) or 1.0),
+            redraw=False,
+        )
         self.mesh_viewer.mesh_edited.connect(self._on_mesh_edited)
         self.mesh_viewer.critical_changed.connect(self._on_critical_overlay_changed)
         self.mesh_viewer.critical_cells_changed.connect(self._sync_critical_menu)
+        self.mesh_viewer.critical_threshold_changed.connect(
+            self._on_critical_threshold_changed
+        )
         self.mesh_viewer.rebuild_requested.connect(self._on_rebuild_scratch)
         self.mesh_viewer.port_place_requested.connect(self._on_mesh_port_place)
         self.mesh_viewer.port_mode_changed.connect(self._on_mesh_port_mode_changed)
         self.mesh_viewer.port_type_changed.connect(self._on_mesh_port_type_changed)
+        self.mesh_viewer.snap_sensitivity_changed.connect(
+            self._on_mesh_snap_sensitivity_changed
+        )
         viewer_layout.addWidget(self.mesh_viewer)
         self.mesh_viewer_tab_index = tabs.addTab(viewer_tab, "Mesh Viewer")
+
+        # 3D Design tab: read-only VTK inspection of geometry, ports and NF2FF.
+        # It reuses the Field Viewer's VTK pane and exposes a small scene API
+        # for later measurement / clipping / picking tools.
+        from app.ui.design_viewer import Design3DViewer
+
+        self.design_viewer = Design3DViewer(work_dir=self.settings.work_path())
+        self.design_viewer.open_appcsxcad_requested.connect(
+            self._on_design_open_appcsxcad
+        )
+        tabs.addTab(self.design_viewer, "3D Design")
+        self.design_tab_index = tabs.indexOf(self.design_viewer)
 
         # Sim Params (hidden off-screen — canonical sync/edit target). The
         # Sim Params tab page was removed in favour of the Simulation
@@ -670,10 +826,17 @@ class MainWindow(QMainWindow):
         self.btn_log_autoscroll = QPushButton("Auto-scroll: ON")
         self.btn_log_autoscroll.setCheckable(True)
         self.btn_log_autoscroll.setChecked(True)
+        self.btn_log_timestamps = QPushButton("Timestamps: OFF")
+        self.btn_log_timestamps.setCheckable(True)
+        self.btn_log_timestamps.setToolTip(
+            "Prefix new log messages with [HH:MM:SS.mmm].\n"
+            "Optional; the setting is remembered between sessions."
+        )
         log_bar.addWidget(self.btn_log_clear)
         log_bar.addWidget(self.btn_log_pop)
         log_bar.addWidget(self.btn_log_save)
         log_bar.addWidget(self.btn_log_autoscroll)
+        log_bar.addWidget(self.btn_log_timestamps)
         log_bar.addStretch(1)
         self.lbl_log_count = QLabel("0 lines")
         log_bar.addWidget(self.lbl_log_count)
@@ -728,6 +891,7 @@ class MainWindow(QMainWindow):
             self.btn_log_pop,
             self.btn_log_save,
             self.btn_log_autoscroll,
+            self.btn_log_timestamps,
             self.lbl_log_count,
         ):
             w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -765,6 +929,10 @@ class MainWindow(QMainWindow):
         from app.ui.sparam_viewer import SParamViewer
 
         self.sparam_viewer = SParamViewer(work_dir=self.settings.work_path())
+        # Persist marker changes in the project JSON (written on project Save).
+        self.sparam_viewer.markers_changed.connect(
+            self._on_sparam_markers_changed
+        )
         # "Scan work dir" always searches the global work dir; set_work_dir()
         # may scope the initial listing to a single project.
         self.sparam_viewer.scan_root = self.settings.work_path()
@@ -802,6 +970,11 @@ class MainWindow(QMainWindow):
             getattr(self.settings, "field_viewer_vectors", None)
         )
         self.vtk_viewer.on_vectors_changed = self._on_field_vectors_changed
+        # streamline appearance (Panel section; remembered across sessions)
+        self.vtk_viewer.set_streamline_options(
+            getattr(self.settings, "field_viewer_streamlines", None)
+        )
+        self.vtk_viewer.on_streamlines_changed = self._on_field_streamlines_changed
         # colour scale (colormap / reverse / steps; edited in Settings)
         self.vtk_viewer.set_color_scale_options(
             getattr(self.settings, "field_viewer_color_scale", None)
@@ -891,9 +1064,30 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(self.lbl_engine)
         self.status.addPermanentWidget(self.progress)
         self.status.addPermanentWidget(self.progress_energy)
+        # Current wall-clock runtime and remaining estimate from the engine.
+        self.lbl_runtime = QLabel("")
+        self.lbl_runtime.setVisible(False)
+        self.lbl_runtime.setToolTip(
+            "Current wall-clock runtime reported by the running openEMS engine."
+        )
+        self.status.addPermanentWidget(self.lbl_runtime)
+        self.lbl_eta = QLabel("")
+        self.lbl_eta.setVisible(False)
+        self.lbl_eta.setToolTip(
+            "Estimated remaining wall-clock time, extrapolated from the "
+            "engine's current seconds/timestep and the remaining timesteps."
+        )
+        self.status.addPermanentWidget(self.lbl_eta)
         # Right-click on the bottom edge (status bar and its widgets) opens the
         # log-area options (show/hide the log panel, pick a log tab, …).
-        for w in (self.status, self.lbl_engine, self.progress, self.progress_energy):
+        for w in (
+            self.status,
+            self.lbl_engine,
+            self.progress,
+            self.progress_energy,
+            self.lbl_runtime,
+            self.lbl_eta,
+        ):
             w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             w.customContextMenuRequested.connect(self._show_status_context_menu)
         self.status.setToolTip(
@@ -911,9 +1105,19 @@ class MainWindow(QMainWindow):
         self.btn_log_save.clicked.connect(self._save_log)
         self.btn_log_pop.clicked.connect(self._pop_out_log)
         self.btn_log_autoscroll.toggled.connect(self._toggle_autoscroll)
+        self.btn_log_timestamps.toggled.connect(self._toggle_log_timestamps)
         self.btn_log_toggle.toggled.connect(self._toggle_log_panel)
         self.btn_project_toggle.toggled.connect(self._toggle_project_panel)
         self._log_autoscroll = True
+        self._log_timestamps = bool(
+            getattr(self.settings, "log_timestamps", False)
+        )
+        self.btn_log_timestamps.blockSignals(True)
+        self.btn_log_timestamps.setChecked(self._log_timestamps)
+        self.btn_log_timestamps.blockSignals(False)
+        self.btn_log_timestamps.setText(
+            "Timestamps: ON" if self._log_timestamps else "Timestamps: OFF"
+        )
         self._script_dialog: object | None = None  # ScriptEditorDialog (modeless)
 
         # Mesh form ↔ Sim Params computed readout
@@ -928,9 +1132,13 @@ class MainWindow(QMainWindow):
         self.cmb_unit.currentTextChanged.connect(self._on_mesh_form_changed)
         self.cmb_coords.currentTextChanged.connect(self._on_mesh_form_changed)
         self.sim_params.computed_changed.connect(self._on_sim_params_changed)
+        self.sim_params.suggest_timesteps_requested.connect(
+            self._on_suggest_timesteps
+        )
         self.sim_params.btn_apply_patch.clicked.connect(self._on_apply_patch_params)
         self.sim_params.btn_fit_nf2ff.clicked.connect(self._on_fit_nf2ff)
         self.sim_params.btn_edit_nf2ff.clicked.connect(self._on_edit_nf2ff)
+        self.chk_nf2ff.toggled.connect(self._on_nf2ff_toggled)
 
         # connections
         self.btn_new.clicked.connect(self._on_new)
@@ -1025,6 +1233,27 @@ class MainWindow(QMainWindow):
         add_action(fmenu, "Save As\u2026", slot=self._on_save_as, shortcut="Ctrl+Shift+S")
         fmenu.addSeparator()
         add_action(fmenu, "Import Geometry\u2026", btn=self.btn_import)
+        add_action(
+            fmenu,
+            "Import Gerber/Excellon\u2026",
+            slot=self._on_import_gerber,
+            tip="PCB-Gerber + Excellon (Ordner/ZIP) als Kupferpolygone und "
+            "Vias importieren",
+        )
+        add_action(
+            fmenu,
+            "Import KiCad PCB\u2026",
+            slot=self._on_import_kicad,
+            tip="Native .kicad_pcb mit Stackup, Tracks, Pads, Zonen und "
+            "exakten Via-Spans importieren",
+        )
+        add_action(
+            fmenu,
+            "Import CST Studio Package\u2026",
+            slot=self._on_import_cst,
+            tip="CST-Exportpaket (manifest.json + STL pro Solid, Ordner oder "
+            "ZIP) mit Materialien, Ports, Frequenz und R\u00e4ndern importieren",
+        )
         add_action(fmenu, "FreeCAD\u2026", btn=self.btn_freecad)
         add_action(
             fmenu,
@@ -1063,6 +1292,59 @@ class MainWindow(QMainWindow):
         add_action(gmenu, "Add Cylinder…", slot=self._on_add_prim_cyl)
         add_action(gmenu, "Add Sphere…", slot=self._on_add_prim_sphere)
         add_action(gmenu, "Add Polygon…", slot=self._on_add_prim_polygon)
+        add_action(
+            gmenu,
+            "Add Extruded Polygon\u2026",
+            slot=self._on_add_prim_extruded_polygon,
+            tip="Polygon mit Dicke/Prisma entlang der Normalen (CSXCAD AddLinPoly)",
+        )
+        add_action(
+            gmenu,
+            "Add Wire\u2026",
+            slot=self._on_add_prim_wire,
+            tip="3D-Polylinie mit Radius (CSXCAD AddWire)",
+        )
+        add_action(
+            gmenu,
+            "Add Curve\u2026",
+            slot=self._on_add_prim_curve,
+            tip="3D-Polylinie ohne Dicke (CSXCAD AddCurve)",
+        )
+        add_action(
+            gmenu,
+            "Import Gerber/Excellon…",
+            slot=self._on_import_gerber,
+            tip="PCB-Gerber + Excellon (Ordner/ZIP) als Kupferpolygone und "
+            "Vias importieren",
+        )
+        add_action(
+            gmenu,
+            "Import KiCad PCB…",
+            slot=self._on_import_kicad,
+            tip="Native .kicad_pcb mit Stackup, Tracks, Pads, Zonen und "
+            "exakten Via-Spans importieren",
+        )
+        add_action(
+            gmenu,
+            "Import CST Studio Package\u2026",
+            slot=self._on_import_cst,
+            tip="CST-Exportpaket (manifest.json + STL pro Solid, Ordner oder "
+            "ZIP) mit Materialien, Ports, Frequenz und R\u00e4ndern importieren",
+        )
+        add_action(
+            gmenu,
+            "Ports from KiCad nets…",
+            slot=self._on_suggest_kicad_ports,
+            tip="Port-Kandidaten aus KiCad-Netzen, Connector-Pads und "
+            "Tracks vorschlagen und bestätigen",
+        )
+        add_action(
+            gmenu,
+            "Ports from Gerber…",
+            slot=self._on_suggest_gerber_ports,
+            tip="Port-Kandidaten aus Gerber-X2-Netzen/IPC-356 oder "
+            "Boardkanten-Geometrie vorschlagen",
+        )
         gmenu.addSeparator()
         add_action(gmenu, "Add Assignment…", slot=self._on_add_assignment)
         add_action(gmenu, "Add Material…", slot=self._on_add_material)
@@ -1210,6 +1492,21 @@ class MainWindow(QMainWindow):
             "solver (e.g. CST) can use identical cell boundaries",
         )
         add_action(mmenu, "Open in AppCSXCAD (3D)\u2026", btn=self.mesh_viewer.btn_appcsxcad)
+        mmenu.addSeparator()
+        add_action(
+            mmenu,
+            "Mesh2FreeCAD",
+            slot=self._on_mesh2freecad,
+            tip="Open the built mesh as discretised geometry in FreeCAD. Files "
+            "are written to a temporary folder and deleted when FreeCAD closes.",
+        )
+        add_action(
+            mmenu,
+            "Mesh2FreeCAD Parameters\u2026",
+            slot=self._on_open_mesh2freecad_params,
+            tip="Choose the FCStd object type, STEP, voxel grid and sheet "
+            "options. Stored in the project file.",
+        )
 
         smenu = bar.addMenu("&Simulation")
         add_action(smenu, "Run Simulation", btn=self.btn_run, shortcut="Ctrl+R")
@@ -1253,6 +1550,12 @@ class MainWindow(QMainWindow):
         add_action(smenu, "Antenna Pattern Viewer", btn=self.btn_antenna)
         add_action(smenu, "Pop-out Antenna Graph", btn=self.btn_antenna_popout)
         smenu.addSeparator()
+        add_action(
+            smenu,
+            "3D Design Viewer",
+            slot=self._on_show_design3d,
+            tip="Embedded 3D inspection of geometry, ports and the NF2FF box",
+        )
         add_action(smenu, "Field Viewer", slot=self._on_show_vtk)
         add_action(
             smenu,
@@ -1273,6 +1576,13 @@ class MainWindow(QMainWindow):
             slot=self._on_export_field_video,
             tip="Render the Field Viewer's loaded time series to an MP4 using the "
             "current 3D settings and the fps value",
+        )
+        add_action(
+            smenu,
+            "Export field animation (GIF)\u2026",
+            slot=self._on_export_field_gif,
+            tip="Render the Field Viewer's loaded time series to an animated GIF "
+            "using the current 3D settings and the fps value (no ffmpeg needed)",
         )
 
         vmenu = bar.addMenu("&View")
@@ -1296,7 +1606,7 @@ class MainWindow(QMainWindow):
             btn=self.btn_project_toggle,
             shortcut="Ctrl+B",
             tip="Show/hide the left Project / Geometry pane "
-            "(also on its right-click menu)",
+            "(hide also with a right-click on the far-left edge handle)",
         )
         vmenu.addSeparator()
         vmenu.addMenu(self.vtk_viewer.build_axes_menu(vmenu))
@@ -1314,6 +1624,12 @@ class MainWindow(QMainWindow):
 
         hmenu = bar.addMenu("&Help")
         add_action(hmenu, "Help for Current Tab", btn=self.btn_help, shortcut="F1")
+        add_action(
+            hmenu,
+            "Antenna pattern angles (illustrated)…",
+            slot=lambda: self.antenna_viewer._on_help(),
+            tip="θ/φ, E-/H-plane cuts and how to read the polar dBi plot",
+        )
         add_action(
             hmenu,
             "Antenna Simulation (FDTD hints)…",
@@ -1450,6 +1766,14 @@ class MainWindow(QMainWindow):
         act.blockSignals(True)
         act.setChecked(bool(on))
         act.blockSignals(False)
+
+    def _on_critical_threshold_changed(self, value: float) -> None:
+        """Persist the critical-cell time-penalty threshold."""
+        self.settings.mesh_critical_min_penalty = float(value)
+        try:
+            self.settings.save()
+        except Exception as e:  # noqa: BLE001
+            print("save mesh_critical_min_penalty failed:", e)
 
     def _sync_critical_menu(self) -> None:
         """Open count + per-action enablement for the Critical-cells submenu."""
@@ -1703,6 +2027,9 @@ class MainWindow(QMainWindow):
         # opening the Antenna tab shows the current project's pattern
         if _index == getattr(self, "antenna_tab_index", -1):
             self._refresh_antenna_viewer()
+        # opening the 3D Design tab refreshes the current project's scene
+        if _index == getattr(self, "design_tab_index", -1):
+            self._refresh_design_viewer(fit=True)
         # opening the Field Viewer tab points it at the current project's work dir
         if _index == getattr(self, "vtk_tab_index", -1):
             try:
@@ -1792,6 +2119,10 @@ class MainWindow(QMainWindow):
             bar.setVisible(False)
         self.lbl_engine.setText("")
         self.lbl_engine.setVisible(False)
+        self.lbl_runtime.setText("")
+        self.lbl_runtime.setVisible(False)
+        self.lbl_eta.setText("")
+        self.lbl_eta.setVisible(False)
 
     def _show_engine_progress(self) -> None:
         p = self._engine_progress
@@ -1804,6 +2135,12 @@ class MainWindow(QMainWindow):
         self.progress_energy.setVisible(True)
         self.lbl_engine.setText(p.text())
         self.lbl_engine.setVisible(True)
+        runtime = p.elapsed_text()
+        self.lbl_runtime.setText(runtime)
+        self.lbl_runtime.setVisible(bool(runtime))
+        eta = p.eta_text()
+        self.lbl_eta.setText(eta)
+        self.lbl_eta.setVisible(bool(eta))
 
     def _feed_engine_progress(self, msg: str) -> None:
         """Feed openEMS stdout lines into the engine progress bar.
@@ -1823,22 +2160,29 @@ class MainWindow(QMainWindow):
 
     def _append_log_on_gui(self, msg: str) -> None:
         try:
+            raw_msg = msg
+            if getattr(self, "_log_timestamps", False):
+                stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                lines = msg.splitlines() or [""]
+                msg = "\n".join(f"[{stamp}] {line}" if line else f"[{stamp}]" for line in lines)
             self.log_view.appendPlainText(msg)
             if getattr(self, "_log_autoscroll", True):
                 sb = self.log_view.verticalScrollBar()
                 sb.setValue(sb.maximum())
             n = self.log_view.blockCount()
             self.lbl_log_count.setText(f"{n} lines")
-            self.status.showMessage(msg.splitlines()[-1] if msg else "")
-            self._feed_engine_progress(msg)
-            low = msg.lower()
+            self.status.showMessage(
+                raw_msg.splitlines()[-1] if raw_msg else ""
+            )
+            self._feed_engine_progress(raw_msg)
+            low = raw_msg.lower()
             # Refresh only AFTER export messages (not "simulation finished" — too early).
             if (
                 "wrote touchstone" in low
                 or "s-param outputs" in low
                 or "wrote json" in low
                 or "[exit code" in low
-            ):
+            ) and getattr(self, "_allow_auto_results", False):
                 try:
                     self.sparam_viewer.set_work_dir(self._project_work_dir())
                     self._auto_load_sparams_if_empty()
@@ -1948,6 +2292,18 @@ class MainWindow(QMainWindow):
         self._log_autoscroll = checked
         self.btn_log_autoscroll.setText("Auto-scroll: ON" if checked else "Auto-scroll: OFF")
 
+    def _toggle_log_timestamps(self, checked: bool) -> None:
+        """Enable/disable [HH:MM:SS.mmm] prefixes for new log messages."""
+        self._log_timestamps = bool(checked)
+        self.btn_log_timestamps.setText(
+            "Timestamps: ON" if checked else "Timestamps: OFF"
+        )
+        self.settings.log_timestamps = bool(checked)
+        try:
+            self.settings.save()
+        except Exception as e:  # noqa: BLE001
+            print("save log_timestamps failed:", e)
+
     # ----- Project / Geometry pane (left) ---------------------------------
     def _toggle_project_panel(self, checked: bool) -> None:
         self._apply_project_panel_visibility(checked)
@@ -1984,17 +2340,136 @@ class MainWindow(QMainWindow):
         else:
             self._toggle_project_panel(visible)
 
-    def _add_project_panel_actions(self, menu: QMenu) -> None:
-        """Right-click entries of the Project / Geometry pane."""
-        act_hide = menu.addAction("Hide Project / Geometry panel")
-        act_hide.triggered.connect(lambda _checked=False: self._set_project_panel_visible(False))
+    def _add_project_panel_hide_actions(self, menu: QMenu) -> None:
+        """Hide/show entries - only for the far-left edge, not the pane."""
+        visible = not self.project_panel.isHidden()
+        act_toggle = menu.addAction(
+            "Hide Project / Geometry panel"
+            if visible
+            else "Show Project / Geometry panel"
+        )
+        act_toggle.triggered.connect(
+            lambda _checked=False, on=not visible: self._set_project_panel_visible(on)
+        )
         menu.addSeparator()
-        head = menu.addAction("Show again: View → Project / Geometry Panel  (Ctrl+B)")
+        head = menu.addAction(
+            "Toggle also: View -> Project / Geometry Panel  (Ctrl+B)"
+        )
         head.setEnabled(False)
+
+    def _build_project_panel_edge_menu(self) -> QMenu:
+        """Menu of the left content-edge splitter handle."""
+        menu = QMenu(self)
+        self._add_project_panel_hide_actions(menu)
+        return menu
+
+    def _show_project_panel_edge_menu(self, handle, pos) -> None:
+        self._build_project_panel_edge_menu().exec(handle.mapToGlobal(pos))
+
+    def _object_choice_entries(self) -> dict[str, list[tuple[str, int, str]]]:
+        """Tree entries offered by the panel's object-selection menu."""
+        geoms = [
+            (
+                "prim",
+                i,
+                f"{p.get('name') or f'prim{i}'} [{p.get('kind', 'box')}]",
+            )
+            for i, p in enumerate(self.primitives)
+        ]
+        geoms += [
+            ("geom", i, f"{Path(gf.path).name} [import]")
+            for i, gf in enumerate(self.project.geometry_files)
+        ]
+        ports = [
+            ("port", i, f"{p.name} ({p.type})")
+            for i, p in enumerate(self.project.ports)
+        ]
+        fields = [
+            ("dump", i, f"{d.name} ({d.quantity})")
+            for i, d in enumerate(self.project.dumps)
+        ]
+        nf2ff = getattr(self.project, "nf2ff", None)
+        if nf2ff is not None:
+            fields.append(("nf2ff", 0, "NF2FF box"))
+        return {"Geometries": geoms, "Ports": ports, "Fields": fields}
+
+    def _add_object_selection_choices(self, menu: QMenu) -> None:
+        kind_cur, idx_cur = self._current_tree_entry()
+        for title, entries in self._object_choice_entries().items():
+            sub = menu.addMenu(title)
+            if not entries:
+                act_none = sub.addAction("(none)")
+                act_none.setEnabled(False)
+                continue
+            for kind, idx, label in entries:
+                act = sub.addAction(label)
+                act.setCheckable(True)
+                act.setChecked(kind == kind_cur and idx == idx_cur)
+                act.triggered.connect(
+                    lambda _checked=False, k=kind, i=idx: self._select_tree_entry(k, i)
+                )
+
+    def _add_project_panel_add_menu(self, menu: QMenu) -> None:
+        """Add submenu of the panel's right-click menu."""
+        add = menu.addMenu("Add")
+        geometry = (
+            ("Box\u2026", self._on_add_prim_box, "Add a box primitive"),
+            ("Cylinder\u2026", self._on_add_prim_cyl, "Add a cylinder primitive"),
+            ("Sphere\u2026", self._on_add_prim_sphere, "Add a sphere primitive"),
+            ("Polygon\u2026", self._on_add_prim_polygon, "Add a flat polygon sheet"),
+            (
+                "Extruded Polygon\u2026",
+                self._on_add_prim_extruded_polygon,
+                "Add an extruded polygon prism (AddLinPoly)",
+            ),
+            ("Wire\u2026", self._on_add_prim_wire, "Add a 3-D wire (AddWire)"),
+            ("Curve\u2026", self._on_add_prim_curve, "Add a 3-D curve (AddCurve)"),
+        )
+        for label, slot, tip in geometry:
+            act = add.addAction(label)
+            act.setToolTip(tip)
+            act.triggered.connect(lambda _checked=False, s=slot: s())
+        add.addSeparator()
+        extras = (
+            ("Port\u2026", self._on_add_port, "Add a port"),
+            ("Assignment\u2026", self._on_add_assignment, "Add a material assignment"),
+            ("Material\u2026", self._on_add_material, "Add a material"),
+            ("Field Dump\u2026", self._on_add_dump, "Add a field dump"),
+        )
+        for label, slot, tip in extras:
+            act = add.addAction(label)
+            act.setToolTip(tip)
+            act.triggered.connect(lambda _checked=False, s=slot: s())
+
+    def _add_project_panel_object_actions(self, menu: QMenu) -> None:
+        """Selection + delete entries inside the Project / Geometry pane."""
+        self._add_project_panel_add_menu(menu)
+        menu.addSeparator()
+        self._add_object_selection_choices(menu)
+        menu.addSeparator()
+        selected_names = self._selected_object_names()
+        act_show = menu.addAction("Show selected objects")
+        act_show.setEnabled(bool(selected_names))
+        act_show.triggered.connect(
+            lambda _checked=False: self._set_objects_visible(selected_names, True)
+        )
+        act_hide = menu.addAction("Hide selected objects")
+        act_hide.setEnabled(bool(selected_names))
+        act_hide.triggered.connect(
+            lambda _checked=False: self._set_objects_visible(selected_names, False)
+        )
+        menu.addSeparator()
+        kind, _idx = self._current_tree_entry()
+        deletable = {"geom", "prim", "assign", "mat", "port", "dump", "nf2ff"}
+        act_del = menu.addAction("Delete selected")
+        act_del.setEnabled(kind in deletable)
+        act_del.triggered.connect(
+            lambda _checked=False: self._on_delete_selected_tree()
+        )
 
     def _build_project_panel_menu(self) -> QMenu:
         menu = QMenu(self)
-        self._add_project_panel_actions(menu)
+        self._add_project_panel_object_actions(menu)
         return menu
 
     def _show_project_panel_context_menu(self, _pos=None) -> None:
@@ -2048,6 +2523,10 @@ class MainWindow(QMainWindow):
         act_scroll.setCheckable(True)
         act_scroll.setChecked(self.btn_log_autoscroll.isChecked())
         act_scroll.toggled.connect(self._set_log_autoscroll)
+        act_stamps = menu.addAction("Timestamps")
+        act_stamps.setCheckable(True)
+        act_stamps.setChecked(self.btn_log_timestamps.isChecked())
+        act_stamps.toggled.connect(self._toggle_log_timestamps)
 
         menu.addSeparator()
         menu.addAction("Save log…", self._save_log)
@@ -2177,6 +2656,8 @@ class MainWindow(QMainWindow):
         """
         if self.sparam_viewer.network is not None:
             return
+        if not getattr(self, "_allow_auto_results", False):
+            return
         from app.ui.sparam_viewer import find_latest_sparam_files
 
         try:
@@ -2212,6 +2693,12 @@ class MainWindow(QMainWindow):
         self.antenna_viewer.set_work_dir(self.settings.work_path())
         if self.antenna_viewer.data is not None:
             return  # keep what the user has loaded
+        if not getattr(self, "_allow_auto_nf2ff", False):
+            self._log(
+                "Antenna pattern: no NF2FF result for this run (not loading "
+                "an old nf2ff.json)"
+            )
+            return
         proj_dir = self._project_work_dir()
         target = next(
             (
@@ -2245,6 +2732,66 @@ class MainWindow(QMainWindow):
         self._refresh_antenna_viewer()
         self.antenna_viewer.popout_graph()
         self._log("Antenna pattern viewer opened")
+
+    def _design_domain_box(self):
+        """Exact simulation domain from the Mesh Viewer's current CSX, if any."""
+        viewer = getattr(self, "mesh_viewer", None)
+        if viewer is None or getattr(viewer, "_project", None) is not self.project:
+            return None
+        # A boundary/air-margin edit sets an override before the next CSX build.
+        override = getattr(viewer, "_domain_override", None)
+        if override is not None:
+            return ([float(v) for v in override[0]], [float(v) for v in override[1]])
+        csx = getattr(viewer, "_csx", None)
+        if csx is None:
+            return None
+        try:
+            from app.meshing.preview import get_sim_area
+
+            area = get_sim_area(csx)
+            if area is not None:
+                return ([float(v) for v in area[0]], [float(v) for v in area[1]])
+        except Exception:  # noqa: BLE001 — the viewer has a geometry fallback
+            pass
+        return None
+
+    def _refresh_design_viewer(self, *, fit: bool = False) -> None:
+        """Push the current project snapshot into the embedded 3D Design view."""
+        viewer = getattr(self, "design_viewer", None)
+        if viewer is None:
+            return
+        try:
+            prims = list(self.primitives or [])
+            unit_m = (
+                self.project.mesh.unit_to_meters()
+                if getattr(self, "project", None) is not None
+                else 1e-3
+            )
+            viewer.set_design(
+                project=getattr(self, "project", None),
+                primitives=prims,
+                ports=list(getattr(self.project, "ports", []) or []),
+                nf2ff=getattr(self.project, "nf2ff", None),
+                unit_m=unit_m,
+                domain=self._design_domain_box(),
+                fit=fit,
+            )
+        except Exception as e:  # noqa: BLE001 — the 3D view must not block editing
+            self._log(f"3D Design refresh failed: {e}")
+
+    def _on_show_design3d(self) -> None:
+        """Switch to the embedded 3D Design tab and fit the current scene."""
+        self._refresh_design_viewer(fit=True)
+        if getattr(self, "design_tab_index", -1) >= 0:
+            self.tabs.setCurrentIndex(self.design_tab_index)
+        self._log("3D Design viewer opened")
+
+    def _on_design_open_appcsxcad(self) -> None:
+        """Design view -> external AppCSXCAD (same action as the Mesh Viewer)."""
+        try:
+            self.mesh_viewer._on_open_appcsxcad()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"AppCSXCAD open failed: {e}")
 
     def _on_show_vtk(self) -> None:
         """Switch to the Field Viewer tab (work dir follows the current project)."""
@@ -2286,20 +2833,33 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001 — never crash the GUI
             self._log(f"VTK export failed: {e}")
 
+    def _raise_field_viewer(self) -> None:
+        """Raise the Field Viewer tab so its GL window is current/rendered."""
+        if getattr(self, "vtk_tab_index", -1) >= 0:
+            self.tabs.setCurrentIndex(self.vtk_tab_index)
+            QApplication.processEvents()
+
     def _on_export_field_video(self) -> None:
         """Export the Field Viewer's sequence to MP4 with the current view.
 
         The Field Viewer tab is raised first: its GL window must be current
         (and not zero-sized) for the frames to contain the rendered scene.
         """
-        if getattr(self, "vtk_tab_index", -1) >= 0:
-            self.tabs.setCurrentIndex(self.vtk_tab_index)
-            QApplication.processEvents()
+        self._raise_field_viewer()
         try:
-            self.vtk_viewer.export_video()
+            self.vtk_viewer.open_video_export_dialog(fmt="mp4")
         except Exception as e:  # noqa: BLE001 — never crash the GUI
             self._log(f"Field video export failed: {e}")
             QMessageBox.warning(self, "Save video", f"Video export failed:\n{e}")
+
+    def _on_export_field_gif(self) -> None:
+        """Export the Field Viewer's sequence to an animated GIF."""
+        self._raise_field_viewer()
+        try:
+            self.vtk_viewer.open_video_export_dialog(fmt="gif")
+        except Exception as e:  # noqa: BLE001 — never crash the GUI
+            self._log(f"Field GIF export failed: {e}")
+            QMessageBox.warning(self, "Save animation", f"GIF export failed:\n{e}")
 
     def _refresh_materials(self) -> None:
         self._tree_rebuilding = True
@@ -2349,6 +2909,41 @@ class MainWindow(QMainWindow):
             viewer.set_highlight(boxes=boxes, names=names, label=label, focus=focus)
         except Exception as e:  # noqa: BLE001 — never break the GUI on a highlight
             print("mesh viewer highlight failed:", e)
+        design = getattr(self, "design_viewer", None)
+        if design is not None and hasattr(design, "set_highlight"):
+            try:
+                design.set_highlight(
+                    boxes=boxes, names=names, label=label, focus=focus
+                )
+            except Exception as e:  # noqa: BLE001 — never break the GUI on a highlight
+                print("3D design highlight failed:", e)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt API
+        """Click on the free tree area below the entries -> clear everything."""
+        if obj is getattr(self, "tree", None) or (
+            getattr(self, "tree", None) is not None and obj is self.tree.viewport()
+        ):
+            if (
+                event.type() == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
+                try:
+                    pos = event.position().toPoint()
+                except AttributeError:  # older Qt
+                    pos = event.pos()
+                if self.tree.itemAt(pos) is None:
+                    self._clear_project_selection()
+        return super().eventFilter(obj, event)
+
+    def _clear_project_selection(self) -> None:
+        """Deselect the tree and every viewer highlight."""
+        self.tree.clearSelection()
+        self.tree.setCurrentRow(-1)
+        for name in ("mat_list", "port_list"):
+            widget = getattr(self, name, None)
+            if widget is not None and hasattr(widget, "clearSelection"):
+                widget.clearSelection()
+        self._highlight_in_viewer([], [], "", focus=False)
 
     def _on_tree_selection_changed(self) -> None:
         """Highlight the object selected in the Project / Geometry list.
@@ -2363,14 +2958,24 @@ class MainWindow(QMainWindow):
         if not items:
             self._highlight_in_viewer([], [], "", focus=False)  # no highlight
             return
-        item = items[0]
-        k_raw = item.data(Qt.UserRole)
-        i_raw = item.data(Qt.UserRole + 1)
-        kind = "" if k_raw is None else str(k_raw)
-        idx = -1 if i_raw is None else int(i_raw)
+        boxes: list = []
+        names: list[str] = []
+        labels: list[str] = []
+        for item in items:
+            k_raw = item.data(Qt.UserRole)
+            i_raw = item.data(Qt.UserRole + 1)
+            kind = "" if k_raw is None else str(k_raw)
+            idx = -1 if i_raw is None else int(i_raw)
+            b, n, label = self._tree_selection_highlight(kind, idx)
+            boxes.extend(b)
+            names.extend(n)
+            if label:
+                labels.append(label)
         self._highlight_in_viewer(
-            *self._tree_selection_highlight(kind, idx),
-            focus=not self._tree_rebuilding,
+            boxes,
+            names,
+            ", ".join(labels),
+            focus=not self._tree_rebuilding and len(items) == 1,
         )
 
     def _on_tree_item_clicked(self, item) -> None:
@@ -2519,6 +3124,47 @@ class MainWindow(QMainWindow):
         finally:
             self._freq_guard = False
 
+    def _set_nf2ff_box_mode(self, mode: str) -> None:
+        """Keep the project and the Sim Params combo in sync (no signal loop)."""
+        mode = "manual" if mode == "manual" else "auto"
+        self.project.nf2ff.box_mode = mode
+        panel = getattr(self, "sim_params", None)
+        combo = getattr(panel, "cmb_nf2ff_box_mode", None)
+        if combo is not None:
+            from PySide6.QtCore import QSignalBlocker
+
+            with QSignalBlocker(combo):
+                idx = combo.findData(mode)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+
+    def _on_nf2ff_toggled(self, checked: bool) -> None:
+        """Mirror the Ports/Dumps NF2FF checkbox immediately into the viewer."""
+        self.project.sim.nf2ff_enabled = bool(checked)
+        self.project.nf2ff.enabled = bool(checked)
+        self.sim_params.chk_nf2ff_enabled.setChecked(bool(checked))
+        if (
+            checked
+            and str(getattr(self.project.nf2ff, "box_mode", "auto")) == "auto"
+            and self.primitives
+        ):
+            # Switching the box on should not leave the old/default 2 mm box:
+            # fit it to the geometry + air margin right away.
+            self._on_fit_nf2ff()
+            return
+        if getattr(self.mesh_viewer, "_csx", None) is not None:
+            self._update_viewer_nf2ff()
+
+    def _on_sparam_markers_changed(self) -> None:
+        """Mirror S-param marker edits into the project JSON model."""
+        if not hasattr(self, "project") or not hasattr(self, "sparam_viewer"):
+            return
+        # With no loaded network the viewer is empty; do not erase markers
+        # restored from the project JSON just because the results are missing.
+        if getattr(self.sparam_viewer, "network", None) is None:
+            return
+        self.project.sparam_markers = self.sparam_viewer.marker_state()
+
     def _sync_project_from_form(self) -> None:
         # Prefer explicit start/stop widgets if they differ from f0±fc
         start_w = self._hz_from_spin(self.spn_start_f)
@@ -2533,6 +3179,7 @@ class MainWindow(QMainWindow):
         self.project.sim.nf2ff_enabled = self.chk_nf2ff.isChecked()
         self.project.nf2ff.enabled = self.chk_nf2ff.isChecked()
         self.project.sim.field_dumps_enabled = self.chk_dumps.isChecked()
+        self._on_sparam_markers_changed()
         # Keep the hidden Sim Params panel's NF2FF toggle in step with the
         # Ports / Dumps checkbox (both edit project.sim.nf2ff_enabled).
         self.sim_params.chk_nf2ff_enabled.setChecked(bool(self.chk_nf2ff.isChecked()))
@@ -2665,6 +3312,33 @@ class MainWindow(QMainWindow):
         self._sync_mesh_freqs_from_widgets("range")
         self.sim_params.refresh_computed(self.project)
 
+    def _suggest_timesteps_for(self, panel, *, apply: bool) -> None:
+        """Recommend NrTS from the current mesh's DFT/timestep analysis."""
+        rep = getattr(self, "_last_mesh_timing", None)
+        if rep is None:
+            panel.set_ts_suggestion(
+                "Build the mesh first: the suggestion needs the smallest cell "
+                "and the DFT window."
+            )
+            if apply:
+                self._log(
+                    "Timestep suggestion: build the mesh first "
+                    "(Mesh → Build Mesh)."
+                )
+            return
+        from app.meshing.timing import suggested_nr_ts
+
+        n, why = suggested_nr_ts(rep)
+        n = max(1_000, min(int(n), int(panel.spn_max_ts.maximum())))
+        if apply:
+            panel.spn_max_ts.setValue(n)
+            self.project.sim.max_timesteps = n
+            self._log(f"Suggested NrTS = {n:,} ({why})")
+        panel.set_ts_suggestion(f"Suggested NrTS = {n:,} — {why}")
+
+    def _on_suggest_timesteps(self) -> None:
+        self._suggest_timesteps_for(self.sim_params, apply=True)
+
     def _on_sim_params_changed(self) -> None:
         # Form values live in Sim Params widgets; mesh tab may already hold f0/fc.
         start_w = self._hz_from_spin(self.spn_start_f)
@@ -2674,7 +3348,68 @@ class MainWindow(QMainWindow):
         self._sync_mesh_freqs_from_widgets(
             "range" if abs(start_w - (f0 - fc)) > 1.0 else "f0fc"
         )
+        # The hidden Sim Params panel also carries the NF2FF toggle.  Mirror an
+        # immediate change so the mesh-viewer frame disappears/appears without
+        # waiting for the next run.
+        nf_on = bool(self.sim_params.chk_nf2ff_enabled.isChecked())
+        box_mode = self.sim_params._current_nf2ff_box_mode()
+        was_on = bool(self.project.sim.nf2ff_enabled)
+        was_mode = str(getattr(self.project.nf2ff, "box_mode", "auto"))
+        self.project.nf2ff.box_mode = box_mode
+        if (
+            bool(self.project.sim.nf2ff_enabled) != nf_on
+            or bool(self.project.nf2ff.enabled) != nf_on
+        ):
+            self.project.sim.nf2ff_enabled = nf_on
+            self.project.nf2ff.enabled = nf_on
+            # Keep the Ports/Dumps checkbox (read by _sync_project_from_form
+            # before a run) in step with the Simulation Parameters tab.
+            from PySide6.QtCore import QSignalBlocker
+
+            with QSignalBlocker(self.chk_nf2ff):
+                self.chk_nf2ff.setChecked(nf_on)
+            if nf_on and box_mode == "auto" and self.primitives:
+                self._on_fit_nf2ff()
+            else:
+                self._update_viewer_nf2ff()
+        elif nf_on and box_mode == "auto" and was_on and was_mode != "auto" and self.primitives:
+            # The user switched the box from Manual back to Automatic.
+            self._on_fit_nf2ff()
         self.sim_params.refresh_computed(self.project)
+        # Air margin / boundary changed -> redraw the domain box immediately,
+        # without rebuilding the mesh.  Use the panel's current values (the
+        # standalone dialog may not have written them into self.project yet).
+        try:
+            preview = self.sim_params.build_temp_project(self.project)
+        except Exception:  # noqa: BLE001
+            preview = self.project
+        self._update_viewer_domain(preview)
+
+    def _update_viewer_domain(self, project=None) -> None:
+        """Refresh the Mesh Viewer's domain outline from the current boundary."""
+        viewer = getattr(self, "mesh_viewer", None)
+        if viewer is None or not hasattr(viewer, "set_domain_area"):
+            return
+        if not self.primitives:
+            viewer.set_domain_area(None)
+            return
+        from app.meshing.bounds import domain_box_units
+
+        area = domain_box_units(project or self.project, self.primitives)
+        viewer.set_domain_area(area)
+        design = getattr(self, "design_viewer", None)
+        if design is not None and design.isVisible():
+            self._refresh_design_viewer()
+
+    def _preview_domain_from_panel(self, panel) -> None:
+        """Live domain preview while the Simulation Parameters dialog is edited."""
+        if panel is None:
+            return
+        try:
+            preview = panel.build_temp_project(self.project)
+        except Exception:  # noqa: BLE001 — a preview must never block editing
+            preview = self.project
+        self._update_viewer_domain(preview)
 
     # --- Simulation menu: standalone parameter window -------------------
     def _on_open_sim_params_dialog(self) -> None:
@@ -2684,10 +3419,18 @@ class MainWindow(QMainWindow):
         if self._sim_params_dlg is None:
             dlg = SimParamsDialog(self)
             dlg.apply_requested.connect(self._apply_sim_params_dialog)
+            dlg.panel.suggest_timesteps_requested.connect(
+                lambda p=dlg.panel: self._suggest_timesteps_for(p, apply=True)
+            )
             dlg.panel.btn_fit_nf2ff.clicked.connect(self._on_fit_nf2ff)
             dlg.panel.btn_edit_nf2ff.clicked.connect(self._on_edit_nf2ff)
             dlg.panel.btn_apply_patch.clicked.connect(
                 self._on_apply_patch_params_from_dialog
+            )
+            # Live preview: the domain box follows edits in the dialog before
+            # Apply (the project itself is only changed by Apply).
+            dlg.panel.computed_changed.connect(
+                lambda p=dlg.panel: self._preview_domain_from_panel(p)
             )
             self._sim_params_dlg = dlg
         dlg = self._sim_params_dlg
@@ -2727,6 +3470,14 @@ class MainWindow(QMainWindow):
         self.cmb_preset.setCurrentText(self.project.mesh.preset or "high")
         # keep the Ports / Dumps NF2FF checkbox in step with the dialog
         self.chk_nf2ff.setChecked(bool(self.project.nf2ff.enabled))
+        if (
+            self.project.nf2ff.enabled
+            and str(getattr(self.project.nf2ff, "box_mode", "auto")) == "auto"
+            and self.primitives
+        ):
+            self._on_fit_nf2ff()
+        else:
+            self._update_viewer_nf2ff()
         self.sim_params.set_patch_group_visible(dlg.panel.patch_group_visible)
         if dlg.panel.patch_group_visible:
             self.sim_params.patch_params = dict(dlg.panel.patch_params)
@@ -2893,7 +3644,9 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             self._log(f"Computed summary failed: {e}")
 
-    def _clear_result_viewers(self, reason: str = "") -> None:
+    def _clear_result_viewers(
+        self, reason: str = "", *, include_mesh: bool = True
+    ) -> None:
         """Empty the result viewers so no stale data from another project shows."""
         for name, viewer in (
             ("mesh", getattr(self, "mesh_viewer", None)),
@@ -2901,17 +3654,42 @@ class MainWindow(QMainWindow):
             ("NF2FF", getattr(self, "antenna_viewer", None)),
             ("field", getattr(self, "vtk_viewer", None)),
         ):
-            if viewer is None:
+            if viewer is None or (name == "mesh" and not include_mesh):
                 continue
             try:
-                viewer.clear()
-            except Exception as e:  # noqa: BLE001 — never crash on a reset
+                # mesh viewer has cached scene/domain data and a drawn figure:
+                # clear() alone would leave the previous project on screen.
+                if name == "mesh" and hasattr(viewer, "reset_view"):
+                    viewer.reset_view()
+                else:
+                    viewer.clear()
+            except Exception as e:  # noqa: BLE001 - never crash on a reset
                 print(f"{name} viewer clear failed: {e}")
+        if include_mesh and hasattr(self, "mesh_viewer_scene_info"):
+            try:
+                self._sync_scene_info()
+            except Exception as e:  # noqa: BLE001
+                print("scene info clear failed:", e)
         if reason:
             self._log(f"Result viewers cleared ({reason})")
 
+    def _discard_result_state(self, reason: str) -> None:
+        """Forget old results before a new run / new project.
+
+        Files stay on disk (the user may still open them explicitly), but the
+        viewers and the project's recorded result paths are cleared.  Without
+        this an aborted run kept showing the previous S-parameters, and the
+        "missing results" branch even auto-loaded the newest old file.
+        """
+        self._allow_auto_results = False
+        self._allow_auto_nf2ff = False
+        self.project.results = {}
+        self._last_sim_report_text = ""
+        self._clear_result_viewers(reason, include_mesh=False)
+
     def _on_new(self) -> None:
         self.project = Project.new_default("untitled")
+        self.project.results = {}
         self.primitives = []
         self._current_file_path = None
         # forget the previous project's mesh signature: a new project starts
@@ -2919,6 +3697,9 @@ class MainWindow(QMainWindow):
         self._mesh_sig = None
         self._viewer_geometry_sig = None
         self._mesh_deleted = False
+        self._allow_auto_results = False
+        self._allow_auto_nf2ff = False
+        self._last_sim_report_text = ""
         self._clear_result_viewers("new project")
         self.tree.clear()
         self.geom_info.clear()
@@ -2929,6 +3710,7 @@ class MainWindow(QMainWindow):
             self.sim_params.set_patch_group_visible(False)
         self._refresh_tree()
         self._update_window_title()
+        self._mark_project_saved()
         self._log("New project created (generic — not patch-specific)")
 
     def _on_open(self) -> None:
@@ -2945,25 +3727,22 @@ class MainWindow(QMainWindow):
             self._current_file_path = Path(path)
             self._mesh_sig = None  # different project -> loaded CSX is unknown
             self.project = Project.load(path)
-            # Layout rule (see _project_dir): the project file lives in the
-            # work directory and the result folder next to it carries the same
-            # stem. A file inside a folder of its own name - or a generic
-            # "project.fcsim.json" inside the folder - makes the GUI look for
-            # the results in a different directory.
+            # Layout rule (see _project_work_dir): the JSON sits one level above
+            # its data folder: <base>/<stem>.fcsim.json + <base>/<stem>/.  The
+            # old layout (<base>/<stem>/<stem>.fcsim.json) is still understood,
+            # but the data folder is then the JSON's own folder.
             _p = Path(path)
-            _stem = _p.name[: -len(".fcsim.json")] if _p.name.endswith(".fcsim.json") else _p.stem
-            _work = Path(self.settings.work_path())
-            try:
-                _wrong = _p.parent.resolve() != _work.resolve()
-            except OSError:
-                _wrong = _p.parent != _work
-            if _wrong:
+            _stem = _p.name
+            for _suffix in (".fcsim.json", ".json"):
+                if _stem.endswith(_suffix):
+                    _stem = _stem[: -len(_suffix)]
+                    break
+            if _p.parent.name == _stem:
                 _msg = (
-                    f"WARNING: '{_p.name}' is not in the work directory "
-                    f"'{_work}'. The results folder is derived from the file "
-                    f"name, so the expected layout is "
-                    f"'{_work / (_stem + '.fcsim.json')}' next to "
-                    f"'{_work / _stem}'."
+                    f"NOTE: legacy layout — '{_p.name}' is inside its data folder "
+                    f"'{_p.parent}'. New projects use "
+                    f"'{_p.parent.parent / (_stem + '.fcsim.json')}' next to "
+                    f"'{_p.parent}'."
                 )
                 print(_msg)
                 try:
@@ -3018,6 +3797,7 @@ class MainWindow(QMainWindow):
             except Exception as e:  # noqa: BLE001
                 print("recent projects update failed:", e)
             self._load_last_results()
+            self._mark_project_saved()
         except Exception as e:
             import traceback
 
@@ -3084,17 +3864,103 @@ class MainWindow(QMainWindow):
         return d
 
     def _project_work_dir(self) -> Path:
-        """Project folder ``<work>/<project file name>`` holding the results.
+        """Data folder for the current project.
 
-        The folder is named after the project JSON file (which lives in the
-        work directory); until the project has been saved it falls back to the
-        project name.
+        Strict layout: the project JSON is a *sibling* of its data folder::
+
+            <base>/<stem>.fcsim.json
+            <base>/<stem>/{simulation,sparams,fields,nf2ff,vtk,...}
+
+        ``<base>`` is the folder the project was opened/saved in (not the
+        global work directory), so two projects with the same name in different
+        folders can never share results.  Legacy projects whose JSON already
+        sits inside its own data folder (``<base>/<stem>/<stem>.fcsim.json``)
+        keep using that folder.
         """
-        stem = Path(self._current_file_path).stem if self._current_file_path else ""
-        if stem.endswith(".fcsim"):
-            stem = stem[: -len(".fcsim")]
-        name = (stem or str(self.project.name or "")).strip() or "project"
+        if self._current_file_path:
+            path = Path(self._current_file_path)
+            stem = path.name
+            for suffix in (".fcsim.json", ".json"):
+                if stem.endswith(suffix):
+                    stem = stem[: -len(suffix)]
+                    break
+            base = path.parent
+            # compatibility: old layout has the JSON *inside* the data folder
+            if base.name == stem:
+                return base
+            return base / stem
+        name = str(self.project.name or "").strip() or "project"
         return self.settings.work_path() / name
+
+    def _project_file_path(self) -> Path:
+        """Expected location of the project JSON (one level above the data)."""
+        if self._current_file_path:
+            return Path(self._current_file_path)
+        work = self._project_work_dir()
+        return work.parent / f"{work.name}.fcsim.json"
+
+    def _backup_project_before_run(self) -> Path | None:
+        """Copy the current project JSON to ``<stem>.fcsim.json.bak``.
+
+        Called before every GUI simulation run, so the previous state is always
+        recoverable even though the run overwrites all result folders.
+        """
+        import shutil
+
+        src = Path(self._current_file_path) if self._current_file_path else None
+        if src is None or not src.exists():
+            return None
+        dst = Path(str(src) + ".bak")
+        try:
+            shutil.copy2(src, dst)
+            self._log(f"Project backup: {dst}")
+            return dst
+        except OSError as e:
+            self._log(f"WARNING: project backup failed ({src} -> {dst}): {e}")
+            return None
+
+    def _clean_project_data(self, work: Path) -> None:
+        """Remove the previous run's artifacts before a new simulation.
+
+        The folder layout is strict, so stale dumps, VTK files, S-params or the
+        old ``simulation_<timestamp>`` folder must not survive a rerun.  Scripts
+        (``project_run.py`` and its backups) are kept; they are regenerated /
+        compared by the run logic.
+        """
+        import shutil
+
+        work.mkdir(parents=True, exist_ok=True)
+        patterns = (
+            "simulation",
+            "simulation_*",
+            "sparams",
+            "fields",
+            "nf2ff",
+            "vtk",
+            "multi",
+            "csx.xml",
+            "geometry_primitives.json",
+            "project_copy.json",
+        )
+        removed: list[str] = []
+        failed: list[str] = []
+        for pattern in patterns:
+            for path in work.glob(pattern):
+                try:
+                    if path.is_dir():
+                        shutil.rmtree(path)
+                    else:
+                        path.unlink()
+                    removed.append(path.name)
+                except OSError as e:
+                    failed.append(f"{path.name}: {e}")
+        if removed:
+            self._log("Cleared old run data: " + ", ".join(sorted(removed)))
+        if failed:
+            self._log(
+                "WARNING: could not clear all old run data — close open viewers "
+                "and retry: " + "; ".join(failed)
+            )
 
     # ------------------------------------------------------------------ results
     @staticmethod
@@ -3110,6 +3976,23 @@ class MainWindow(QMainWindow):
         p = Path(s)
         return p if p.exists() else None
 
+    @staticmethod
+    def _same_path(a: Path | str, b: Path | str) -> bool:
+        """Case/normalisation-tolerant path comparison (Windows friendly)."""
+        try:
+            return Path(a).resolve() == Path(b).resolve()
+        except OSError:
+            return Path(a) == Path(b)
+
+    @classmethod
+    def _path_within(cls, child: Path | str, parent: Path | str) -> bool:
+        """True when ``child`` is inside ``parent`` (no cross-project reads)."""
+        try:
+            Path(child).resolve().relative_to(Path(parent).resolve())
+            return True
+        except (OSError, ValueError):
+            return False
+
     def _find_sparams_files(self, project_dir: Path, sim_dir: Path | None = None) -> list[Path]:
         """``sparams.*`` of a project — new ``<project>/sparams`` layout first,
         then ``<project>/simulation``.
@@ -3123,15 +4006,6 @@ class MainWindow(QMainWindow):
         if sim_dir is not None:
             dirs.append(Path(sim_dir))
         dirs.append(Path(project_dir) / "simulation")
-        rec = dict(self.project.results or {})
-        legacy_name = str(self.project.name or "").strip()
-        if (
-            not rec.get("project_dir")
-            and not rec.get("sim_dir")
-            and not rec.get("sparams")
-            and legacy_name.lower() not in ("", "untitled", "project")
-        ):
-            dirs.append(self.settings.work_path() / legacy_name / "simulation")
         for d in dirs:
             for pat in ("sparams.s*p", "sparams.json"):
                 hits = sorted(d.glob(pat))
@@ -3166,15 +4040,30 @@ class MainWindow(QMainWindow):
             out["nf2ff"] = str(nf2ff)
         return out
 
-    def _record_results(self, sim_dir: Path | None = None, save: bool = True) -> None:
+    def _record_results(
+        self,
+        sim_dir: Path | None = None,
+        save: bool = True,
+        *,
+        only: set[str] | None = None,
+    ) -> None:
         """Store the last run's artifact paths in the project JSON.
 
         ``save`` writes the project file (if it has one) so a later
         *File → Open* can restore the Mesh Viewer / S-param Viewer straight from
-        the recorded paths.
+        the recorded paths.  ``only`` limits the scan (e.g. a newly built mesh
+        records only ``csx_xml`` and must not import old S-params from a reused
+        work folder).
         """
         try:
-            self.project.results = self._collect_result_paths(sim_dir)
+            paths = self._collect_result_paths(sim_dir)
+            if only is not None:
+                paths = {
+                    k: v
+                    for k, v in paths.items()
+                    if k in only or k in ("project_dir", "sim_dir")
+                }
+            self.project.results = paths
             self.project.results["time"] = datetime.now().isoformat(timespec="seconds")
             if save and self._current_file_path and self._current_file_path.exists():
                 self.project.primitives = list(self.primitives)
@@ -3199,23 +4088,19 @@ class MainWindow(QMainWindow):
         if not (self.primitives or self.project.geometry_files):
             return False
         # recorded mesh -> fixed locations (new project folder, legacy
-        # simulation/ folder)
+        # simulation/ folder); never another project's folder
+        project_dir = self._project_work_dir()
         candidates = [rec.get("csx_xml"), rec.get("mesh_xml")]
         rec_sim = self._existing_path(rec.get("sim_dir"))
-        if rec_sim is not None:
+        if rec_sim is not None and self._path_within(rec_sim, project_dir):
             candidates.append(rec_sim / "csx.xml")
         candidates += [
-            self._project_work_dir() / "csx.xml",
-            self._project_work_dir() / "simulation" / "csx.xml",
-            # old name-based project folder
-            self.settings.work_path()
-            / (str(self.project.name or "").strip() or "project")
-            / "simulation"
-            / "csx.xml",
+            project_dir / "csx.xml",
+            project_dir / "simulation" / "csx.xml",
         ]
         for cand in candidates:
             xml = self._existing_path(cand)
-            if xml is None:
+            if xml is None or not self._path_within(xml, project_dir):
                 continue
             try:
                 from CSXCAD import ContinuousStructure
@@ -3386,10 +4271,11 @@ class MainWindow(QMainWindow):
                 del lst[:-4]
 
     def _find_field_series(self, project_dir: Path) -> Path | None:
-        """Newest exported field dump (``<project>/vtk/*.vtr``), or ``None``.
+        """Newest exported field dump under ``<project>/vtk/``, or ``None``.
 
-        Prefers the first step of the newest series (``<stem>_0000.vtr``) so the
-        film starts at the beginning.
+        New exports write one subfolder per dump (``vtk/<stem>/<stem>.vtr``);
+        the legacy flat files are still found. Prefers the first step of the
+        newest series (``<stem>_0000.vtr``) so the film starts at the beginning.
         """
         import re
 
@@ -3397,13 +4283,13 @@ class MainWindow(QMainWindow):
         if not vtk_dir.is_dir():
             return None
         vtrs = sorted(
-            vtk_dir.glob("*.vtr"), key=lambda p: p.stat().st_mtime, reverse=True
+            vtk_dir.rglob("*.vtr"), key=lambda p: p.stat().st_mtime, reverse=True
         )
         if not vtrs:
             return None
         m = re.match(r"(?P<base>.+)_(?P<idx>\d+)$", vtrs[0].stem)
         if m:
-            first = vtk_dir / f"{m.group('base')}_0000.vtr"
+            first = vtrs[0].parent / f"{m.group('base')}_0000.vtr"
             if first.exists():
                 return first
         return vtrs[0]
@@ -3421,8 +4307,17 @@ class MainWindow(QMainWindow):
         stays on screen.
         """
         rec = dict(self.project.results or {})
-        project_dir = self._existing_path(rec.get("project_dir")) or self._project_work_dir()
-        sim_dir = self._existing_path(rec.get("sim_dir")) or (project_dir / "simulation")
+        expected_dir = self._project_work_dir()
+        rec_dir = self._existing_path(rec.get("project_dir"))
+        # Strict scoping: a recorded path from another folder/name is stale and
+        # must not pull a different simulation's results into this project.
+        if rec_dir is not None and not self._same_path(rec_dir, expected_dir):
+            self._log(
+                f"Ignoring recorded results from another project folder: {rec_dir}"
+            )
+            rec = {}
+        project_dir = expected_dir
+        sim_dir = project_dir / "simulation"
         loaded: list[str] = []
         cleared: list[str] = []
 
@@ -3431,7 +4326,11 @@ class MainWindow(QMainWindow):
             loaded.append("mesh")
         else:
             try:
-                self.mesh_viewer.clear()
+                if hasattr(self.mesh_viewer, "reset_view"):
+                    self.mesh_viewer.reset_view()
+                else:
+                    self.mesh_viewer.clear()
+                self._sync_scene_info()
             except Exception as e:  # noqa: BLE001
                 print("mesh viewer clear failed:", e)
             cleared.append("mesh")
@@ -3439,6 +4338,9 @@ class MainWindow(QMainWindow):
         # --- S-param Viewer: recorded file, else newest of THIS project -----
         self.sparam_viewer.set_work_dir(project_dir)
         recorded = self._existing_path(rec.get("sparams"))
+        if recorded is not None and not self._path_within(recorded, project_dir):
+            self._log(f"Ignoring S-params outside the project folder: {recorded}")
+            recorded = None
         cands = [recorded] if recorded is not None else self._find_sparams_files(project_dir, sim_dir)
         ok = False
         if cands:
@@ -3451,6 +4353,13 @@ class MainWindow(QMainWindow):
         if not ok:
             self.sparam_viewer.clear()
             cleared.append("S-params")
+        else:
+            try:
+                self.sparam_viewer.set_marker_state(
+                    self.project.sparam_markers or []
+                )
+            except Exception as e:  # noqa: BLE001 - markers are optional state
+                self._log(f"Could not restore S-param markers: {e}")
 
         # --- Antenna pattern (NF2FF): recorded, else this project's file ----
         self.antenna_viewer.set_work_dir(self.settings.work_path())
@@ -3462,7 +4371,7 @@ class MainWindow(QMainWindow):
                     self._existing_path(project_dir / "nf2ff" / "nf2ff.json"),
                     self._existing_path(sim_dir / "nf2ff" / "nf2ff.json"),
                 )
-                if c is not None
+                if c is not None and self._path_within(c, project_dir)
             ),
             None,
         )
@@ -3480,6 +4389,15 @@ class MainWindow(QMainWindow):
 
         # --- Field Viewer (VTK): newest exported dump of THIS project -------
         self.vtk_viewer.set_work_dir(project_dir)
+        try:
+            # The work-dir fallback geometry may be stale or absent; the opened
+            # project owns the authoritative primitive list.
+            self.vtk_viewer.set_geometry(
+                self.primitives,
+                unit_m=self.project.mesh.unit_to_meters(),
+            )
+        except Exception as e:  # noqa: BLE001 - never block a project load
+            self._log(f"Field Viewer geometry update failed: {e}")
         series = self._find_field_series(project_dir)
         ok = False
         if series is not None:
@@ -3500,6 +4418,10 @@ class MainWindow(QMainWindow):
                 f"No results for {project_dir}: " + ", ".join(cleared)
                 + " — viewer(s) cleared"
             )
+        # An explicitly opened project may use the legacy "newest file in this
+        # project folder" lookup.  A new/untitled project does not.
+        self._allow_auto_results = True
+        self._allow_auto_nf2ff = True
 
     def _on_save(self) -> None:
         self._sync_project_from_form()
@@ -3508,17 +4430,41 @@ class MainWindow(QMainWindow):
             saved = self.project.save(self._current_file_path)
             self._ensure_project_dir()
             self._update_window_title()
+            self._mark_project_saved()
             self._log(f"Saved {saved}")
             return
         # No known file yet — behave like Save As
         self._on_save_as()
 
+    def _unsaved_save_path(self) -> Path:
+        """Default path for a project that has no file/name yet.
+
+        A fresh project is repeatedly called "untitled"; using an existing
+        ``work/untitled.fcsim.json`` made the native Save dialog ask to
+        overwrite an old project before the user had chosen a name.  Pick the
+        first free ``untitled*.fcsim.json`` instead.  Once the project has a
+        real name/path, normal overwrite confirmation applies again.
+        """
+        work = self.settings.work_path()
+        name = str(self.project.name or "untitled").strip() or "untitled"
+        if name.lower() == "untitled":
+            candidate = work / "untitled.fcsim.json"
+            if not candidate.exists():
+                return candidate
+            for n in range(1, 1000):
+                candidate = work / f"untitled_{n}.fcsim.json"
+                if not candidate.exists():
+                    return candidate
+        return work / f"{name}.fcsim.json"
+
     def _on_save_as(self) -> None:
         self._sync_project_from_form()
         self.project.primitives = list(self.primitives)
-        initial = str(self.settings.work_path() / f"{self.project.name}.fcsim.json")
-        if self._current_file_path:
-            initial = str(self._current_file_path)
+        initial = str(
+            self._current_file_path
+            if self._current_file_path
+            else self._unsaved_save_path()
+        )
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Save project as",
@@ -3528,9 +4474,18 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self._current_file_path = Path(path)
+        # From now on the project has a real name; Save As may ask before
+        # overwriting an existing file.
+        project_name = Path(path).name
+        for suffix in (".fcsim.json", ".json"):
+            if project_name.endswith(suffix):
+                project_name = project_name[: -len(suffix)]
+                break
+        self.project.name = project_name or self.project.name
         saved = self.project.save(path)
         self._ensure_project_dir()
         self._update_window_title()
+        self._mark_project_saved()
         self._log(f"Saved {saved}")
         try:
             self.settings.remember_project(saved)
@@ -3597,6 +4552,495 @@ class MainWindow(QMainWindow):
             return
         self._import_geometry_path(path)
 
+    def _on_import_gerber(self) -> None:
+        """Pick a Gerber/Excellon ZIP/file or a fabrication folder."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Gerber/Excellon importieren")
+        box.setText("Gerber-/Excellon-Daten auswählen:")
+        box.setInformativeText(
+            "Ein vollständiger Fertigungssatz enthält alle Kupferlayer, den "
+            "Board-Umriss und die PTH/NPTH-Bohrdateien."
+        )
+        file_btn = box.addButton(
+            "ZIP / Einzeldatei…", QMessageBox.ButtonRole.AcceptRole
+        )
+        folder_btn = box.addButton("Ordner…", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        path = ""
+        if clicked is file_btn:
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Gerber/Excellon (ZIP oder Einzeldatei)",
+                str(self.settings.work_path()),
+                "PCB-Daten (*.zip *.gbr *.ger *.gtl *.gbl *.gts *.gbs "
+                "*.gto *.gbo *.gko *.drl *.xln *.nc);;Alle Dateien (*)",
+            )
+        elif clicked is folder_btn:
+            path = QFileDialog.getExistingDirectory(
+                self,
+                "Gerber-/Excellon-Ordner auswählen",
+                str(self.settings.work_path()),
+            )
+        if path:
+            self._import_gerber_path(path)
+
+    def _import_gerber_path(self, path: str) -> None:
+        """Inspect, configure stackup, then merge the PCB into the project."""
+        from app.freecad_io.gerber_import import (
+            apply_gerber_to_project,
+            import_gerber_set,
+            inspect_gerber_set,
+        )
+        from app.models.project import GerberSpec
+        from app.ui.gerber_import_dialog import GerberStackupDialog
+
+        spec = getattr(self.project, "gerber", None) or GerberSpec()
+        inspection = inspect_gerber_set(
+            path, board_thickness_mm=float(spec.board_thickness_mm)
+        )
+        if not inspection.ok:
+            message = "\n".join(inspection.warnings) or "Unbekannter Fehler"
+            QMessageBox.warning(self, "Gerber-Import", message)
+            self._log(f"Gerber import failed: {path}")
+            for warning in inspection.warnings:
+                self._log(f"WARNING: {warning}")
+            return
+
+        dialog = GerberStackupDialog(
+            self, self.project, inspection, spec, source=path
+        )
+        if not dialog.exec():
+            return
+        spec = dialog.result_spec()
+
+        try:
+            result = import_gerber_set(path, spec.import_options())
+        except Exception as exc:  # noqa: BLE001 - GUI must report, not crash
+            QMessageBox.critical(
+                self, "Gerber-Import", f"Import fehlgeschlagen:\n{exc}"
+            )
+            self._log(f"Gerber import failed: {exc}")
+            return
+        if not result.ok:
+            message = "\n".join(result.warnings) or "Unbekannter Fehler"
+            QMessageBox.warning(self, "Gerber-Import", message)
+            self._log(f"Gerber import failed: {path}")
+            for warning in result.warnings:
+                self._log(f"WARNING: {warning}")
+            return
+
+        summary = apply_gerber_to_project(self.project, result, path, spec)
+        self.primitives = [dict(p) for p in (self.project.primitives or [])]
+        self._sync_assignment_materials_to_primitives()
+        self._refresh_materials()
+        self._refresh_ports()
+        self._refresh_tree()
+
+        lines = [
+            f"Gerber/Excellon: {Path(path).name}",
+            f"Kupferlayer: {result.copper_layer_count}",
+            f"Vias: {result.via_count}",
+            f"Slots: {result.slot_count}",
+            f"Lötstoppmasken: {result.mask_layer_count}",
+            f"Primitive: {len(result.primitives)} "
+            f"(neu {summary['added']}, ersetzt {summary['replaced']})",
+        ]
+        for layer in result.layers:
+            lines.append(
+                f"  {layer['side']}: z={layer['z_mm']:.3f} mm, "
+                f"Fläche={layer['area_mm2']:.2f} mm², "
+                f"{layer['primitive_count']} Primitive"
+            )
+        if result.warnings:
+            lines.append("")
+            lines.extend(f"WARNUNG: {warning}" for warning in result.warnings)
+        self.geom_info.setPlainText("\n".join(lines))
+        self._log(
+            f"Gerber importiert: {path} "
+            f"({result.copper_layer_count} Kupferlayer, "
+            f"{result.via_count} Vias, {summary['added']} Primitive)"
+        )
+        for warning in result.warnings:
+            self._log(f"WARNING: {warning}")
+        if spec.suggest_ports:
+            self._suggest_gerber_ports(path, notify_empty=False)
+
+    def _on_suggest_gerber_ports(self) -> None:
+        source = str(getattr(getattr(self.project, "gerber", None), "source", "") or "")
+        if not source or not Path(source).exists():
+            source, _ = QFileDialog.getOpenFileName(
+                self,
+                "Gerber/Excellon für Port-Vorschläge",
+                str(self.settings.work_path()),
+                "PCB-Daten (*.zip *.gbr *.ger *.gtl *.gbl *.drl *.xln *.nc);;"
+                "Alle Dateien (*)",
+            )
+            if not source:
+                source = QFileDialog.getExistingDirectory(
+                    self,
+                    "Gerber-/Excellon-Ordner auswählen",
+                    str(self.settings.work_path()),
+                )
+        if source:
+            self._suggest_gerber_ports(source)
+
+    def _suggest_gerber_ports(self, path: str, *, notify_empty: bool = True) -> None:
+        from app.freecad_io.gerber_ports import suggest_gerber_ports
+        from app.freecad_io.kicad_ports import apply_port_candidates
+        from app.models.project import GerberSpec
+        from app.ui.kicad_ports_dialog import KiCadPortsDialog
+
+        source = Path(path)
+        if not source.exists():
+            self._log(f"Gerber port suggestions: source not found: {source}")
+            return
+        spec = getattr(self.project, "gerber", None) or GerberSpec()
+        try:
+            candidates = suggest_gerber_ports(source, spec.import_options())
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(
+                self, "Gerber Ports", f"Port-Vorschläge fehlgeschlagen:\n{exc}"
+            )
+            self._log(f"Gerber port suggestions failed: {exc}")
+            return
+        if not candidates:
+            if notify_empty:
+                QMessageBox.information(
+                    self,
+                    "Gerber Ports",
+                    "Keine passenden Port-Kandidaten gefunden.\n\n"
+                    "Tipp: Gerber X2 mit Netznamen (RF_IN/RF_OUT/ANT) oder "
+                    "eine IPC-356-Netlist mit exportieren. Ohne Netzdaten "
+                    "bleibt nur die Boardkanten-Heuristik.",
+                )
+            self._log("Gerber port suggestions: none found")
+            return
+
+        dialog = KiCadPortsDialog(self, candidates)
+        if not dialog.exec():
+            self._log("Gerber port suggestions cancelled")
+            return
+        selected = dialog.result_candidates()
+        added = apply_port_candidates(self.project, selected)
+        self._refresh_ports()
+        self._refresh_tree()
+        self._log(
+            f"Gerber port suggestions: {len(candidates)} found, {added} added "
+            f"({len(selected) - added} skipped/duplicate)"
+        )
+        if added:
+            self._log(
+                "  Ports: " + ", ".join(p.name for p in self.project.ports[-added:])
+            )
+
+    def _on_import_kicad(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "KiCad PCB importieren",
+            str(self.settings.work_path()),
+            "KiCad PCB (*.kicad_pcb);;Alle Dateien (*)",
+        )
+        if path:
+            self._import_kicad_path(path)
+
+    def _import_kicad_path(self, path: str) -> None:
+        """Inspect a native KiCad board, configure, then merge it."""
+        from app.freecad_io.kicad_import import (
+            apply_kicad_to_project,
+            import_kicad_pcb,
+            inspect_kicad_pcb,
+        )
+        from app.models.project import KiCadSpec
+        from app.ui.kicad_import_dialog import KiCadImportDialog
+
+        spec = getattr(self.project, "kicad", None) or KiCadSpec()
+        inspection = inspect_kicad_pcb(path)
+        if not inspection.ok:
+            message = "\n".join(inspection.warnings) or "Unbekannter Fehler"
+            QMessageBox.warning(self, "KiCad-Import", message)
+            self._log(f"KiCad import failed: {path}")
+            for warning in inspection.warnings:
+                self._log(f"WARNING: {warning}")
+            return
+
+        dialog = KiCadImportDialog(self, self.project, inspection, spec)
+        if not dialog.exec():
+            return
+        spec = dialog.result_spec()
+
+        try:
+            mesh_dir = self.settings.work_path() / "imported" / Path(path).stem
+            result = import_kicad_pcb(
+                path, spec.import_options(), mesh_dir=mesh_dir
+            )
+        except Exception as exc:  # noqa: BLE001 - GUI must report, not crash
+            QMessageBox.critical(
+                self, "KiCad-Import", f"Import fehlgeschlagen:\n{exc}"
+            )
+            self._log(f"KiCad import failed: {exc}")
+            return
+        if not result.ok:
+            message = "\n".join(result.warnings) or "Unbekannter Fehler"
+            QMessageBox.warning(self, "KiCad-Import", message)
+            self._log(f"KiCad import failed: {path}")
+            for warning in result.warnings:
+                self._log(f"WARNING: {warning}")
+            return
+
+        summary = apply_kicad_to_project(self.project, result, path, spec)
+        self.primitives = [dict(p) for p in (self.project.primitives or [])]
+        self._sync_assignment_materials_to_primitives()
+        self._refresh_materials()
+        self._refresh_ports()
+        self._refresh_tree()
+
+        lines = [
+            f"KiCad PCB: {Path(path).name}",
+            f"Kupferlayer: {len(result.layers)}",
+            f"Vias: {result.via_count}",
+            f"PTH-Pad-Bohrungen: {result.pad_barrel_count}",
+            f"Pads: {result.pad_count}, Tracks: {result.track_count}, "
+            f"Zonen: {result.zone_count}",
+            f"Primitive: {len(result.primitives)} "
+            f"(neu {summary['added']}, ersetzt {summary['replaced']})",
+        ]
+        for layer in result.layers:
+            lines.append(
+                f"  {layer['name']}: z={layer['z_mm']:.3f} mm, "
+                f"Fläche={layer['area_mm2']:.2f} mm², "
+                f"{layer['primitive_count']} Primitive"
+            )
+        if result.warnings:
+            lines.append("")
+            lines.extend(f"WARNUNG: {warning}" for warning in result.warnings)
+        self.geom_info.setPlainText("\n".join(lines))
+        self._log(
+            f"KiCad importiert: {path} "
+            f"({len(result.layers)} Kupferlayer, {result.via_count} Vias, "
+            f"{summary['added']} Primitive)"
+        )
+        for warning in result.warnings:
+            self._log(f"WARNING: {warning}")
+        if spec.suggest_ports:
+            self._suggest_kicad_ports(path, notify_empty=False)
+
+    def _on_import_cst(self) -> None:
+        """Pick a CST export package folder, manifest.json or ZIP."""
+        box = QMessageBox(self)
+        box.setWindowTitle("CST Studio Paket importieren")
+        box.setText("CST-Exportpaket auswählen:")
+        box.setInformativeText(
+            "Erwartet wird ein Ordner oder ZIP mit manifest.json und einer "
+            "STL pro Solid. Das native .cst-Projekt wird nicht gelesen."
+        )
+        file_btn = box.addButton(
+            "ZIP / manifest.json\u2026", QMessageBox.ButtonRole.AcceptRole
+        )
+        folder_btn = box.addButton("Ordner\u2026", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        path = ""
+        if clicked is file_btn:
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "CST-Exportpaket (ZIP oder manifest.json)",
+                str(self.settings.work_path()),
+                "CST-Exportpaket (*.zip *.json);;Alle Dateien (*)",
+            )
+        elif clicked is folder_btn:
+            path = QFileDialog.getExistingDirectory(
+                self,
+                "CST-Exportpaket-Ordner auswählen",
+                str(self.settings.work_path()),
+            )
+        if path:
+            self._import_cst_path(path)
+
+    def _import_cst_path(self, path: str) -> None:
+        """Inspect, configure and merge a CST export package."""
+        from app.freecad_io.cst_import import (
+            apply_cst_to_project,
+            import_cst_package,
+            inspect_cst_package,
+        )
+        from app.models.project import CstSpec
+        from app.ui.cst_import_dialog import CstImportDialog
+
+        spec = getattr(self.project, "cst", None) or CstSpec()
+        work_root = self.settings.work_path() / "imported"
+        try:
+            inspection = inspect_cst_package(
+                path, work_dir=work_root / "cst_packages"
+            )
+        except Exception as exc:  # noqa: BLE001 - GUI must report, not crash
+            QMessageBox.critical(
+                self, "CST-Import", f"Paket konnte nicht gelesen werden:\n{exc}"
+            )
+            self._log(f"CST import failed: {exc}")
+            return
+        if not inspection.ok:
+            message = "\n".join(inspection.warnings) or "Unbekannter Fehler"
+            QMessageBox.warning(self, "CST-Import", message)
+            self._log(f"CST import failed: {path}")
+            for warning in inspection.warnings:
+                self._log(f"WARNING: {warning}")
+            return
+
+        dialog = CstImportDialog(
+            self,
+            self.project,
+            inspection,
+            spec,
+            source=path,
+            target_unit=str(self.project.mesh.drawing_unit or "mm"),
+        )
+        if not dialog.exec():
+            return
+        spec = dialog.result_spec()
+
+        try:
+            package_name = Path(inspection.root).name or Path(path).stem
+            mesh_dir = work_root / f"{package_name}_cst_meshes"
+            result = import_cst_package(
+                inspection,
+                spec.import_options(
+                    target_unit=str(self.project.mesh.drawing_unit or "mm")
+                ),
+                out_dir=mesh_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 - GUI must report, not crash
+            QMessageBox.critical(
+                self, "CST-Import", f"Import fehlgeschlagen:\n{exc}"
+            )
+            self._log(f"CST import failed: {exc}")
+            return
+        if not result.ok:
+            message = "\n".join(result.warnings) or "Unbekannter Fehler"
+            QMessageBox.warning(self, "CST-Import", message)
+            self._log(f"CST import failed: {path}")
+            for warning in result.warnings:
+                self._log(f"WARNING: {warning}")
+            return
+
+        # A manifest.json and its containing folder are the same package for
+        # re-import purposes; keep one stable source key.
+        source_key = path
+        if Path(path).is_file() and Path(path).suffix.lower() == ".json":
+            source_key = str(inspection.root)
+        summary = apply_cst_to_project(self.project, result, source_key, spec)
+        self.primitives = [dict(p) for p in (self.project.primitives or [])]
+        self._sync_assignment_materials_to_primitives()
+        self._refresh_materials()
+        self._refresh_ports()
+        self._refresh_tree()
+        if spec.include_frequency:
+            self._sync_form_from_project()
+
+        frequency = result.frequency
+        freq_text = (
+            f"{frequency.start_hz / 1e9:g} \u2013 "
+            f"{frequency.stop_hz / 1e9:g} GHz"
+            if frequency is not None
+            else "unver\u00e4ndert"
+        )
+        lines = [
+            f"CST Studio Paket: {Path(path).name}",
+            f"Projekt: {inspection.project_name or Path(path).stem}",
+            f"Geometrie: {result.object_count} Objekte "
+            f"(neu {summary['added']}, ersetzt {summary['replaced']})",
+            f"Materialien: {len(result.materials)} "
+            f"(neu {summary['materials_added']})",
+            f"Ports: {len(result.ports)} "
+            f"(neu {summary['ports_added']}, ersetzt {summary['ports_replaced']})",
+            f"Frequenz: {freq_text}",
+            f"R\u00e4nder: "
+            + (", ".join(f"{k}={v}" for k, v in sorted(result.boundaries.items()))
+               or "unver\u00e4ndert"),
+            (
+                "Randabst\u00e4nde: "
+                + ", ".join(f"{v:g}" for v in result.air_margin)
+                + f" {self.project.mesh.drawing_unit}"
+                if len(result.air_margin) == 6
+                else "Randabst\u00e4nde: Projektwert beibehalten"
+            ),
+            f"Ziel-Einheit: {self.project.mesh.drawing_unit}",
+        ]
+        if result.warnings:
+            lines.append("")
+            lines.extend(f"WARNUNG: {warning}" for warning in result.warnings)
+        self.geom_info.setPlainText("\n".join(lines))
+        self._log(
+            f"CST importiert: {path} ({result.object_count} Objekte, "
+            f"{len(result.ports)} Ports, {summary['added']} Primitive)"
+        )
+        for warning in result.warnings:
+            self._log(f"WARNING: {warning}")
+
+    def _on_suggest_kicad_ports(self) -> None:
+        source = str(getattr(getattr(self.project, "kicad", None), "source", "") or "")
+        if not source or not Path(source).exists():
+            source, _ = QFileDialog.getOpenFileName(
+                self,
+                "KiCad PCB für Port-Vorschläge",
+                str(self.settings.work_path()),
+                "KiCad PCB (*.kicad_pcb);;Alle Dateien (*)",
+            )
+        if source:
+            self._suggest_kicad_ports(source)
+
+    def _suggest_kicad_ports(self, path: str, *, notify_empty: bool = True) -> None:
+        from app.freecad_io.kicad_ports import (
+            apply_port_candidates,
+            suggest_kicad_ports,
+        )
+        from app.models.project import KiCadSpec
+        from app.ui.kicad_ports_dialog import KiCadPortsDialog
+
+        source = Path(path)
+        if not source.exists():
+            self._log(f"KiCad port suggestions: file not found: {source}")
+            return
+        spec = getattr(self.project, "kicad", None) or KiCadSpec()
+        try:
+            candidates = suggest_kicad_ports(source, spec.import_options())
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(
+                self, "KiCad Ports", f"Port-Vorschläge fehlgeschlagen:\n{exc}"
+            )
+            self._log(f"KiCad port suggestions failed: {exc}")
+            return
+        if not candidates:
+            if notify_empty:
+                QMessageBox.information(
+                    self,
+                    "KiCad Ports",
+                    "Keine passenden Port-Kandidaten gefunden.\n\n"
+                    "Tipp: Netze wie RF_IN / RF_OUT / ANT oder Footprint-Properties "
+                    "openems_port / openems_port_type setzen.",
+                )
+            self._log("KiCad port suggestions: none found")
+            return
+
+        dialog = KiCadPortsDialog(self, candidates)
+        if not dialog.exec():
+            self._log("KiCad port suggestions cancelled")
+            return
+        selected = dialog.result_candidates()
+        added = apply_port_candidates(self.project, selected)
+        self._refresh_ports()
+        self._refresh_tree()
+        self._log(
+            f"KiCad port suggestions: {len(candidates)} found, {added} added "
+            f"({len(selected) - added} skipped/duplicate)"
+        )
+        if added:
+            self._log(
+                "  Ports: " + ", ".join(p.name for p in self.project.ports[-added:])
+            )
+
     def _on_freecad(self) -> None:
         """Launch FreeCAD GUI or export FCStd/STEP → openEMS meshes."""
         from app.ui.freecad_tools import FreeCADToolsDialog
@@ -3639,6 +5083,119 @@ class MainWindow(QMainWindow):
                 self._log(
                     f"Export ready (import skipped). Use Import Geometry… for: {src}"
                 )
+
+    def _on_open_mesh2freecad_params(self) -> None:
+        """Edit the project's Mesh2FreeCAD export options."""
+        from app.ui.mesh2freecad_params import Mesh2FreeCADParamsDialog
+
+        self._sync_project_from_form()
+        dlg = Mesh2FreeCADParamsDialog(self, self.project)
+        accepted = bool(dlg.exec())
+        if not accepted:
+            return
+        spec = self.project.mesh2freecad
+        self._log(
+            "Mesh2FreeCAD parameters: "
+            f"type={spec.fcstd_object_type}, step={spec.export_step}, "
+            f"voxel_grid={spec.voxel_grid} ({spec.voxel_grid_mode}), "
+            f"sheets={spec.include_sheets}, ports={spec.export_ports}, "
+            f"keep_temp={spec.keep_temp} (stored in the project file)"
+        )
+
+    def _on_mesh2freecad(self) -> None:
+        """Open the built mesh as discretised geometry in the FreeCAD GUI.
+
+        The export runs through the integrated discretised exporter: one
+        mesh-cell solid per object (cell-centre rule), optionally a STEP file
+        and the OpenEMS cell wireframe. Everything is written to a temporary
+        folder which is removed when FreeCAD (or VisualopenEMS) closes.
+        """
+        from app.freecad_io.mesh2freecad import Mesh2FreeCADOptions, export_and_open
+
+        csx = self.mesh_viewer.current_csx()
+        if csx is None:
+            QMessageBox.information(
+                self,
+                "Mesh2FreeCAD",
+                "No mesh loaded — build the mesh first (Mesh → Build Mesh).",
+            )
+            return
+        if getattr(self.project.mesh, "is_cylindrical", False):
+            QMessageBox.information(
+                self,
+                "Mesh2FreeCAD",
+                "Mesh2FreeCAD supports Cartesian meshes only.\n\n"
+                "The discretised cell export needs an x/y/z grid.",
+            )
+            return
+        prims = self.primitives or (self.project.primitives or [])
+        if not prims:
+            QMessageBox.information(
+                self,
+                "Mesh2FreeCAD",
+                "No geometry to export. Import a CAD file or add primitives first.",
+            )
+            return
+
+        spec = self.project.mesh2freecad
+        options = Mesh2FreeCADOptions(
+            export_step=bool(spec.export_step),
+            fcstd_object_type=str(spec.fcstd_object_type),
+            voxel_grid=bool(spec.voxel_grid),
+            voxel_grid_mode=str(spec.voxel_grid_mode),
+            include_sheets=bool(spec.include_sheets),
+            export_ports=bool(spec.export_ports),
+            keep_temp=bool(spec.keep_temp),
+        )
+        name = "".join(
+            c if c not in '<>:"/\\|?*' else "_"
+            for c in (str(self.project.name or "project").strip() or "project")
+        )
+        self._log(f"Mesh2FreeCAD: exporting mesh to a temporary FreeCAD document…")
+        last_pct = [-1]
+
+        def _progress(pct: int, msg: str) -> None:
+            if pct >= 0:
+                if pct >= last_pct[0] + 5:
+                    last_pct[0] = pct
+                    self._log(f"Mesh2FreeCAD: {pct}% {msg}")
+            elif msg:
+                self._log(f"Mesh2FreeCAD: {msg}")
+            QApplication.processEvents()
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            result = export_and_open(
+                self.project,
+                prims,
+                csx,
+                options=options,
+                freecad_cmd=self.settings.freecad_cmd,
+                freecad_gui=self.settings.freecad_gui,
+                name=name,
+                progress=_progress,
+            )
+        except Exception as e:  # noqa: BLE001 — an export must never kill the app
+            result = None
+            self._log(f"Mesh2FreeCAD failed: {type(e).__name__}: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if result is None:
+            QMessageBox.warning(
+                self, "Mesh2FreeCAD", "Mesh2FreeCAD failed — see the log."
+            )
+            return
+        for warning in result.warnings:
+            self._log(f"Mesh2FreeCAD: {warning}")
+        if result.log.strip():
+            self._log(result.log.strip())
+        if result.ok:
+            self._log(f"Mesh2FreeCAD: {result.message}")
+            return
+        self._log(f"Mesh2FreeCAD failed: {result.message}")
+        QMessageBox.warning(self, "Mesh2FreeCAD", result.message)
 
     def _on_export_grid(self) -> None:
         """Write the current FDTD grid lines as JSON (mm) for another solver.
@@ -4511,6 +6068,12 @@ class MainWindow(QMainWindow):
             self._refresh_tree()
 
     def _on_add_prim_polygon(self) -> None:
+        self._add_primitive_polygon(extruded=False)
+
+    def _on_add_prim_extruded_polygon(self) -> None:
+        self._add_primitive_polygon(extruded=True)
+
+    def _add_primitive_polygon(self, *, extruded: bool) -> None:
         from app.ui.geometry_editors import PrimitivePolygonDialog
 
         if self._polar_prim_blocked("polygon"):
@@ -4520,6 +6083,7 @@ class MainWindow(QMainWindow):
             coord_system=self.project.mesh.coord_system,
             unit=self.project.mesh.drawing_unit,
             size=self._dialog_size("primitive_polygon"),
+            extruded=extruded,
         )
         ok = dlg.exec()
         self._remember_dialog_size("primitive_polygon", dlg)
@@ -4528,10 +6092,53 @@ class MainWindow(QMainWindow):
             self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
             self.primitives.append(pr)
             self._store_object_display(pr["name"], dlg.display_values())
+            shape = (
+                "Extruded polygon" if float(pr.get("length") or 0.0) > 0.0
+                else "Polygon"
+            )
             self._log(
-                f"Polygon primitive: {pr['name']} axis={pr['axis']} "
+                f"{shape} primitive: {pr['name']} axis={pr['axis']} "
                 f"coord={pr['coord']} length={pr['length']} "
                 f"({len(pr['points'])} points)"
+            )
+            self._refresh_tree()
+
+    def _on_add_prim_wire(self) -> None:
+        self._add_primitive_polyline("wire")
+
+    def _on_add_prim_curve(self) -> None:
+        self._add_primitive_polyline("curve")
+
+    def _add_primitive_polyline(self, kind: str) -> None:
+        from app.ui.geometry_editors import PrimitivePolylineDialog
+
+        kind = "curve" if str(kind).lower() == "curve" else "wire"
+        if self._polar_prim_blocked(kind):
+            return
+        dlg = PrimitivePolylineDialog(
+            self,
+            kind=kind,
+            coord_system=self.project.mesh.coord_system,
+            unit=self.project.mesh.drawing_unit,
+            size=self._dialog_size(f"primitive_{kind}"),
+        )
+        ok = dlg.exec()
+        self._remember_dialog_size(f"primitive_{kind}", dlg)
+        if ok and dlg.result:
+            pr = dlg.result
+            self.primitives = [
+                p for p in self.primitives if p.get("name") != pr["name"]
+            ]
+            self.primitives.append(pr)
+            self._store_object_display(pr["name"], dlg.display_values())
+            self._log(
+                f"{kind.capitalize()} primitive: {pr['name']} "
+                f"({len(pr['points'])} points)"
+                + (
+                    f" radius={pr['radius']}"
+                    if kind == "wire" and "radius" in pr
+                    else ""
+                )
             )
             self._refresh_tree()
 
@@ -4605,6 +6212,22 @@ class MainWindow(QMainWindow):
             )
         else:
             self._log("Port type: Lumped (line from the clicked metal to the next)")
+
+    def _on_mesh_snap_sensitivity_changed(
+        self, band_frac: float, min_band: float, use_view: bool = True
+    ) -> None:
+        """Snap sensitivity chosen in the Mesh Viewer's right-click menu."""
+        frac = max(0.0, float(band_frac))
+        if frac <= 0.0:
+            self._log("Mesh editor: edge snapping OFF")
+            return
+        if use_view:
+            text = f"{frac * 100:g} % of the visible axis span (zoom-relative)"
+        else:
+            text = f"{frac * 100:g} % of the simulation domain"
+            if float(min_band) > 0.0:
+                text += f", at least {float(min_band):g} mm"
+        self._log(f"Mesh editor: edge snapping {text}")
 
     def _primitive_span(self, name: str, axis: str) -> tuple[float, float] | None:
         """Extent of the project primitive ``name`` along ``axis`` (None if unknown).
@@ -4887,8 +6510,15 @@ class MainWindow(QMainWindow):
         try:
             if getattr(self.mesh_viewer, "_csx", None) is None:
                 self._log("(Mesh Viewer: build mesh first — the NF2FF frame is drawn from the built mesh)")
+                self._refresh_design_viewer(fit=False)
                 return
-            self.mesh_viewer.set_nf2ff(self.project.nf2ff)
+            nf = self.project.nf2ff
+            enabled = bool(
+                getattr(self.project.sim, "nf2ff_enabled", False)
+                and getattr(nf, "enabled", False)
+            )
+            self.mesh_viewer.set_nf2ff(nf if enabled else None)
+            self._refresh_design_viewer(fit=False)
         except Exception as e:  # noqa: BLE001 — viewer must not block editing
             print(f"viewer NF2FF refresh failed: {e}")
 
@@ -4910,6 +6540,7 @@ class MainWindow(QMainWindow):
                 0.5 * (dlg.result_start[i] + dlg.result_stop[i]) for i in range(3)
             ]
             n.enabled = True
+            self._set_nf2ff_box_mode("manual")
             self.project.sim.nf2ff_enabled = True
             self.chk_nf2ff.setChecked(True)
             self._log(f"NF2FF box: {n.start} → {n.stop}")
@@ -4956,6 +6587,7 @@ class MainWindow(QMainWindow):
         n.stop = [float(v) for v in stop]
         n.center = [0.5 * (start[i] + stop[i]) for i in range(3)]
         n.enabled = True
+        self._set_nf2ff_box_mode("auto")
         self.project.sim.nf2ff_enabled = True
         self.chk_nf2ff.setChecked(True)
         self._log(f"NF2FF fitted to geometry + air margin≈{margin:.3g}: {n.start} → {n.stop}")
@@ -5034,6 +6666,9 @@ class MainWindow(QMainWindow):
         # Mesh Viewer right away — the list refresh is the common end point of
         # all those actions
         self._maybe_refresh_viewer_geometry()
+        # Keep the embedded 3D design view in sync with the same edits; the
+        # camera is preserved unless the tab is opened explicitly.
+        self._refresh_design_viewer(fit=False)
 
     def _tree_key_press(self, event) -> None:
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
@@ -5169,6 +6804,8 @@ class MainWindow(QMainWindow):
             it = self.tree.item(i)
             if it.data(Qt.UserRole) == kind and it.data(Qt.UserRole + 1) == idx:
                 self.tree.setCurrentRow(i)
+                self.tree.scrollToItem(it)
+                self.tree.setFocus()
                 return
 
     def _on_tree_double_clicked(self, item: QListWidgetItem) -> None:
@@ -5177,6 +6814,41 @@ class MainWindow(QMainWindow):
         kind = "" if kind_raw is None else str(kind_raw)
         idx = 0 if idx_raw is None else int(idx_raw)
         self._edit_tree_entry(kind, idx)
+
+    def _selected_object_names(self) -> list[str]:
+        """Scene-object names for all selected Prim entries (unique)."""
+        names: list[str] = []
+        for item in self.tree.selectedItems():
+            k_raw = item.data(Qt.UserRole)
+            i_raw = item.data(Qt.UserRole + 1)
+            kind = "" if k_raw is None else str(k_raw)
+            idx = -1 if i_raw is None else int(i_raw)
+            if kind == "prim" and 0 <= idx < len(self.primitives):
+                name = str(self.primitives[idx].get("name") or "")
+                if name and name not in names:
+                    names.append(name)
+        return names
+
+    def _set_objects_visible(self, names: list[str], visible: bool) -> None:
+        if not names:
+            return
+        if not isinstance(getattr(self.project, "object_display", None), dict):
+            self.project.object_display = {}
+        for name in names:
+            d = self._object_display(name)
+            d["visible"] = bool(visible)
+            self.project.object_display[name] = normalize_display(d)
+        viewer = getattr(self, "mesh_viewer", None)
+        if viewer is not None:
+            try:
+                viewer.refresh_view()
+            except Exception as e:  # noqa: BLE001
+                print("mesh viewer visibility refresh failed:", e)
+        self._refresh_design_viewer(fit=False)
+        self._log(
+            f"{'Shown' if visible else 'Hidden'} {len(names)} object(s): "
+            + ", ".join(names)
+        )
 
     def _on_tree_context_menu(self, pos) -> None:
         from PySide6.QtWidgets import QMenu
@@ -5190,8 +6862,19 @@ class MainWindow(QMainWindow):
         idx_raw = item.data(Qt.UserRole + 1)
         kind = "" if kind_raw is None else str(kind_raw)
         idx = 0 if idx_raw is None else int(idx_raw)
-        self.tree.setCurrentItem(item)
+        # A right-click on a selected row keeps the multi-selection; a
+        # right-click on another row starts a new single selection.
+        if item not in self.tree.selectedItems():
+            self.tree.clearSelection()
+            item.setSelected(True)
+            self.tree.setCurrentItem(item)
         menu = QMenu(self)
+        selected_names = self._selected_object_names()
+        act_show = menu.addAction("Show selected objects")
+        act_show.setEnabled(bool(selected_names))
+        act_hide = menu.addAction("Hide selected objects")
+        act_hide.setEnabled(bool(selected_names))
+        menu.addSeparator()
         act_edit = menu.addAction("Edit…")
         act_edit.setEnabled(kind != "geom")
         act_dup = menu.addAction("Duplicate")
@@ -5199,9 +6882,15 @@ class MainWindow(QMainWindow):
         act_del = menu.addAction("Remove")
         act_del.setEnabled(kind in {"geom", "prim", "assign", "mat", "port", "dump", "nf2ff"})
         menu.addSeparator()
-        self._add_project_panel_actions(menu)
+        self._add_project_panel_add_menu(menu)
+        menu.addSeparator()
+        self._add_object_selection_choices(menu)
         chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
-        if chosen is act_edit:
+        if chosen is act_show:
+            self._set_objects_visible(selected_names, True)
+        elif chosen is act_hide:
+            self._set_objects_visible(selected_names, False)
+        elif chosen is act_edit:
             self._edit_tree_entry(kind, idx)
         elif chosen is act_dup:
             self._on_duplicate_selected_tree()
@@ -5222,14 +6911,16 @@ class MainWindow(QMainWindow):
                 return
             pr = self.primitives[idx]
             ptype = str(pr.get("kind", "box"))
-            if ptype in {"box", "cylinder", "sphere", "polygon"}:
-                if ptype in {"sphere", "polygon"} and self._polar_prim_blocked(ptype):
+            if ptype in {"box", "cylinder", "sphere", "polygon", "wire", "curve"}:
+                if ptype in {"sphere", "polygon", "wire", "curve"} and self._polar_prim_blocked(ptype):
                     return
                 from app.ui.geometry_editors import (
                     PrimitiveBoxDialog,
+                    PrimitiveCurveDialog,
                     PrimitiveCylinderDialog,
                     PrimitivePolygonDialog,
                     PrimitiveSphereDialog,
+                    PrimitiveWireDialog,
                 )
 
                 dialog_cls = {
@@ -5237,20 +6928,22 @@ class MainWindow(QMainWindow):
                     "cylinder": PrimitiveCylinderDialog,
                     "sphere": PrimitiveSphereDialog,
                     "polygon": PrimitivePolygonDialog,
+                    "wire": PrimitiveWireDialog,
+                    "curve": PrimitiveCurveDialog,
                 }[ptype]
                 kwargs: dict[str, object] = {
                     "prim": pr,
                     "coord_system": self.project.mesh.coord_system,
                     "display": self._object_display(str(pr.get("name") or "")),
                 }
-                if ptype == "polygon":
-                    # only the polygon dialog has a live preview that labels units
+                if ptype in ("polygon", "wire", "curve"):
+                    # unit-labelled point editors
                     kwargs["unit"] = self.project.mesh.drawing_unit
-                    kwargs["size"] = self._dialog_size("primitive_polygon")
+                    kwargs["size"] = self._dialog_size(f"primitive_{ptype}")
                 dlg = dialog_cls(self, **kwargs)
                 ok = dlg.exec()
-                if ptype == "polygon":
-                    self._remember_dialog_size("primitive_polygon", dlg)
+                if ptype in ("polygon", "wire", "curve"):
+                    self._remember_dialog_size(f"primitive_{ptype}", dlg)
                 if ok and dlg.result:
                     old_name = pr.get("name")
                     self.primitives[idx] = dlg.result
@@ -5613,6 +7306,10 @@ class MainWindow(QMainWindow):
             from app.meshing.timing import summary_line
 
             self._log(summary_line(self._last_mesh_timing))
+            self._suggest_timesteps_for(self.sim_params, apply=False)
+            dlg = getattr(self, "_sim_params_dlg", None)
+            if dlg is not None:
+                self._suggest_timesteps_for(dlg.panel, apply=False)
         if self._last_coord_diag is not None:
             from app.meshing.coord_diag import summary_line as coord_summary_line
 
@@ -5627,7 +7324,12 @@ class MainWindow(QMainWindow):
                 self._log(crit_summary(crit) + " - marked in the Mesh Viewer")
         except Exception as e:  # noqa: BLE001 — a mark must not fail the build
             self._log(f"Mesh Viewer critical cells failed: {e}")
-        self._record_results(save=False)
+        # A new/aborted project must not pick up old S-params or NF2FF files
+        # from a reused work folder just because the mesh is rebuilt.
+        self._record_results(
+            save=False,
+            only=None if self._allow_auto_results else {"csx_xml"},
+        )
         return text
 
     def _prepare_run_state(self, work: Path) -> None:
@@ -5648,12 +7350,19 @@ class MainWindow(QMainWindow):
             )
 
     def _generate_script(self, work: Path) -> Path:
-        """Save the project and (re)write work/project_run.py.
+        """Save the project JSON outside ``work`` and write ``work/project_run.py``.
 
-        Hand-edits of the previous script are detected via the pristine
+        The project file is always the sibling ``<work>.fcsim.json`` (one level
+        above the data folder), never ``<work>/project.fcsim.json``.  Hand-edits
+        of the previous script are detected via the pristine
         project_run.py.lastgen copy and backed up to project_run_edited.py.
         """
-        project_path = self.project.save(work / "project.fcsim.json")
+        project_path = self._project_file_path()
+        project_path.parent.mkdir(parents=True, exist_ok=True)
+        project_path = self.project.save(project_path)
+        if not self._current_file_path:
+            self._current_file_path = Path(project_path)
+            self._update_window_title()
         previous = _read_text(work / "project_run.py")
         script = generate_run_script(self.project, project_path, work, primitives=self.primitives)
         self._note_script_backup(work, previous)
@@ -5760,9 +7469,12 @@ class MainWindow(QMainWindow):
         if self.runner.is_running() or self._multi_plans is not None:
             QMessageBox.warning(self, "Busy", "A simulation is already running.")
             return
+        self._discard_result_state("new simulation")
         self._begin_run_log("Run Simulation")
         self._run_step("Preparing run (project, work dir, geometry)")
         work = self._project_work_dir()
+        self._backup_project_before_run()
+        self._clean_project_data(work)
         self._prepare_run_state(work)
         f0 = self.project.mesh.target_frequency or 2.45e9
         fc = max(1e6, 0.5 * abs(self.project.mesh.stop_frequency - self.project.mesh.start_frequency))
@@ -5776,7 +7488,13 @@ class MainWindow(QMainWindow):
             )
         self._log_computed_summary()
         self._run_step("Generating run script")
-        script = self._run_script_for(work)
+        try:
+            script = self._run_script_for(work)
+        except Exception as e:  # noqa: BLE001 — e.g. locked old simulation folder
+            QMessageBox.critical(self, "Run preparation failed", str(e))
+            self._log(f"Run preparation failed: {e}")
+            self._end_run_log("Run preparation failed")
+            return
         self._log(
             f"Sim settings: f0={f0/1e9:.3f} GHz, max_timesteps={self.project.sim.max_timesteps}, "
             f"end_criteria={self.project.sim.end_criteria}, "
@@ -5784,6 +7502,10 @@ class MainWindow(QMainWindow):
         )
         self._reset_engine_progress()
         self._run_step("Starting openEMS (FDTD)")
+        # Timestamp for post-processing: only files written by THIS run may be
+        # loaded.  A failed run must not resurrect an old sparams/nf2ff file
+        # from the reused project folder.
+        run_started = time.time()
         try:
             # _log is thread-safe (queue only) — do not pass Signal.emit
             self.runner.start(script, log_cb=self._log)
@@ -5802,29 +7524,67 @@ class MainWindow(QMainWindow):
                 exit_code = getattr(self.runner, "last_exit", None)
                 log_path = getattr(self.runner, "log_path", None)
                 self._run_step("openEMS finished — loading results")
-                files = self._find_sparams_files(work)
+
+                def _fresh(path: Path) -> bool:
+                    try:
+                        return path.stat().st_mtime >= run_started - 2.0
+                    except OSError:
+                        return False
+
+                files = [f for f in self._find_sparams_files(work) if _fresh(f)]
                 found = files[-1] if files else None
                 # Antenna pattern (NF2FF) — load alongside the S-params result
-                nf2ff_json = work / "nf2ff" / "nf2ff.json"
+                nf2ff_json: Path | None = work / "nf2ff" / "nf2ff.json"
                 if not nf2ff_json.exists():
                     legacy = work / "simulation" / "nf2ff" / "nf2ff.json"
-                    nf2ff_json = legacy if legacy.exists() else nf2ff_json
-                if nf2ff_json.exists():
+                    nf2ff_json = legacy if legacy.exists() else None
+                if nf2ff_json is not None and not _fresh(nf2ff_json):
+                    self._log(
+                        f"Antenna pattern ignored (old file from an earlier run): "
+                        f"{nf2ff_json}"
+                    )
+                    nf2ff_json = None
+                if nf2ff_json is not None:
                     try:
                         self.antenna_viewer.set_work_dir(self.settings.work_path())
                         self.antenna_viewer.load_path(nf2ff_json)
+                        self._allow_auto_nf2ff = True
                         self._log(f"Antenna pattern ready: {nf2ff_json}")
                     except Exception as e:  # noqa: BLE001
+                        self._allow_auto_nf2ff = False
                         self._log(f"Antenna pattern load failed: {e}")
+                run_ok = exit_code in (0, None)
                 if found:
+                    # The file belongs to THIS run (fresh timestamp).  Load it
+                    # even when the solver crashed, but mark it clearly as
+                    # untrusted instead of claiming that no S-params exist.
                     self.sparam_viewer.set_work_dir(self._project_work_dir())
-                    self.sparam_viewer.load_path(found)
-                    if self.sparam_tab_index >= 0:
-                        self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
-                    self._log(f"S-param results ready: {found}")
-                    if exit_code not in (0, None):
-                        self._log(f"WARNING: simulation exit code {exit_code} (S-params may be partial)")
-                else:
+                    try:
+                        self.sparam_viewer.load_path(found)
+                        self._allow_auto_results = True
+                        if self.sparam_tab_index >= 0:
+                            self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
+                        if not run_ok:
+                            note = (
+                                f"UNTRUSTED — simulation exit code {exit_code}; "
+                                "the run did not finish successfully"
+                            )
+                            self.sparam_viewer.set_untrusted(note)
+                            self._log(
+                                f"WARNING: S-param file written by failed run "
+                                f"(exit {exit_code}); loaded as UNTRUSTED: {found}"
+                            )
+                        else:
+                            self._record_results(save=False)
+                            self._log(f"S-param results ready: {found}")
+                    except Exception as e:  # noqa: BLE001
+                        self.sparam_viewer.clear()
+                        self._allow_auto_results = False
+                        self._log(f"Could not load generated S-params: {e}")
+                        found = None
+                if not found:
+                    self.sparam_viewer.clear()
+                    self._allow_auto_results = False
                     self._log(f"S-param results MISSING under: {work}")
                     self._log(f"Simulation exit code: {exit_code}")
                     if log_path:
@@ -5832,8 +7592,6 @@ class MainWindow(QMainWindow):
                     self._log(
                         "Look for: S-param postproc FAILED / CalcPort failed / mesh validation failed"
                     )
-                    self.sparam_viewer.set_work_dir(self._project_work_dir())
-                    self._auto_load_sparams_if_empty()
                     if self.sparam_tab_index >= 0:
                         self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
                     QMessageBox.warning(
@@ -5844,7 +7602,24 @@ class MainWindow(QMainWindow):
                         f"Log: {log_path}\n\n"
                         "Check the simulator log for CalcPort / export / mesh errors.",
                     )
-                self._publish_sim_report(work, exit_code, log_path)
+                elif not run_ok:
+                    # A failed run with a generated file is not "missing" - it
+                    # is loaded and marked UNTRUSTED in the viewer.
+                    if log_path:
+                        self._log(f"Full simulation log: {log_path}")
+                    QMessageBox.warning(
+                        self,
+                        "Simulation failed — results are untrusted",
+                        f"The simulation ended with exit code {exit_code}.\n\n"
+                        f"The generated S-param file was loaded for inspection:\n"
+                        f"{found}\n\n"
+                        "It is marked UNTRUSTED because the run did not finish "
+                        "successfully. See the simulation status/report for details.\n\n"
+                        f"Log: {log_path}",
+                    )
+                self._publish_sim_report(
+                    work, exit_code, log_path, include_sparams=bool(found)
+                )
                 self._end_run_log()
             except Exception as e:  # noqa: BLE001
                 print("post-sim viewer error:", e)
@@ -5872,9 +7647,12 @@ class MainWindow(QMainWindow):
             self._log("Run All Ports: fewer than 2 ports — running the normal simulation")
             self._on_run()
             return
+        self._discard_result_state("new simulation (all ports)")
         self._begin_run_log("Run All Ports")
         self._run_step("Preparing run (project, work dir, geometry)")
         work = self._project_work_dir()
+        self._backup_project_before_run()
+        self._clean_project_data(work)
         self._prepare_run_state(work)
         from app.simulation.multirun import plan_port_runs
 
@@ -5946,12 +7724,22 @@ class MainWindow(QMainWindow):
         plans = self._multi_plans or []
         self._multi_plans = None
         work = self._project_work_dir()
+        if getattr(self, "_abort_requested", False):
+            self._log(
+                "Run All Ports aborted by the user — partial results are not merged"
+            )
+            self.sparam_viewer.clear()
+            self._allow_auto_results = False
+            self._end_run_log("Run All Ports aborted")
+            return
         self._run_step("Merging port runs")
         try:
             result = merge_port_runs(work, plans)
         except Exception as e:  # noqa: BLE001
             self._log(f"Multi-run merge failed: {e}")
             QMessageBox.warning(self, "Merge failed", str(e))
+            self.sparam_viewer.clear()
+            self._allow_auto_results = False
             self._end_run_log("Run All Ports failed while merging")
             return
         if result["missing"]:
@@ -5969,10 +7757,15 @@ class MainWindow(QMainWindow):
             if found:
                 self.sparam_viewer.set_work_dir(work)
                 self.sparam_viewer.load_path(found[-1])
+                self._allow_auto_results = True
                 if self.sparam_tab_index >= 0:
                     self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
                 self._log(f"S-param results ready: {found[-1]}")
+            else:
+                self.sparam_viewer.clear()
+                self._allow_auto_results = False
         except Exception as e:  # noqa: BLE001 — merge succeeded, viewer is best-effort
+            self._allow_auto_results = False
             self._log(f"S-param viewer update failed: {e}")
         self._publish_sim_report(
             work, getattr(self.runner, "last_exit", None),
@@ -5980,12 +7773,16 @@ class MainWindow(QMainWindow):
         )
         self._end_run_log()
 
-    def _publish_sim_report(self, work: Path, exit_code, log_path) -> str:
+    def _publish_sim_report(
+        self, work: Path, exit_code, log_path, *, include_sparams: bool = True
+    ) -> str:
         """Post-run status report: append it to the log, keep it for the menu.
 
         Collects solver errors/warnings, convergence, the engine's timing facts
         and the passivity (``|S11|^2 + |S21|^2``) of the measured S-parameters,
         so a finished run can be judged without reading the whole log.
+        ``include_sparams=False`` is used for a failed run: files left from an
+        earlier run must not be reported as this run's result.
         """
         text = ""
         try:
@@ -5997,11 +7794,15 @@ class MainWindow(QMainWindow):
                 log_text = p.read_text(encoding="utf-8", errors="replace")
             sparams = None
             sp_path = ""
-            files = self._find_sparams_files(work)
+            files = self._find_sparams_files(work) if include_sparams else []
             # _find_sparams_files prefers the merged Touchstone; the passivity
             # check needs the JSON, so look for that separately.
-            json_cands = [f for f in files if f.suffix.lower() == ".json"]
-            if not json_cands:
+            json_cands = (
+                [f for f in files if f.suffix.lower() == ".json"]
+                if include_sparams
+                else []
+            )
+            if include_sparams and not json_cands:
                 for sub in ("sparams", "simulation"):
                     cand = Path(work) / sub / "sparams.json"
                     if cand.is_file():
@@ -6135,6 +7936,20 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _on_field_streamlines_changed(self, options: dict) -> None:
+        """Persist the Field Viewer streamline appearance and mirror the pop-out."""
+        self.settings.field_viewer_streamlines = dict(options or {})
+        try:
+            self.settings.save()
+        except Exception:  # noqa: BLE001 - never block the viewer on a write error
+            pass
+        win = getattr(getattr(self, "vtk_viewer", None), "_popout_win", None)
+        if win is not None and getattr(win, "viewer", None) is not None:
+            try:
+                win.viewer.set_streamline_options(options)
+            except Exception:  # noqa: BLE001
+                pass
+
     def _on_display_geometry_changed(self, value: str) -> None:
         """Remember the Display popup's size/position for the next open."""
         self.settings.field_viewer_display_geometry = str(value or "")
@@ -6173,7 +7988,7 @@ class MainWindow(QMainWindow):
         )
         from app.ui.vtk_viewer import DEFAULT_VIEWER_LAYOUT, VIEWER_LAYOUTS, VIEW_PRESETS
 
-        dlg = QDialog(self)
+        dlg = _ConfirmDiscardDialog(self)
         dlg.setWindowTitle("Viewer settings")
         dlg.resize(540, 470)
         geo = self._dialog_geometry("viewer_settings_tabs")
@@ -6188,12 +8003,15 @@ class MainWindow(QMainWindow):
         colour_layout = QVBoxLayout(tab_colour)
         tab_bar = QWidget()
         bar_layout = QVBoxLayout(tab_bar)
+        tab_mesh = QWidget()
+        mesh_color_layout = QVBoxLayout(tab_mesh)
         tabs.addTab(tab_viewer, "Viewer")
         tabs.addTab(tab_colour, "Colour")
         tabs.addTab(tab_bar, "Colour bar")
+        tabs.addTab(tab_mesh, "Mesh colours")
         try:
             tabs.setCurrentIndex(
-                max(0, min(2, int(getattr(self.settings, "viewer_settings_tab", 0))))
+                max(0, min(3, int(getattr(self.settings, "viewer_settings_tab", 0))))
             )
         except (TypeError, ValueError):
             tabs.setCurrentIndex(0)
@@ -6450,6 +8268,62 @@ class MainWindow(QMainWindow):
         tform.addRow("Text size", spn_title_size)
         tform.addRow("Rotation", spn_title_rot)
         bar_layout.addWidget(grp_title)
+
+        # --- Mesh Viewer overlay colours + critical-cell threshold ----------
+        from app.ui.mesh_viewer import CRITICAL_PENALTY_STEPS, DEFAULT_MESH_COLORS
+
+        grp_mesh = QGroupBox("Mesh Viewer overlays")
+        mform = QFormLayout(grp_mesh)
+        mesh_colors = dict(DEFAULT_MESH_COLORS)
+        mesh_colors.update(self.mesh_viewer.colors())
+
+        def _color_button(key: str, label: str, tip: str) -> QPushButton:
+            btn = QPushButton()
+
+            def _paint() -> None:
+                color = QColor(mesh_colors.get(key, "#000000"))
+                btn.setText(color.name())
+                btn.setStyleSheet(
+                    f"background-color:{color.name()}; "
+                    f"color:{'white' if color.lightness() < 128 else 'black'};"
+                )
+
+            def _choose() -> None:
+                color = QColorDialog.getColor(QColor(mesh_colors.get(key, "#000000")), dlg, label)
+                if color.isValid():
+                    mesh_colors[key] = color.name()
+                    _paint()
+
+            btn.setToolTip(tip)
+            btn.clicked.connect(_choose)
+            _paint()
+            mform.addRow(label, btn)
+            return btn
+
+        _color_button("grid", "Mesh grid", "Colour of the mesh grid lines.")
+        _color_button("domain", "Domain frame", "Colour of the dashed FDTD domain outline.")
+        _color_button("nf2ff", "NF2FF frame", "Colour of the NF2FF integration box.")
+        _color_button("port", "Ports (active)", "Colour of active ports.")
+        _color_button("port_inactive", "Ports (inactive)", "Colour of switched-off ports.")
+        _color_button(
+            "critical",
+            "Critical cells",
+            "Base colour of critical cells. The fill gets stronger at 10x/100x runtime penalty.",
+        )
+        cmb_penalty = QComboBox()
+        for value in CRITICAL_PENALTY_STEPS:
+            label = "1x (all)" if value == 1.0 else f"{value:g}x"
+            cmb_penalty.addItem(label, value)
+        idx_pen = cmb_penalty.findData(self.mesh_viewer.critical_threshold())
+        cmb_penalty.setCurrentIndex(idx_pen if idx_pen >= 0 else 0)
+        cmb_penalty.setToolTip(
+            "Hide critical cells below this runtime penalty.\n"
+            "Fine steps from 1x to 10x, then coarser to 100x."
+        )
+        mform.addRow("Critical threshold", cmb_penalty)
+        mesh_color_layout.addWidget(grp_mesh)
+        mesh_color_layout.addStretch(1)
+
         viewer_layout.addStretch(1)
         colour_layout.addStretch(1)
         bar_layout.addStretch(1)
@@ -6473,6 +8347,8 @@ class MainWindow(QMainWindow):
             "title": self.vtk_viewer.bar_title_options(),
             "color_bar": self.vtk_viewer.color_bar_options(),
             "layout": self.vtk_viewer.layout_mode(),
+            "mesh_colors": self.mesh_viewer.colors(),
+            "critical_threshold": self.mesh_viewer.critical_threshold(),
         }
 
         def _collect_options() -> dict:
@@ -6507,7 +8383,32 @@ class MainWindow(QMainWindow):
                     "font_size": int(spn_bar_font.value()),
                 },
                 "layout": str(cmb_layout.currentData() or DEFAULT_VIEWER_LAYOUT),
+                "mesh_colors": dict(mesh_colors),
+                "critical_threshold": float(
+                    cmb_penalty.currentData() or 1.0
+                ),
             }
+
+        def _confirm_discard() -> bool:
+            """Ask before closing the dialog with unsaved viewer settings."""
+            try:
+                dirty = _collect_options() != snapshot
+            except Exception:  # noqa: BLE001 - never block closing on a bad read
+                dirty = False
+            if not dirty:
+                return True
+            reply = QMessageBox.question(
+                dlg,
+                "Unsaved viewer settings",
+                "Viewer settings have been changed but not saved.\n\n"
+                "Discard these changes?",
+                QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            return reply == QMessageBox.StandardButton.Discard
+
+        dlg.confirm_reject = _confirm_discard
 
         def _apply_options(opts: dict, *, persist: bool) -> None:
             """Push options to the viewer (and pop-out), optionally save them."""
@@ -6531,6 +8432,10 @@ class MainWindow(QMainWindow):
                 target.set_bar_title_options(dict(opts["title"]))
                 target.set_color_bar_options(dict(opts["color_bar"]))
                 target.set_layout_mode(str(opts["layout"]))
+            self.mesh_viewer.set_colors(dict(opts["mesh_colors"]))
+            self.mesh_viewer.set_critical_threshold(
+                float(opts["critical_threshold"])
+            )
             if not persist:
                 return
             self.settings.field_viewer_autoplay = bool(opts["autoplay"])
@@ -6542,6 +8447,10 @@ class MainWindow(QMainWindow):
             self.settings.field_viewer_title = dict(opts["title"])
             self.settings.field_viewer_color_bar = dict(opts["color_bar"])
             self.settings.field_viewer_layout = str(opts["layout"])
+            self.settings.mesh_viewer_colors = dict(opts["mesh_colors"])
+            self.settings.mesh_critical_min_penalty = float(
+                opts["critical_threshold"]
+            )
             self.settings.save()
 
         bb = QDialogButtonBox(

@@ -7,6 +7,7 @@ import pytest
 from pathlib import Path
 
 from app.postproc.vtk_export import (
+    _migrate_flat_vtk,
     dump_series_to_vtr,
     dump_to_vtr,
     export_dumps_to_vtk,
@@ -89,6 +90,26 @@ def test_export_dir_skips_empty(tmp_path):
     out = export_dumps_to_vtk(sim)
     names = sorted(p.name for p in out)
     assert names == ["Et-E.vtr"]
+    assert out[0].parent.name == "Et-E", "each dump gets its own folder"
+
+
+def test_legacy_flat_exports_are_migrated(tmp_path):
+    """Old flat vtk/<stem>.vtr files move into vtk/<stem>/ on the next export."""
+    for name in (
+        "E_full.vtr",
+        "E_full_0000.vtr",
+        "E_full_0001.vtr",
+        "E_full.series.json",
+        "E_full.pvd",
+        "H_full.vtr",
+    ):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    assert _migrate_flat_vtk(tmp_path) == 6
+    assert (tmp_path / "E_full" / "E_full.vtr").exists()
+    assert (tmp_path / "E_full" / "E_full_0001.vtr").exists()
+    assert (tmp_path / "E_full" / "E_full.series.json").exists()
+    assert (tmp_path / "H_full" / "H_full.vtr").exists()
+    assert not list(tmp_path.glob("*.vtr"))
 
 
 def test_reversed_axis_order_is_oriented(tmp_path):
@@ -330,7 +351,7 @@ def test_series_export_removes_stale_steps(tmp_path):
     h5 = sim / "Et-H.h5"
     _make_td_dump(h5, 3)
     export_dumps_to_vtk(sim, per_step=True)
-    vtk_dir = tmp_path / "vtk"
+    vtk_dir = tmp_path / "vtk" / "Et-H"
     assert (vtk_dir / "Et-H_0002.vtr").exists()
 
     # re-run with fewer stored steps -> the old tail must not linger in the slider
@@ -412,8 +433,9 @@ def test_series_pvd_rebuilt_for_old_series(tmp_path):
     h5 = tmp_path / "Et-H.h5"
     _make_td_dump(h5, 2)
     out = tmp_path / "out"
-    dump_series_to_vtr(h5, out)
-    pvd = out / "Et-H.pvd"
+    dump_dir = out / "Et-H"
+    dump_series_to_vtr(h5, dump_dir)
+    pvd = dump_dir / "Et-H.pvd"
     assert pvd.exists()
     pvd.unlink()
 
@@ -423,7 +445,7 @@ def test_series_pvd_rebuilt_for_old_series(tmp_path):
     (sim / "Et-H.h5").write_bytes(h5.read_bytes())
     import os
 
-    now = (out / "Et-H.series.json").stat().st_mtime
+    now = (dump_dir / "Et-H.series.json").stat().st_mtime
     os.utime(sim / "Et-H.h5", (now - 60, now - 60))  # sidecar stays newer
     export_dumps_to_vtk(sim, out, per_step=True)
     assert pvd.exists()

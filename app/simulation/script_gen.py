@@ -153,8 +153,9 @@ def generate_run_script(
     geometry_json = work_dir / "geometry_primitives.json"
     geometry_json.write_text(json.dumps(prims, indent=2), encoding="utf-8")
 
-    project_json = work_dir / "project_copy.json"
-    project_json.write_text(json.dumps(project.to_dict(), indent=2), encoding="utf-8")
+    # Use Project.save so the run snapshot also stores paths relative to the
+    # project folder (it can be copied together with the results).
+    project_json = project.save(work_dir / "project_copy.json")
 
     script = SCRIPT_TEMPLATE
     script = script.replace("__APP_ROOT__", str(app_root))
@@ -457,8 +458,12 @@ def main() -> int:
         _init["OverSampling"] = int(_sim.over_sampling)
     if getattr(_sim, "time_step_factor", None):
         _init["TimeStepFactor"] = float(_sim.time_step_factor)
-    if getattr(_sim, "time_step_method", None):
-        _init["TimeStepMethod"] = int(_sim.time_step_method)
+    _tsm = getattr(_sim, "time_step_method", None)
+    # openEMS's default is Rennings2.  With a very thin copper layer next to a
+    # coarse substrate cell (0.0178 mm / 0.71 mm, grading ~39) that method can
+    # inject late-time energy; the field never settles and S11 exceeds 0 dB.
+    # CFL is the stable default for this app; an explicit 3 stays available.
+    _init["TimeStepMethod"] = int(_tsm) if _tsm else 1
     if getattr(_sim, "cell_constant_material", False):
         _init["CellConstantMaterial"] = 1
     FDTD = openEMS(**_init)
@@ -536,6 +541,17 @@ def main() -> int:
                     FDTD.AddEdges2Grid(dirs=dirs, properties=prop, metal_edge_res=pr.get("metal_edge_res"))
                 except Exception as e:
                     print("AddEdges2Grid warning:", e)
+        elif kind in ("wire", "curve"):
+            pts = [pt for pt in (pr.get("points") or []) if len(pt) >= 3]
+            if len(pts) < 2:
+                raise ValueError(
+                    f"{kind.capitalize()} primitive '{name}' needs >= 2 points"
+                )
+            cols = [[f32(pt[k]) for pt in pts] for k in range(3)]
+            if kind == "wire":
+                prop.AddWire(cols, float(pr.get("radius", 0.5)), priority=pri)
+            else:
+                prop.AddCurve(cols, priority=pri)
         elif kind == "polygon":
             axis = pr.get("axis", "z")
             coord = f32(pr.get("coord", 0.0))
@@ -607,6 +623,24 @@ def main() -> int:
     # Switched-off ports (active=False) are not written at all: openEMS numbers
     # ports consecutively, so only the active ones count (1, 2, 3, …).
     active_ports = [p for p in project.ports if bool(getattr(p, "active", True))]
+    # Excitation phase is defined at the project's target frequency.  openEMS
+    # takes a time delay; exp(-j*2*pi*f*delay) means a non-negative delay of
+    # (360-phase) degrees reproduces the requested +phase at f0.
+    _f_exc = float(
+        project.mesh.target_frequency
+        or 0.5 * (project.mesh.start_frequency + project.mesh.stop_frequency)
+        or 1e9
+    )
+
+    def _excitation_kwargs(port) -> dict:
+        if not bool(getattr(port, "excite_port", False)):
+            return {}
+        phase = float(getattr(port, "excite_phase_deg", 0.0) or 0.0)
+        if abs(phase) < 1e-12 or _f_exc <= 0.0:
+            return {}
+        delay = ((360.0 - phase) % 360.0) / (360.0 * _f_exc)
+        return {"delay": delay} if delay > 0.0 else {}
+
     inactive = [p for p in project.ports if not bool(getattr(p, "active", True))]
     if inactive:
         print(
@@ -628,6 +662,7 @@ def main() -> int:
                 1.0 if port.excite_port else 0.0,
                 priority=15,
                 edges2grid=port.mesh_dirs if port.mesh_dirs else "xy",
+                **_excitation_kwargs(port),
             )
             port_objects.append((port, pobj))
         elif port.type == "msl":
@@ -653,6 +688,7 @@ def main() -> int:
                 b_wg * unit,
                 mode,
                 excite=1.0 if port.excite_port else 0.0,
+                **_excitation_kwargs(port),
             )
             port_objects.append((port, pobj))
             if bool(getattr(port, "reverse", False)):
@@ -667,20 +703,44 @@ def main() -> int:
         for dump in project.dumps:
             if not dump.enabled:
                 continue
-            dump_type = {"E": 10, "H": 11, "J": 13, "Jtot": 13, "D": 14, "B": 15}.get(dump.quantity, 10)
-            if dump.quantity == "SAR":
-                dump_type = 20  # SAR lives in its own 20..22 range
-            elif not dump.frequency_domain:
-                dump_type = dump_type - 10
+            _dump_types = {
+                "E": 10,
+                "H": 11,
+                "J": 12,
+                "Jtot": 13,
+                "D": 14,
+                "B": 15,
+                "SAR": 20,
+                "SAR1g": 21,
+                "SAR10g": 22,
+                "SARraw": 29,
+            }
+            qty = str(getattr(dump, "quantity", "E"))
+            is_sar = qty in {"SAR", "SAR1g", "SAR10g", "SARraw"}
+            if qty == "custom":
+                dump_type = int(getattr(dump, "custom_dump_type", 10) or 10)
+            else:
+                dump_type = _dump_types.get(qty, 10)
+                # Types 0..5 are the time-domain forms of 10..15.  SAR only
+                # exists in the frequency domain (20..22, 29).
+                if not is_sar and not dump.frequency_domain:
+                    dump_type -= 10
             props_kw = dict(
                 file_type=int(getattr(dump, "file_type", 1) or 1),
                 dump_mode=int(getattr(dump, "dump_mode", 1) or 1),
             )
-            if dump.frequency_domain:
+            if is_sar and not dump.frequency_domain:
+                print(f"WARNING: SAR dump '{dump.name}' forced to frequency domain")
+            if dump.frequency_domain or is_sar:
                 freqs = getattr(dump, "frequencies", None) or [dump.frequency]
                 props_kw["frequency"] = [float(f) for f in freqs]
             if any(int(s) != 1 for s in dump.sub_sampling):
                 props_kw["sub_sampling"] = list(dump.sub_sampling)
+            opt_res = getattr(dump, "opt_resolution", None)
+            if isinstance(opt_res, (list, tuple)) and len(opt_res) == 3 and all(
+                float(v) > 0.0 for v in opt_res
+            ):
+                props_kw["opt_resolution"] = [float(v) for v in opt_res]
             d = CSX.AddDump(dump.name, dump_type=dump_type, **props_kw)
             d.AddBox([f32(x) for x in dump.start], [f32(x) for x in dump.stop])
 
@@ -718,7 +778,9 @@ def main() -> int:
     print("Mesh setup:", json.dumps(setup, indent=2, default=str))
 
     dedupe_grid_lines(
-        CSX, ulp_align=bool(getattr(mesh, "align_coordinates", True))
+        CSX,
+        ulp_align=bool(getattr(mesh, "align_coordinates", True)),
+        protect=_protected,
     )
 
     # Now that the mesh exists, add the deferred MSL ports. AddMSLPort adds the
@@ -735,7 +797,11 @@ def main() -> int:
         # by one grid cell here. The port in the project keeps its zero length.
         pi = ("x", "y", "z").index(prop_dir)
         start, stop, widened = extend_zero_propagation(
-            start, stop, prop_dir, CSX.GetGrid().GetLines(pi)
+            start,
+            stop,
+            prop_dir,
+            CSX.GetGrid().GetLines(pi),
+            reverse=bool(getattr(port, "reverse", False)),
         )
         if widened:
             print(
@@ -757,6 +823,7 @@ def main() -> int:
             exc_dir,
             excite=1.0 if port.excite_port else 0.0,
             priority=15,
+            **_excitation_kwargs(port),
         )
         port_objects.append((port, pobj))
         print(f"MSL port {idx} '{port.name}': prop_dir={prop_dir} exc_dir={exc_dir}")
@@ -891,15 +958,63 @@ def main() -> int:
         print("MESH ONLY: CSX + easyMesh build verified, skipping FDTD run")
         return 0
 
+    # The installed openEMS build labels TimeStepMethod=1 as "Rennings_1" and
+    # can still choose a timestep far above the CFL limit for a 0.0178 mm
+    # copper cell.  Force the conservative CFL step explicitly for the default
+    # (auto/1) path; an explicit Rennings2 (3) stays untouched.
+    if _tsm not in (3,):
+        try:
+            import math as _math
+            from app.meshing.timing import courant_timestep
+
+            _lines = {
+                axis: np.asarray(CSX.GetGrid().GetLines(i), dtype=float)
+                for i, axis in enumerate("xyz")
+            }
+            _eps = max(
+                [1.0]
+                + [
+                    float(getattr(m, "epsilon", 1.0) or 1.0)
+                    for m in getattr(project, "materials", [])
+                ]
+            )
+            _dt_cfl = courant_timestep(_lines, mesh.unit_to_meters())
+            if _dt_cfl > 0.0:
+                _dt_cfl /= _math.sqrt(_eps)
+                _factor = float(getattr(_sim, "time_step_factor", 0.0) or 1.0)
+                FDTD.SetTimeStep(_dt_cfl * min(1.0, _factor) * 0.98)
+                print(
+                    "FDTD timestep forced to CFL: "
+                    f"{_dt_cfl * min(1.0, _factor) * 0.98 * 1e12:.5g} ps "
+                    f"(eps_max={_eps:g})"
+                )
+        except Exception as _e:  # noqa: BLE001 - never block the run
+            print(f"WARNING: could not force the CFL timestep: {_e}")
+
     # Project folder layout: raw openEMS outputs (et/ht, port dumps, nf2ff_*.h5)
     # live in WORK_DIR/simulation (FDTD.Run creates it itself), processed
     # results go to WORK_DIR/sparams, WORK_DIR/fields and WORK_DIR/nf2ff.
     out_dir = WORK_DIR / "simulation"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_old = bool(getattr(_sim, "cleanup", True))
+    # Strict layout: exactly one run folder, <project>/simulation.  A rerun
+    # overwrites it instead of creating timestamped sibling folders (those used
+    # to make the Field Viewer search the wrong directory).
+    if out_dir.exists():
+        import shutil
+
+        print("Cleaning old simulation directory:", out_dir)
+        shutil.rmtree(out_dir, ignore_errors=True)
+        if out_dir.exists():
+            raise RuntimeError(
+                f"Old simulation folder is locked and cannot be overwritten:\n"
+                f"{out_dir}\n\nClose open HDF5/CSX/field viewers and run again."
+            )
+    if not cleanup_old:
+        out_dir.mkdir(parents=True, exist_ok=True)
     print("Running openEMS into", out_dir)
     run_kw: dict = {
         "verbose": int(getattr(_sim, "verbose", 3) or 0),
-        "cleanup": bool(getattr(_sim, "cleanup", True)),
+        "cleanup": cleanup_old,
     }
     n_threads = int(getattr(_sim, "num_threads", 0) or 0)
     if n_threads > 0:

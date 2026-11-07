@@ -44,13 +44,19 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - **STEP** (`.step` / `.stp`) — axis-aligned boxes are emitted as exact openEMS boxes; everything else as STL polyhedra
 - **STL** (`.stl`) — single file or folder of per-object STLs
 - **OBJ** (`.obj`)
+- **CST Studio export package** - folder or ZIP with `manifest.json` + one STL
+  per solid. Imports geometry, materials (relative permittivity/permeability/
+  conductivity), ports, frequency range and boundary conditions; the
+  proprietary `.cst` container is not parsed. A ready-to-run export macro is
+  included at [`app/freecad_io/cst_export_macro.bas`](app/freecad_io/cst_export_macro.bas)
+  (see [CST import](docs/CST_IMPORT_DE.md)).
 - **`openems_export.json`** manifest from the FreeCAD export tools
 - **CSX primitives** — generic box, cylinder, polygon, and STL entries for non-FreeCAD workflows
 - Port markings (`PORT_<name>_start` / `PORT_<name>_stop` points) are carried through from FCStd
 
 ### Mesh Generation
 
-- **easyMesh** automated meshing with configurable presets (low / medium / high / custom)
+- **easyMesh** automated meshing with three checkmarked profiles (Default / Antenna / PCB), frequency-aware cell-size overrides and critical-cell reporting
 - Enforces openEMS rules of thumb: max cell ≤ λ/10, smooth grading, 1/3–2/3 metal edge rule
 - Metal-edge densification for cylindrical structures (custom fix — see [easyMesh Changes](docs/EASYMESH_CHANGES_EN.md))
 - Separate min cell size for Z-axis (useful for flat PCB structures)
@@ -80,17 +86,29 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 
 ### Post-Processing
 
-- **S-Parameter Viewer** — Touchstone import, Smith chart, |S| dB, phase, VSWR; interactive markers; S-min jump; auto-opens after simulation
+- **S-Parameter Viewer** — Touchstone import, Smith chart, |S| dB, phase, VSWR; interactive markers with right-click smart functions (trace min/max, nearest peak/valley, -3 dB points, band center, delta marker from the selected reference); marker list selection highlights the plot, markers are saved in the project JSON, and marker rows can copy their value/frequency; closing the GUI with unsaved marker/settings changes asks Save/Discard/Cancel; auto-opens after simulation
 - **Antenna Viewer** — 3D gain pattern (axes labelled x/y/z), E/H cuts (Az/El), directivity, gain, radiation efficiency; HPBW and front-to-back analysis; **axial ratio** and **phase center** from the stored `E_theta`/`E_phi` (no re-run), including an **AR-vs-θ cut** at a selectable azimuth; pop-out plot windows
 - **NF2FF Summary** — gain/directivity/efficiency plot per frequency
+- **3D Design** — embedded read-only VTK view of the current project geometry
+  (including imported STL), ports, NF2FF box and domain; per-object colours,
+  global opacity, standard views, fit and pop-out; selecting a primitive or
+  port in the Project / Geometry list outlines it in 3D. The right-click menu
+  toggles X/Y/Z axes, labels and a numeric coordinate ruler (size, anchor,
+  label size, ruler placement and tick side selectable; ruler, triad and camera
+  fit follow the visible geometry when the domain box is hidden), can show a small
+  fixed-size corner triad in the lower-left, can put an optional tick tape
+  directly on the axis arrows, and starts a two-click distance tape in project
+  units. The scene API is prepared for further measurement,
+  clipping/picking and mesh overlays.
 - **Field Viewer** — 3D field slices with per-axis navigation
 - **VTK Viewer** — convert the HDF5 field dumps to VTK rectilinear grids
   (`.vtr`) and inspect them in an embedded 3D view (iso-surface of |field|,
   outline, configurable axes: View → Axes for corner marker, labels/font,
   size and a numeric coordinate ruler; ParaView-style vector glyphs: small
   arrows on the slice/surface/iso-surface that make the field motion visible
-  during playback; export the sequence as an MP4 video with the current view
-  settings); the `.vtr` files open in ParaView too. A per-step export also
+  during playback; export the sequence as an MP4 video or animated GIF with
+  an options dialog for format, resolution, fps/duration and start/end frame
+  range); the `.vtr` files open in ParaView too. A per-step export also
   writes a ParaView collection (`<dump>.pvd`) with the physical time (TD) or
   frequency (FD) of every step, so ParaView plays the whole series from one file
 - All viewers support export to PNG
@@ -105,6 +123,15 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   the solids arrive in CST Studio Suite under the same names as in the Mesh
   Viewer. Zero-thickness metal sheets (e.g. the patch preset) become planar
   faces, and meshes become shells (solids when watertight).
+- **Mesh2FreeCAD** (Mesh → Mesh2FreeCAD): opens the built mesh in FreeCAD as
+  discretised geometry — one mesh-cell solid per object (cell-centre rule),
+  optional STEP and OpenEMS voxel-grid overlay. Files are written to a temporary
+  folder and deleted when FreeCAD (or VisualopenEMS) closes. The
+  **Mesh2FreeCAD Parameters…** window selects STEP, Part/Mesh features, the voxel
+  grid scope, zero-thickness sheets, port points and (for debugging)
+  temporary-file keeping; these options are stored in the project file
+  (`.fcsim.json`). Port points are written as `PORT_<name>_start` /
+  `PORT_<name>_stop` plus a connecting line.
 - **Grid export (JSON)** (Mesh → Export grid (JSON)…): writes the built mesh
   lines per axis in mm (plus cell counts, min/max cell size and the FDTD
   domain) so another FDTD solver — e.g. CST — can run on identical cell
@@ -411,7 +438,8 @@ azimuth; the data comes from the `nf2ff.json` of the last run.*
 - **Series playback** over the time or frequency steps, with an arrow-motion
   readout per step
 - **Export** — VTK rectilinear grids (`.vtr`) plus a ParaView collection
-  (`<dump>.pvd`), or MP4 with the current view settings
+  (`<dump>.pvd`), or MP4 / animated GIF via the export-options dialog
+  (format, resolution, fps/duration, start/end frame range)
 
 ![E field](docs/images/e_field_slice.png)
 
@@ -528,6 +556,7 @@ All examples are in `examples/` and runnable standalone:
 | `run_pcb_filter_example.py` | PCB filter with dual excitation |
 | `run_pcb_bandpass_example.py` | 5.6 GHz stub band-pass (PTFE) |
 | `run_pcb_hairpin_example.py` | 2.4 GHz hairpin band-pass (RT/duroid 6010) |
+| `run_pcb_hairpin_3pol_example.py` | 2.44 GHz 3rd-order hairpin band-pass on FR4 (article rebuild, [doc](docs/HAIRPIN_3POL_FR4_DE.md)) |
 | `run_wr62_waveguide_example.py` | Straight WR62 waveguide, 100 mm, TE10 at 10 GHz |
 | `run_stl_import_example.py` | Headless STL import |
 | `run_yagi_example.py` | Yagi antenna simulation |
@@ -584,6 +613,7 @@ python tests\yagi_mesh_ends.py    # Yagi cylinder-end densification
 | [docs/EASYMESH_CHANGES_EN.md](docs/EASYMESH_CHANGES_EN.md) | Local easyMesh modifications (EN) |
 | [docs/DIAGNOSTICS_CHANGES_EN.md](docs/DIAGNOSTICS_CHANGES_EN.md) | Mesh diagnostics: timing, run status, critical cells, fine-cell sources, coordinate quantization, cell repair (V1–V4) (EN) |
 | [docs/DIAGNOSTICS_CHANGES_DE.md](docs/DIAGNOSTICS_CHANGES_DE.md) | Same, German — with the measurements over the real projects (DE) |
+| [docs/HAIRPIN_3POL_FR4_DE.md](docs/HAIRPIN_3POL_FR4_DE.md) | 3rd-order hairpin band-pass 2.44 GHz on FR4: article rebuild, synthesis, layout, mesh, validation status (DE) |
 | [CHANGELOG.md](CHANGELOG.md) | Full change history per release |
 
 Both guides are also available as Word and LibreOffice documents:

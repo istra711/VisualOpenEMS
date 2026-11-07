@@ -100,10 +100,12 @@ class SimParamsPanel(QWidget):
     """Edit + inspect simulation/mesh parameters that the tool auto-computes."""
 
     computed_changed = Signal()
+    suggest_timesteps_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.patch_params: dict[str, float] = dict(DEFAULT_PATCH_PARAMS)
+        self._air_update_guard = False
         self._build()
 
     def _build(self) -> None:
@@ -129,11 +131,20 @@ class SimParamsPanel(QWidget):
             w.valueChanged.connect(self._on_form_edited)
         self.chk_air_auto.toggled.connect(self._on_air_auto_toggled)
         self.chk_air_auto.toggled.connect(self._on_form_edited)
+        self.chk_air_uniform.toggled.connect(self._on_air_uniform_toggled)
+        self.chk_air_uniform.toggled.connect(self._on_form_edited)
+        for _sp in self.spn_air_sides.values():
+            _sp.valueChanged.connect(self._on_form_edited)
+        self.chk_pcb_defaults.toggled.connect(self._on_pcb_defaults_toggled)
+        self.chk_pcb_case.toggled.connect(self._on_pcb_case_toggled)
+        self.spn_pcb_lid_z.valueChanged.connect(self._on_pcb_lid_changed)
         self.chk_antenna.toggled.connect(self._on_antenna_toggled)
         self.chk_antenna.toggled.connect(self._on_form_edited)
         self.cmb_ant_density.currentIndexChanged.connect(self._on_form_edited)
         self.spn_ant_pml.valueChanged.connect(self._on_form_edited)
         self.chk_nf2ff_enabled.toggled.connect(self._on_form_edited)
+        self.btn_suggest_ts.clicked.connect(self.suggest_timesteps_requested.emit)
+        self.cmb_nf2ff_box_mode.currentIndexChanged.connect(self._on_form_edited)
         self.cmb_nf2ff_mode.currentTextChanged.connect(self._on_freq_mode_changed)
         self.spn_nf2ff_count.valueChanged.connect(self._on_form_edited)
         self.txt_nf2ff_freqs.editingFinished.connect(self._on_form_edited)
@@ -146,6 +157,7 @@ class SimParamsPanel(QWidget):
 
         self._refresh_patch_label()
         self._update_freq_mode_widgets()
+        self._update_air_controls()
         self.refresh_computed()
         # Patch preset is optional — hidden until a patch project/preset is active
         self.set_patch_group_visible(False)
@@ -214,7 +226,18 @@ class SimParamsPanel(QWidget):
         )
         fconv.addRow("End criteria (energy)", self.spn_end_criteria)
         # NOTE: the spin is in dB; write_to_project converts to the linear ratio.
-        fconv.addRow("Max timesteps (NrTS)", self.spn_max_ts)
+        ts_row = QHBoxLayout()
+        ts_row.addWidget(self.spn_max_ts, 1)
+        self.btn_suggest_ts = QPushButton("Suggest")
+        self.btn_suggest_ts.setToolTip(
+            "Calculate a recommended NrTS from the built mesh and the "
+            "S-parameter sweep resolution (DFT window), then insert it here."
+        )
+        ts_row.addWidget(self.btn_suggest_ts)
+        fconv.addRow("Max timesteps (NrTS)", ts_row)
+        self.lbl_ts_suggestion = QLabel("")
+        self.lbl_ts_suggestion.setWordWrap(True)
+        fconv.addRow("", self.lbl_ts_suggestion)
         fconv.addRow("Threads (numThreads)", self.spn_num_threads)
         inner.addWidget(g_conv)
 
@@ -238,14 +261,65 @@ class SimParamsPanel(QWidget):
         self.chk_air_auto = QCheckBox("Air margin auto (λ/4 free-space)")
         self.chk_air_auto.setChecked(True)
         fb.addRow(self.chk_air_auto)
+        self.chk_air_uniform = QCheckBox(
+            "Global air margin: all six sides equal"
+        )
+        self.chk_air_uniform.setChecked(True)
+        self.chk_air_uniform.setToolTip(
+            "ON: the single uniform value applies to all six sides and the "
+            "per-side fields are disabled. OFF: edit xmin/xmax/ymin/ymax/"
+            "zmin/zmax individually."
+        )
+        fb.addRow(self.chk_air_uniform)
         self.spn_air = QDoubleSpinBox()
         self.spn_air.setRange(0.0, 10_000.0)
-        self.spn_air.setDecimals(3)
+        self.spn_air.setDecimals(4)
         self.spn_air.setSuffix(" mm")
         self.spn_air.setValue(20.0)
         self.spn_air.setEnabled(False)
-        fb.addRow("Air margin (all faces)", self.spn_air)
+        fb.addRow("Air margin (uniform)", self.spn_air)
+        self.spn_air_sides: dict[str, QDoubleSpinBox] = {}
+        for axis in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax"):
+            sp = self._margin_spin(10.0)
+            sp.setToolTip(
+                f"Free-space distance from the geometry bounding box to the "
+                f"{axis} FDTD boundary, in drawing units."
+            )
+            self.spn_air_sides[axis] = sp
+            fb.addRow(f"Air margin {axis}", sp)
         inner.addWidget(g_b)
+
+        # --- PCB simulation presets ---------------------------------------
+        g_pcb = QGroupBox("PCB simulation")
+        fp = QFormLayout(g_pcb)
+        self.chk_pcb_defaults = QCheckBox(
+            "Apply sensible PCB defaults (open board)"
+        )
+        self.chk_pcb_defaults.setToolTip(
+            "Sets x/y air margins to 10 mm, zmin to 0 mm (PEC ground) and "
+            "zmax to 10 mm. Boundaries: x/y/zmax MUR, zmin PEC. "
+            "Use 'PCB in sheet-metal enclosure' for a closed metal box."
+        )
+        self.chk_pcb_case = QCheckBox(
+            "PCB in sheet-metal enclosure (metal walls PEC)"
+        )
+        self.chk_pcb_case.setToolTip(
+            "Sets the metal walls to PEC. xmin/xmax/ymin/ymax and zmin are "
+            "0 mm (PCB fills the enclosure in x/y, ground at the board "
+            "bottom); only zmax is free and comes from the lid height below. "
+            "Faces carrying an MSL port stay MUR at 0 mm margin: openEMS "
+            "shorts an MSL port on a PEC domain face. Do not add an air gap "
+            "there, otherwise the microstrip sees an open substrate edge."
+        )
+        self.spn_pcb_lid_z = self._margin_spin(10.0)
+        self.spn_pcb_lid_z.setToolTip(
+            "Distance from the highest PCB point (e.g. trace top) to the "
+            "metal lid; used as the zmax air margin when the enclosure is on."
+        )
+        fp.addRow(self.chk_pcb_defaults)
+        fp.addRow(self.chk_pcb_case)
+        fp.addRow("Lid height above PCB top (zmax)", self.spn_pcb_lid_z)
+        inner.addWidget(g_pcb)
 
         # --- Antenna simulation mode (FDTD antenna checklist) ---
         g_ant = QGroupBox("Antenna simulation")
@@ -402,6 +476,16 @@ class SimParamsPanel(QWidget):
         # --- Box + angular resolution ---
         g_box = QGroupBox("NF2FF box (far-field)")
         fnf = QFormLayout(g_box)
+        self.cmb_nf2ff_box_mode = QComboBox()
+        self.cmb_nf2ff_box_mode.addItem("Automatic (fit to geometry + air margin)", "auto")
+        self.cmb_nf2ff_box_mode.addItem("Manual (Edit box…)", "manual")
+        self.cmb_nf2ff_box_mode.setToolTip(
+            "Automatic: when NF2FF is enabled, the integration box is fitted to "
+            "the geometry plus the configured air margin.\n"
+            "Manual: keep the explicit box; 'Edit box…' switches to manual "
+            "automatically."
+        )
+        fnf.addRow("Box placement", self.cmb_nf2ff_box_mode)
         self.spn_nf2ff_theta = QSpinBox()
         self.spn_nf2ff_theta.setRange(2, 721)
         self.spn_nf2ff_theta.setValue(181)
@@ -432,6 +516,13 @@ class SimParamsPanel(QWidget):
                 return mode
         return "auto"
 
+    def set_ts_suggestion(self, text: str) -> None:
+        self.lbl_ts_suggestion.setText(str(text or ""))
+
+    def _current_nf2ff_box_mode(self) -> str:
+        mode = str(self.cmb_nf2ff_box_mode.currentData() or "auto")
+        return "manual" if mode == "manual" else "auto"
+
     def _on_freq_mode_changed(self, *_args: Any) -> None:
         self._update_freq_mode_widgets()
         self._on_form_edited()
@@ -441,6 +532,16 @@ class SimParamsPanel(QWidget):
         mode = self._current_freq_mode()
         self.spn_nf2ff_count.setEnabled(mode == "count")
         self.txt_nf2ff_freqs.setEnabled(mode == "list")
+
+    @staticmethod
+    def _margin_spin(value: float) -> QDoubleSpinBox:
+        sp = QDoubleSpinBox()
+        sp.setRange(0.0, 10_000.0)
+        sp.setDecimals(4)
+        sp.setSuffix(" mm")
+        sp.setValue(float(value))
+        sp.setKeyboardTracking(False)
+        return sp
 
     @staticmethod
     def _cell_spin() -> QDoubleSpinBox:
@@ -453,8 +554,125 @@ class SimParamsPanel(QWidget):
         return sp
 
     def _on_air_auto_toggled(self, checked: bool) -> None:
-        # antenna mode owns the air margin while it is on
-        self.spn_air.setEnabled(not checked and not self.chk_antenna.isChecked())
+        self._update_air_controls()
+
+    def _on_air_uniform_toggled(self, checked: bool) -> None:
+        self._update_air_controls()
+
+    def _update_air_controls(self) -> None:
+        """Auto/global mode disables the fields that would otherwise apply."""
+        auto = self.chk_air_auto.isChecked()
+        antenna = self.chk_antenna.isChecked()
+        uniform = self.chk_air_uniform.isChecked()
+        self.chk_air_uniform.setEnabled(not auto and not antenna)
+        self.spn_air.setEnabled(not auto and not antenna and uniform)
+        for sp in self.spn_air_sides.values():
+            sp.setEnabled(not auto and not antenna and not uniform)
+        self.chk_pcb_defaults.setEnabled(not antenna)
+        self.chk_pcb_case.setEnabled(not antenna)
+        self.spn_pcb_lid_z.setEnabled(not antenna and self.chk_pcb_case.isChecked())
+
+    def _set_air_values(self, values: list[float]) -> None:
+        """Apply six per-side margins without triggering half-updated forms."""
+        self._air_update_guard = True
+        try:
+            self.chk_air_auto.setChecked(False)
+            self.chk_air_uniform.setChecked(False)
+            for axis, value in zip(
+                ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax"), values
+            ):
+                self.spn_air_sides[axis].setValue(float(value))
+        finally:
+            self._air_update_guard = False
+        self._update_air_controls()
+        self._on_form_edited()
+
+    def _msl_port_sides(self) -> set[str]:
+        """Boundary faces that carry a zero-length MSL port of this project."""
+        project = getattr(self, "_project", None)
+        if project is None:
+            return set()
+        prims = list(getattr(project, "primitives", None) or [])
+        if not prims:
+            return set()
+        lows = [float("inf")] * 3
+        highs = [float("-inf")] * 3
+        for prim in prims:
+            try:
+                lo = [float(v) for v in prim.get("start", [])]
+                hi = [float(v) for v in prim.get("stop", [])]
+            except (TypeError, ValueError):
+                continue
+            if len(lo) != 3 or len(hi) != 3:
+                continue
+            for i in range(3):
+                lows[i] = min(lows[i], lo[i], hi[i])
+                highs[i] = max(highs[i], lo[i], hi[i])
+        if not all(math.isfinite(v) for v in lows + highs):
+            return set()
+        tol = 1e-6 * max(1.0, max(abs(v) for v in lows + highs))
+        sides: set[str] = set()
+        for port in getattr(project, "ports", []) or []:
+            if str(getattr(port, "type", "")) != "msl":
+                continue
+            prop = str(getattr(port, "prop_direction", "") or "").lower()
+            if prop not in ("x", "y", "z"):
+                ext = [
+                    abs(float(port.stop[i]) - float(port.start[i]))
+                    for i in range(3)
+                ]
+                prop = "xyz"[max(range(3), key=lambda i: ext[i])]
+            axis = "xyz".index(prop)
+            if abs(float(port.stop[axis]) - float(port.start[axis])) > tol:
+                continue
+            coord = float(port.start[axis])
+            if abs(coord - lows[axis]) <= tol:
+                sides.add(f"{prop}min")
+            elif abs(coord - highs[axis]) <= tol:
+                sides.add(f"{prop}max")
+        return sides
+
+    def _apply_pcb_defaults(self) -> None:
+        case = self.chk_pcb_case.isChecked()
+        if case:
+            # Metal enclosure: the PCB fills the box in x/y.  All walls sit on
+            # the board edges; only the lid height is a free parameter.  The
+            # faces carrying an MSL port must stay open (MUR): a PEC domain
+            # face would short the port in openEMS.
+            for cb in self.cmb_b.values():
+                cb.setCurrentText("PEC")
+            values = [0.0, 0.0, 0.0, 0.0, 0.0, float(self.spn_pcb_lid_z.value())]
+            for side in self._msl_port_sides():
+                self.cmb_b[side].setCurrentText("MUR")
+        else:
+            for axis, cb in self.cmb_b.items():
+                cb.setCurrentText("PEC" if axis == "zmin" else "MUR")
+            values = [10.0, 10.0, 10.0, 10.0, 0.0, 10.0]
+        self._set_air_values(values)
+        self._update_air_controls()
+
+    def _on_pcb_defaults_toggled(self, checked: bool) -> None:
+        if checked and not self._air_update_guard:
+            self._apply_pcb_defaults()
+            self._on_form_edited()
+
+    def _on_pcb_case_toggled(self, checked: bool) -> None:
+        if self._air_update_guard:
+            return
+        self._air_update_guard = True
+        try:
+            self.chk_pcb_defaults.setChecked(True)
+        finally:
+            self._air_update_guard = False
+        self._apply_pcb_defaults()
+        self._on_form_edited()
+
+    def _on_pcb_lid_changed(self, value: float) -> None:
+        if self._air_update_guard:
+            return
+        if self.chk_pcb_case.isChecked():
+            self.spn_air_sides["zmax"].setValue(float(value))
+            self._on_form_edited()
 
     def _on_antenna_toggled(self, checked: bool) -> None:
         """Antenna mode drives mesh preset, air margin and NF2FF."""
@@ -462,7 +680,7 @@ class SimParamsPanel(QWidget):
         self.spn_ant_pml.setEnabled(checked)
         self.spn_ant_nf2ff.setEnabled(checked)
         self.chk_air_auto.setEnabled(not checked)
-        self.spn_air.setEnabled(not checked and not self.chk_air_auto.isChecked())
+        self._update_air_controls()
         if checked and not getattr(self, "_syncing", False):
             # programmatic (project) sync must not override a deliberate
             # "NF2FF off" — only a user click turns the far-field on.
@@ -528,9 +746,13 @@ class SimParamsPanel(QWidget):
             b.air_margin = [margin] * 6
         elif self.chk_air_auto.isChecked():
             b.air_margin = ["auto"] * 6
+        elif self.chk_air_uniform.isChecked():
+            b.air_margin = [float(self.spn_air.value())] * 6
         else:
-            val = float(self.spn_air.value())
-            b.air_margin = [val] * 6
+            b.air_margin = [
+                float(self.spn_air_sides[axis].value())
+                for axis in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
+            ]
         # Antenna simulation mode: persist the flag + its two knobs.
         project.sim.antenna_mode = bool(self.chk_antenna.isChecked())
         project.sim.antenna_pml_lambda = float(self.spn_ant_pml.value())
@@ -539,11 +761,13 @@ class SimParamsPanel(QWidget):
             preset = self.cmb_ant_density.currentData()
             if preset:
                 m.preset = preset  # type: ignore[assignment]
+                m.mesh_profile = "antenna"  # type: ignore[assignment]
                 # Persist the density too: Project.effective_mesh() uses it to
                 # override the mesh resolution (reference wavelength = f_max).
                 project.sim.antenna_cells_per_wavelength = float(
                     CELLS_PER_WAVELENGTH_BY_PRESET.get(str(preset), 15.0)
                 )
+        project.nf2ff.box_mode = self._current_nf2ff_box_mode()
         project.nf2ff.theta_steps = int(self.spn_nf2ff_theta.value())
         project.nf2ff.phi_steps = int(self.spn_nf2ff_phi.value())
         nf_on = self.chk_nf2ff_enabled.isChecked()
@@ -572,6 +796,7 @@ class SimParamsPanel(QWidget):
         return wavelength_m(f_start, eps_r=1.0) / m.unit_to_meters() * frac
 
     def sync_from_project(self, project: Project, mesh_preset: str | None = None) -> None:
+        self._project = project
         m = project.mesh
         del mesh_preset  # reserved for future mesh-tab coupling
         self._syncing = True
@@ -639,11 +864,31 @@ class SimParamsPanel(QWidget):
         air = list(b.air_margin or ["auto"] * 6)
         is_auto = all(a == "auto" or a is None for a in air)
         self.chk_air_auto.setChecked(is_auto)
-        if not is_auto:
+        if is_auto:
+            self.chk_air_uniform.setChecked(True)
+        else:
             try:
-                self.spn_air.setValue(float(air[0]))
+                vals = [float(a) for a in air]
             except (TypeError, ValueError):
+                vals = []
+            if len(vals) == 6:
+                uniform = max(vals) - min(vals) <= 1e-9
+                self.chk_air_uniform.setChecked(uniform)
+                self.spn_air.setValue(float(vals[0]))
+                for axis, value in zip(
+                    ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax"), vals
+                ):
+                    self.spn_air_sides[axis].setValue(float(value))
+            else:
+                self.chk_air_uniform.setChecked(False)
                 self.spn_air.setValue(20.0)
+        self._update_air_controls()
+        box_mode = str(getattr(project.nf2ff, "box_mode", "auto") or "auto").lower()
+        self.cmb_nf2ff_box_mode.setCurrentIndex(
+            max(0, self.cmb_nf2ff_box_mode.findData(
+                "manual" if box_mode == "manual" else "auto"
+            ))
+        )
         self.spn_nf2ff_theta.setValue(int(project.nf2ff.theta_steps or 181))
         self.spn_nf2ff_phi.setValue(int(project.nf2ff.phi_steps or 361))
         self.chk_nf2ff_enabled.setChecked(
@@ -738,6 +983,7 @@ class SimParamsPanel(QWidget):
             nf = p.nf2ff
             self.lbl_nf2ff.setText(
                 f"{'on' if nf.enabled and p.sim.nf2ff_enabled else 'off'}  "
+                f"box={getattr(nf, 'box_mode', 'auto')}  "
                 f"{nf.start} → {nf.stop}\ncenter={nf.center}  "
                 f"θ={nf.theta_steps} φ={nf.phi_steps}\n"
                 f"eval freqs: {self._fmt_eval_freqs(p)}"

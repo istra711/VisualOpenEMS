@@ -544,6 +544,18 @@ def pure_fn_checks() -> int:
         print("FAIL: HPBW peak angle", h["peak_deg"])
         return 20
 
+    # Same lobe, but as a 0..360 polar cut with the peak split across the
+    # 0°/360° array boundary (the broadside-patch case that used to fail).
+    ang3 = np.linspace(0.0, 360.0, 3601)
+    wrapped = ((ang3 + 180.0) % 360.0) - 180.0
+    db3 = -((wrapped**2) / (2.0 * sigma**2)) * (10.0 / np.log(10.0))
+    h3 = half_power_beamwidth(ang3, db3, level_db=-3.0)
+    assert h3 is not None, "HPBW returned None at the 0/360 boundary"
+    print(f"HPBW boundary: {h3['width_deg']:.3f} deg (expected ~{expected:.3f})")
+    if abs(h3["width_deg"] - expected) > 0.5:
+        print("FAIL: HPBW boundary width", h3["width_deg"], expected)
+        return 22
+
     # Front-to-back: peak at 0° @ 10 dBi, back at 180° @ 0 dBi -> VRV 10 dB
     ang2 = np.linspace(0.0, 360.0, 361)
     db2 = 10.0 * np.cos(np.deg2rad(ang2)) ** 2  # 10 at 0/180? no: max at 0 and 180

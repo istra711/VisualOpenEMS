@@ -68,6 +68,11 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("File"), "Save As\u2026").shortcut().toString() == "Ctrl+Shift+S"
     assert _find(_menu("File"), "Exit").shortcut().toString() == "Ctrl+Q"
     assert _find(_menu("File"), "Export STEP\u2026") is not None
+    assert _find(_menu("File"), "Import CST Studio Package\u2026") is not None
+    assert _find(_menu("Geometry"), "Import CST Studio Package\u2026") is not None
+    assert _find(_menu("Geometry"), "Add Extruded Polygon\u2026") is not None
+    assert _find(_menu("Geometry"), "Add Wire\u2026") is not None
+    assert _find(_menu("Geometry"), "Add Curve\u2026") is not None
     assert _find(_menu("Mesh"), "Build Mesh").shortcut().toString() == "Ctrl+M"
     assert _find(_menu("Mesh"), "Rebuild from scratch\u2026") is not None
     assert _find(_menu("Mesh"), "Delete Mesh\u2026") is not None
@@ -75,6 +80,10 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("Mesh"), "Export CSX XML\u2026") is not None
     assert _find(_menu("Mesh"), "Export grid (JSON)\u2026") is not None
     assert _find(_menu("Mesh"), "Open in AppCSXCAD (3D)\u2026") is not None
+    mesh_actions = _menu("Mesh").actions()
+    mesh_labels = [_strip(a.text()) for a in mesh_actions]
+    assert mesh_labels[-2:] == ["Mesh2FreeCAD", "Mesh2FreeCAD Parameters\u2026"]
+    assert mesh_actions[-3].isSeparator()
     assert _find(_menu("Simulation"), "Run Simulation").shortcut().toString() == "Ctrl+R"
     assert (
         _find(_menu("Simulation"), "Run All Ports (full S-matrix)")
@@ -84,6 +93,7 @@ def test_menu_structure_and_shortcuts() -> None:
     )
     assert _find(_menu("Simulation"), "Export field dumps to VTK\u2026") is not None
     assert _find(_menu("Simulation"), "Export field video (MP4)\u2026") is not None
+    assert _find(_menu("Simulation"), "Export field animation (GIF)\u2026") is not None
     assert _find(_menu("View"), "Log Panel").shortcut().toString() == "Ctrl+L"
     assert _find(_menu("View"), "Project / Geometry Panel").shortcut().toString() == "Ctrl+B"
     assert _find(_menu("Help"), "Help for Current Tab").shortcut().toString() == "F1"
@@ -159,6 +169,49 @@ def test_view_menu_switches_tabs() -> None:
     print("VIEW MENU TAB SWITCH OK")
 
 
+def test_mesh2freecad_params_dialog() -> None:
+    w = _win()
+    from app.ui.mesh2freecad_params import Mesh2FreeCADParamsDialog
+
+    dlg = Mesh2FreeCADParamsDialog(w, w.project)
+    assert dlg.chk_step.isChecked() is False
+    assert dlg.cmb_type.currentData() == "mesh"
+    assert dlg.chk_grid.isChecked() is True
+    assert dlg.cmb_grid_mode.isEnabled() is True
+    assert dlg.cmb_grid_mode.currentData() == "all"
+    assert dlg.chk_sheets.isChecked() is True
+    assert dlg.chk_ports.isChecked() is True
+    assert dlg.chk_keep.isChecked() is False
+    dlg.chk_step.setChecked(True)
+    dlg.chk_grid.setChecked(False)
+    assert dlg.cmb_grid_mode.isEnabled() is False
+    dlg.chk_grid.setChecked(True)
+    dlg.cmb_grid_mode.setCurrentIndex(dlg.cmb_grid_mode.findData("boundary"))
+    dlg.chk_sheets.setChecked(False)
+    dlg.chk_ports.setChecked(False)
+    dlg.chk_keep.setChecked(True)
+    dlg._accept()
+
+    spec = w.project.mesh2freecad
+    assert spec.export_step is True
+    assert spec.fcstd_object_type == "mesh"
+    assert spec.voxel_grid is True
+    assert spec.voxel_grid_mode == "boundary"
+    assert spec.include_sheets is False
+    assert spec.export_ports is False
+    assert spec.keep_temp is True
+
+    # Restore defaults for the following tests.
+    dlg2 = Mesh2FreeCADParamsDialog(w, w.project)
+    dlg2._restore_defaults()
+    dlg2._accept()
+    assert w.project.mesh2freecad.fcstd_object_type == "mesh"
+    assert w.project.mesh2freecad.voxel_grid is True
+    assert w.project.mesh2freecad.voxel_grid_mode == "all"
+    assert w.project.mesh2freecad.export_ports is True
+    print("MESH2FREECAD PARAMS DIALOG OK")
+
+
 def test_sim_params_dialog() -> None:
     w = _win()
     act = _find(_menu("Simulation"), "Simulation Parameters\u2026")
@@ -213,6 +266,46 @@ def test_mesh_params_dialog() -> None:
     from app.ui.tab_help import help_for
 
     assert "MESH PARAMETERS" in help_for("Mesh Parameters"), "help topic missing"
+    # Field and label tooltips must explain the values (screenshot request).
+    from PySide6.QtWidgets import QLabel
+
+    _labels = {lbl.text(): lbl for lbl in dlg.findChildren(QLabel)}
+    assert "Center frequency f0" in _labels, sorted(_labels)
+    assert _labels["Center frequency f0"].toolTip(), "f0 label has no tooltip"
+    assert _labels["Start frequency"].toolTip(), "start label has no tooltip"
+    assert _labels["Stop frequency"].toolTip(), "stop label has no tooltip"
+    for _wdg in (
+        dlg.panel.spn_f0,
+        dlg.panel.spn_fc,
+        dlg.panel.spn_start_f,
+        dlg.panel.spn_stop_f,
+        dlg.panel.cmb_excite,
+        dlg.panel.edt_excite_file,
+    ):
+        assert _wdg.toolTip(), f"{_wdg} has no tooltip"
+    # PCB profile fills the override widgets but must not touch the project
+    before_min = w.project.mesh.min_cellsize
+    dlg.panel.chk_profile_pcb.setChecked(True)
+    assert w.project.mesh.min_cellsize == before_min, (
+        "PCB profile wrote the project before Apply"
+    )
+    assert dlg.panel._selected_profile == "pcb"
+    assert dlg.panel.cmb_preset.currentText() == "high"
+    _ref = float(dlg.panel.spn_refined.value())
+    _min = float(dlg.panel.spn_min_cell.value())
+    _minz = float(dlg.panel.spn_min_cell_z.value())
+    _max = float(dlg.panel.spn_max_cell.value())
+    assert 0.0 < _min < _ref < _max, (_min, _ref, _max)
+    assert abs(_min - _minz) < 1e-12, (_min, _minz)
+    assert abs(float(dlg.panel.spn_grading.value()) - 1.3) < 1e-9
+    assert dlg.panel.cmb_smooth.currentText() == "one_third_two_thirds"
+    assert dlg.panel.chk_graded_transitions.isChecked()
+    dlg.btn_apply.click()
+    assert w.project.mesh.mesh_profile == "pcb"
+    assert abs(float(w.project.mesh.min_cellsize) - _min) < 1e-9, (
+        w.project.mesh.min_cellsize,
+        _min,
+    )
     # edit f0 in the dialog, Apply -> project updated + hidden form mirrored.
     # f0 is the excitation-centred source; start/stop are derived as f0 +/- fc,
     # so an unchanged start spin must NOT clobber f0.
@@ -235,6 +328,57 @@ def test_mesh_params_dialog() -> None:
     dlg.close()
     assert abs(float(w.project.mesh.target_frequency) - want_f0) < 1.0
     print("MESH PARAMS DIALOG OK")
+
+
+def test_gerber_import_dialog_scroll() -> None:
+    """Long Gerber stackup form: content scrolls, buttons stay at the bottom."""
+    from PySide6.QtWidgets import QDialogButtonBox, QScrollArea
+
+    from app.freecad_io.gerber_import import GerberInspection
+    from app.ui.gerber_import_dialog import GerberStackupDialog
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "demo-F_Cu.gbr").write_text("G04 top*", encoding="utf-8")
+        (root / "demo-B_Cu.gbr").write_text("G04 bottom*", encoding="utf-8")
+        (root / "demo-PTH.drl").write_text("M48\nM30\n", encoding="utf-8")
+        (root / "demo-top-pos.csv").write_text("Ref,X,Y\nR1,1,2\n", encoding="utf-8")
+        (root / "stackup.json").write_text("{}", encoding="utf-8")
+        w = _win()
+        dlg = GerberStackupDialog(
+            w,
+            project=w.project,
+            inspection=GerberInspection(),
+            source=td,
+        )
+        dlg.resize(720, 480)
+        dlg.show()
+        _APP.processEvents()
+        scroll = dlg.findChild(QScrollArea)
+        assert scroll is not None, "Gerber dialog has no QScrollArea"
+        assert scroll.widget() is not None
+        assert not scroll.widget().findChildren(QDialogButtonBox), (
+            "OK/Cancel buttons must not scroll with the content"
+        )
+        assert dlg.findChild(QDialogButtonBox) is not None
+        assert scroll.verticalScrollBar().maximum() > 0, (
+            "Gerber dialog content does not scroll in a short window"
+        )
+        # The selected folder's contents are listed in the dialog.
+        assert dlg.tbl_files is not None
+        assert dlg.tbl_files.rowCount() == 5, dlg.tbl_files.rowCount()
+        rows = {
+            dlg.tbl_files.item(i, 0).text(): dlg.tbl_files.item(i, 1).text()
+            for i in range(dlg.tbl_files.rowCount())
+        }
+        assert "Gerber" in rows["demo-F_Cu.gbr"]
+        assert "Bohrungen" in rows["demo-PTH.drl"]
+        assert "ignoriert" in rows["demo-top-pos.csv"]
+        assert "ignoriert" in rows["stackup.json"]
+        dlg.close()
+    print("GERBER IMPORT DIALOG SCROLL OK")
 
 
 def test_log_mesh_report_tab() -> None:
@@ -306,17 +450,51 @@ def test_field_viewer_axes_menu() -> None:
 
 def test_project_panel_toggle() -> None:
     """Left Project / Geometry pane: View action + its right-click menu."""
+    from PySide6.QtCore import Qt
+
     w = _win()
     act = _find(_menu("View"), "Project / Geometry Panel")
     assert act.shortcut().toString() == "Ctrl+B"
     assert act.isEnabled()
-    # shown by default, and the tree context menu offers the hide entry
+    # shown by default; the pane menu selects objects / deletes, but does NOT
+    # offer hiding. Hiding belongs to the left content-edge splitter handler.
     assert not w.project_panel.isHidden()
     menu = w._build_project_panel_menu()
     texts = [_strip(a.text()) for a in menu.actions() if not a.isSeparator()]
-    assert "Hide Project / Geometry panel" in texts, texts
-    # triggering the entry hides the pane (same state as the View action)
-    for a in menu.actions():
+    assert "Hide Project / Geometry panel" not in texts, texts
+    sub_names = [
+        _strip(a.text()) for a in menu.actions() if a.menu() is not None
+    ]
+    assert {"Add", "Geometries", "Ports", "Fields"} <= set(sub_names), sub_names
+    add_sub = next(a.menu() for a in menu.actions() if _strip(a.text()) == "Add")
+    add_labels = [_strip(a.text()) for a in add_sub.actions() if not a.isSeparator()]
+    assert {
+        "Box\u2026",
+        "Cylinder\u2026",
+        "Sphere\u2026",
+        "Polygon\u2026",
+        "Extruded Polygon\u2026",
+        "Wire\u2026",
+        "Curve\u2026",
+        "Port\u2026",
+        "Assignment\u2026",
+        "Material\u2026",
+        "Field Dump\u2026",
+    } <= set(add_labels), add_labels
+    assert "Delete selected" in texts, texts
+    geom_sub = next(a.menu() for a in menu.actions() if _strip(a.text()) == "Geometries")
+    assert geom_sub.actions(), "geometry selection submenu is empty"
+    edge = w._build_project_panel_edge_menu()
+    edge_texts = [
+        _strip(a.text()) for a in edge.actions() if not a.isSeparator()
+    ]
+    assert "Hide Project / Geometry panel" in edge_texts, edge_texts
+    assert w.project_panel_edge.contextMenuPolicy() == (
+        Qt.ContextMenuPolicy.CustomContextMenu
+    )
+    assert w.project_panel_edge.width() == 6
+    # triggering the edge hide entry hides the pane (same state as View action)
+    for a in edge.actions():
         if _strip(a.text()) == "Hide Project / Geometry panel":
             a.trigger()
     assert w.project_panel.isHidden(), "pane not hidden"
@@ -455,6 +633,12 @@ def test_new_project_starts_empty() -> None:
     assert w.project.name == "untitled"
     assert not w.primitives
     assert w.mesh_viewer._csx is None
+    # cached scene/domain/auto grid from the previous project must be gone too
+    assert w.mesh_viewer._scene_infos == [], w.mesh_viewer._scene_infos
+    assert w.mesh_viewer._scene_area is None, w.mesh_viewer._scene_area
+    assert w.mesh_viewer._auto_mesh is None
+    assert w.mesh_viewer.info_text() == "", w.mesh_viewer.info_text()
+    assert w.mesh_viewer_scene_info.toPlainText() == ""
     assert w.antenna_viewer.data is None
     # the Mesh Viewer would load a recorded CSX from the work dir; an unsaved,
     # empty project must not (work/untitled/csx.xml can be left by a session)
@@ -463,9 +647,19 @@ def test_new_project_starts_empty() -> None:
     assert w.mesh_viewer._csx is None, "new project must not show an old mesh"
     # the S-Param "Loaded files" list is only filled by "Scan work dir"
     assert w.sparam_viewer.file_list.count() == 0
+    assert w.sparam_viewer.network is None
+    assert w.project.results == {}
+    assert w._allow_auto_results is False
     w._on_show_sparams()
     assert w.sparam_viewer.file_list.count() == 0, (
         "S-param file list must stay empty until 'Scan work dir'"
+    )
+    assert w.sparam_viewer.network is None, (
+        "new project must not auto-load old S-params from work/untitled"
+    )
+    w._on_show_antenna()
+    assert w.antenna_viewer.data is None, (
+        "new project must not auto-load old NF2FF data from work/untitled"
     )
     print("NEW PROJECT STARTS EMPTY OK")
 
@@ -532,18 +726,22 @@ def test_tree_selection_highlights_only_objects() -> None:
     w.tree.setCurrentRow(rows["mat"][0])
     hl = w.mesh_viewer.highlight()
     assert not hl["boxes"] and not hl["names"], hl
+    assert not w.design_viewer._highlight_names
 
-    # a primitive row highlights that object
+    # a primitive row highlights that object in the Mesh Viewer and in 3D
     w.tree.setCurrentRow(rows["prim"][0])
     hl = w.mesh_viewer.highlight()
     assert hl["boxes"] or hl["names"], hl
     assert hl["label"].startswith("Prim:"), hl
+    assert w.design_viewer._highlight_names, w.design_viewer._highlight_names
+    assert w.design_viewer._highlight_label.startswith("Prim:")
 
     # a port row highlights the port
     if "port" in rows:
         w.tree.setCurrentRow(rows["port"][0])
         hl = w.mesh_viewer.highlight()
         assert hl["label"].startswith("Port:"), hl
+        assert w.design_viewer._highlight_label.startswith("Port:")
 
     # a repeat click toggles only the viewer mark; the row stays selected
     item = w.tree.item(rows["prim"][0])
@@ -567,6 +765,19 @@ def test_tree_selection_highlights_only_objects() -> None:
     print("TREE SELECTION HIGHLIGHTS OBJECTS ONLY OK")
 
 
+def test_design_viewer_tab() -> None:
+    """3D Design tab exists, follows the project and raises no offscreen errors."""
+    w = _win()
+    assert "3D Design" in [w.tabs.tabText(i) for i in range(w.tabs.count())]
+    assert w.design_tab_index >= 0
+    w._on_show_design3d()
+    assert w.tabs.currentIndex() == w.design_tab_index
+    assert len(w.design_viewer._design_prims) == len(w.primitives)
+    assert len(w.design_viewer._design_ports) == len(w.project.ports)
+    assert w.design_viewer._design_nf2ff is w.project.nf2ff
+    print("3D DESIGN TAB OK")
+
+
 def main() -> int:
     failed = 0
     for t in (
@@ -575,8 +786,10 @@ def main() -> int:
         test_view_menu_switches_tabs,
         test_project_panel_toggle,
         test_field_viewer_axes_menu,
+        test_mesh2freecad_params_dialog,
         test_sim_params_dialog,
         test_mesh_params_dialog,
+        test_gerber_import_dialog_scroll,
         test_log_mesh_report_tab,
         test_mesh_viewer_scene_info_tab,
         test_mesh_menu_repair_options,
@@ -584,6 +797,7 @@ def main() -> int:
         test_pcb_hairpin_preset,
         test_wr62_waveguide_preset,
         test_tree_selection_highlights_only_objects,
+        test_design_viewer_tab,
     ):
         try:
             t()

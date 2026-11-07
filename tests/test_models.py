@@ -26,6 +26,51 @@ def test_project_roundtrip():
     assert any(m.name == "copper" for m in q.materials)
 
 
+def test_project_paths_are_relative_and_follow_the_json():
+    """Project-owned paths are stored relative to the JSON and survive a move."""
+    import json
+    import shutil
+
+    from app.models.project import GeometryFile, Project
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td) / "case"
+        data = base / "proj"
+        data.mkdir(parents=True)
+        path = base / "proj.fcsim.json"
+        p = Project.new_default("proj")
+        p.geometry_files = [
+            GeometryFile(
+                path=str(data / "geom.step"),
+                format="step",
+                mesh_path=str(data / "geom.npy"),
+            )
+        ]
+        p.primitives = [
+            {"kind": "stl", "name": "s", "path": str(data / "a.stl"),
+             "mesh_path": str(data / "a.npy")}
+        ]
+        p.results = {
+            "project_dir": str(data),
+            "sim_dir": str(data / "simulation"),
+            "sparams": str(data / "sparams" / "sparams.s2p"),
+            "time": "now",
+        }
+        p.save(path)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        assert raw["results"]["sparams"] == "proj/sparams/sparams.s2p"
+        assert raw["geometry_files"][0]["path"] == "proj/geom.step"
+        assert raw["geometry_files"][0]["mesh_path"] == "proj/geom.npy"
+        assert raw["primitives"][0]["path"] == "proj/a.stl"
+
+        moved = Path(td) / "moved"
+        shutil.copytree(base, moved)
+        q = Project.load(moved / "proj.fcsim.json")
+        assert Path(q.results["sparams"]) == moved / "proj" / "sparams" / "sparams.s2p"
+        assert Path(q.geometry_files[0].path) == moved / "proj" / "geom.step"
+        assert Path(q.primitives[0]["path"]) == moved / "proj" / "a.stl"
+
+
 def test_project_object_display_roundtrip():
     """Per-object Mesh Viewer appearance travels with the project file."""
     from app.models.project import Project
@@ -68,6 +113,48 @@ def test_max_grading_ratio_clamped():
             value, mesh.effective_max_grading_ratio()
         )
         assert mesh.global_setup(boundary)["max_grading_ratio"] == want, value
+
+
+def test_pcb_mesh_profile():
+    """PCB profile: fine enough for tracks/substrate, capped for large boards."""
+    from app.meshing.rules import pcb_mesh_profile
+    from app.models.project import MeshSpec
+
+    m = MeshSpec(
+        drawing_unit="mm",
+        start_frequency=2.45e9,
+        stop_frequency=2.95e9,
+    )
+    p = pcb_mesh_profile(m)
+    assert p["preset"] == "high"
+    assert abs(float(p["max_cellsize"]) - 0.5) < 1e-9
+    assert abs(float(p["refined_cellsize"]) - 0.25) < 1e-9
+    assert abs(float(p["min_cellsize"]) - 0.05) < 1e-9
+    assert p["min_cellsize"] == p["min_cellsize_z"]
+    assert float(p["max_grading_ratio"]) == 1.3
+    assert p["smooth_metal_edge"] == "one_third_two_thirds"
+    assert p["use_circle_detection"] and p["use_arc_detection"]
+    assert p["add_graded_mesh_lines_at_material_transitions"]
+    # Above ~60 GHz the lambda/20 cap must tighten the 0.5 mm default.
+    high = pcb_mesh_profile(
+        MeshSpec(
+            drawing_unit="mm",
+            start_frequency=80e9,
+            stop_frequency=100e9,
+        )
+    )
+    assert float(high["max_cellsize"]) < 0.5
+    assert float(high["min_cellsize"]) < 0.05
+    # Drawing-unit conversion: 0.5 mm is 500 um in a um project.
+    um = pcb_mesh_profile(
+        MeshSpec(
+            drawing_unit="um",
+            start_frequency=2.45e9,
+            stop_frequency=2.95e9,
+        )
+    )
+    assert abs(float(um["max_cellsize"]) - 500.0) < 1e-9
+    assert abs(float(um["min_cellsize"]) - 50.0) < 1e-9
 
 
 def test_mesh_targets():

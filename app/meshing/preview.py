@@ -53,15 +53,56 @@ class PrimitiveInfo:
     poly_axis: str = ""
     poly_coord: float = 0.0
     poly_length: float = 0.0
+    #: wire / curve only: 3-D polyline and (for wire) its radius.  The Mesh
+    #: Viewer draws these as lines instead of their AABB.
+    line_points: tuple[tuple[float, float, float], ...] = ()
+    wire_radius: float = 0.0
+    #: STL / PolyhedronReader only: triangle soup (N, 3, 3) loaded on demand
+    #: for exact Mesh-Editor snapping. ``None`` keeps the fast drawing path.
+    triangles: np.ndarray | None = None
 
 
-def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[PrimitiveInfo]:
+def _polyhedron_triangles(prim) -> np.ndarray | None:
+    """Triangle soup from a CSXCAD Polyhedron/PolyhedronReader, if exposed."""
+    try:
+        n_vertices = int(prim.GetNumVertices())
+        n_faces = int(prim.GetNumFaces())
+    except Exception:  # noqa: BLE001
+        return None
+    if n_vertices <= 0 or n_faces <= 0:
+        return None
+    try:
+        vertices = [
+            tuple(float(v) for v in prim.GetVertex(i))
+            for i in range(n_vertices)
+        ]
+        tris = []
+        for i in range(n_faces):
+            face = list(prim.GetFace(i))
+            if len(face) < 3:
+                continue
+            idx = [int(v) for v in face[:3]]
+            if any(v < 0 or v >= n_vertices for v in idx):
+                continue
+            tris.append([vertices[idx[0]], vertices[idx[1]], vertices[idx[2]]])
+    except Exception:  # noqa: BLE001
+        return None
+    return np.asarray(tris, dtype=float) if tris else None
+
+
+def iter_primitive_infos(
+    csx, coord_system: str = "cartesian", *, include_triangles: bool = False
+) -> list[PrimitiveInfo]:
     """Extract AABB + metadata for every primitive in the CSX.
 
     ``coord_system="cylindrical"`` derives the extent via
-    ``app.meshing.polar.polar_primitive_bbox`` — CSXCAD's ``GetBoundBox``
+    ``app.meshing.polar.polar_primitive_bbox`` - CSXCAD's ``GetBoundBox``
     is only meaningful on a cartesian grid (cylinders report a bogus
     negative-r box on a cylindrical one).
+
+    ``include_triangles`` additionally loads the vertices/faces of
+    Polyhedron/PolyhedronReader primitives (on demand; the normal drawing
+    path stays cheap).
     """
     infos: list[PrimitiveInfo] = []
     polar = coord_system == "cylindrical"
@@ -156,6 +197,25 @@ def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[Primitive
                                 poly_length = max(0.0, float(prim.GetLength()))
                     except Exception:  # noqa: BLE001
                         poly_points = ()
+                line_points: tuple[tuple[float, float, float], ...] = ()
+                wire_radius = 0.0
+                if ptype_id in (11, 12):  # CSPrimCurve / CSPrimWire
+                    try:
+                        npts = int(prim.GetNumberOfPoints())
+                        pts3 = tuple(
+                            tuple(float(v) for v in prim.GetPoint(k))
+                            for k in range(npts)
+                        )
+                        if len(pts3) >= 2:
+                            line_points = pts3
+                        if ptype_id == 12 and hasattr(prim, "GetWireRadius"):
+                            wire_radius = float(prim.GetWireRadius())
+                    except Exception:  # noqa: BLE001
+                        line_points = ()
+                        wire_radius = 0.0
+                triangles = (
+                    _polyhedron_triangles(prim) if include_triangles else None
+                )
             except Exception:  # noqa: BLE001
                 continue
             infos.append(
@@ -172,6 +232,9 @@ def iter_primitive_infos(csx, coord_system: str = "cartesian") -> list[Primitive
                     poly_axis=poly_axis,
                     poly_coord=poly_coord,
                     poly_length=poly_length,
+                    line_points=line_points,
+                    wire_radius=wire_radius,
+                    triangles=triangles,
                 )
             )
     return infos

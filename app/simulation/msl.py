@@ -9,8 +9,6 @@ empty.
 
 from __future__ import annotations
 
-import bisect
-
 _AXES = ("x", "y", "z")
 
 
@@ -85,7 +83,14 @@ def _port_name(port) -> str:
     return str(getattr(port, "name", "") or "port")
 
 
-def extend_zero_propagation(start, stop, prop_dir, grid_lines):
+def extend_zero_propagation(
+    start,
+    stop,
+    prop_dir,
+    grid_lines,
+    *,
+    reverse: bool = False,
+):
     """Give an MSL port box one grid cell along the line when it has none.
 
     openEMS computes ``MSLPort.direction = sign(stop - start)`` along
@@ -93,6 +98,17 @@ def extend_zero_propagation(start, stop, prop_dir, grid_lines):
     probes (and adds no strip), so the port plane is widened to the next grid
     line. The port in the project keeps its zero length — only the generated
     simulation gets the cell. Returns ``(start, stop, extended)``.
+
+    ``reverse`` matters: ``PortDef.oriented()`` swaps start/stop *after* this
+    extension.  For a normal port the strip grows from ``start`` to ``stop``;
+    for a reversed port that swap makes the old ``start`` the outer port plane,
+    so the cell has to be added to ``start`` instead.  Otherwise a port at the
+    high edge of a PCB grows outwards into the air margin and its excitation
+    plane ends up outside the feed line.
+
+    The growth direction points towards the centre of the grid, not simply to
+    the next line: with an air margin the next line may be outside the
+    structure (the high-side port would be extended away from the filter).
     """
     idx = _AXES.index(prop_dir) if str(prop_dir) in _AXES else None
     if idx is None or abs(float(stop[idx]) - float(start[idx])) > 0.0:
@@ -101,13 +117,26 @@ def extend_zero_propagation(start, stop, prop_dir, grid_lines):
     if len(lines) < 2:
         return list(start), list(stop), False
     pos = float(start[idx])
-    j = bisect.bisect_right(lines, pos)  # first line beyond the port plane
-    if j >= len(lines):  # beyond the last line -> widen towards the grid
-        j = len(lines) - 1
-    if lines[j] == pos:  # exactly on a line -> the next one, else the previous
-        j = j + 1 if j + 1 < len(lines) else j - 1
-    if j < 0 or lines[j] == pos:
-        return list(start), list(stop), False  # no usable line
-    widened = list(stop)
-    widened[idx] = lines[j]
-    return list(start), widened, True
+    # A grid line can be a few float32 ULPs away from the port plane.  Ignore
+    # such near-duplicates; otherwise a port on the upper domain edge would
+    # "extend" to a line at the same coordinate and get a zero-length metal
+    # strip (openEMS reports it as an unused primitive).
+    tol = 1e-6 * max(1.0, abs(pos))
+    forward = [value for value in lines if value - pos > tol]
+    backward = [value for value in lines if pos - value > tol]
+    # Pick the side facing the domain interior. A port near the high edge grows
+    # inwards (backward); one near the low edge grows inwards (forward). For a
+    # port in the middle keep the historical forward choice.
+    if abs(pos - lines[-1]) < abs(pos - lines[0]):
+        target = max(backward) if backward else (min(forward) if forward else None)
+    else:
+        target = min(forward) if forward else (max(backward) if backward else None)
+    if target is None:
+        return list(start), list(stop), False
+    widened_start = list(start)
+    widened_stop = list(stop)
+    if reverse:
+        widened_start[idx] = target
+    else:
+        widened_stop[idx] = target
+    return widened_start, widened_stop, True

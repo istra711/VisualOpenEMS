@@ -7,7 +7,570 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes yet._
+## [0.10.0] - 2026-11-07
+
+### Added
+
+- **Animated GIF export** for the Field Viewer, alongside the existing MP4
+  export: the "Video…" dialog now also offers `*.gif` (Pillow, no ffmpeg),
+  plus a separate Simulation → "Export field animation (GIF)…" action and a
+  right-click menu entry. Same current-view rendering and `fps` as MP4.
+- **Embedded 3D Design viewer**
+  (`app/ui/design_viewer.py`): new *3D Design* tab and Simulation menu action.
+  Reuses the Field Viewer's VTK pane for rotating/panning/zooming the project
+  geometry (including STL), with per-object colours/transparency/visibility,
+  a global geometry opacity, domain-box, port-box and NF2FF-box overlays,
+  standard views, fit/reset and a separate pop-out window. Selecting a
+  primitive or port in the Project / Geometry tree highlights it with a yellow
+  3D outline, matching and toggling with the Mesh Viewer selection. A
+  right-click menu offers the X/Y/Z coordinate axes, axis labels and a numeric
+  coordinate ruler with adjustable size, anchor location, label size and a
+  reset, selectable ruler placement (closest/farthest/outer/static) and tick
+  side (outside/inside/both), an optional small fixed-size corner triad in the
+  lower-left, an optional tick tape directly on the X/Y/Z arrows (X/Y/Z
+  selectable), plus a two-click tape measure that reports the distance in the
+  project drawing unit. The side panel is compact (≈145–165 px)
+  so the 3D view gets the space. The view is read-only and follows
+  geometry/port/NF2FF edits automatically. A small
+  scene API (`set_design`, `add_overlay_actor`, `remove_overlay_actors`,
+  `set_clip_plane`, `pick_at`) is the base for later measurement, picking and
+  section-plane tools.
+- **3rd-order hairpin band-pass example, 2440 MHz on FR4**
+  (`examples/run_pcb_hairpin_3pol_example.py`,
+  `docs/HAIRPIN_3POL_FR4_DE.md`): rebuilds the filter from J. Horton,
+  "Designing PCB Filters using MATLAB" (2021) as an openEMS project — 3-pole
+  0.1 dB Chebyshev, f0 = 2440 MHz, FBW 10 % (2318–2562 MHz), FR4 (εr 4.5,
+  tan δ 0.02, 1.6 mm, 35 µm Cu). The layout follows the MATLAB `filterHairpin`
+  rules so the board matches the article's photos: three folded λ/2 resonators
+  with **alternating folds**, a **uniform 0.5 mm spacing** (the `design`
+  default) and **tapped 50 Ω feed lines** entering from the board edges at
+  50 % of the arm length (MATLAB `FeedType = "Tapped"`). 50 Ω line 3.011 mm,
+  arm 15.369 mm (FDTD-calibrated `ARM_SCALE` 1.031; the Hammerstad λg is ~3 %
+  short here — a single 2-port hairpin peaks at 2.541 GHz at scale 1.0 and at
+  2.441 GHz at 1.031), inner arm gap 2.0 mm, feed line 5 mm — visually the
+  same meander layout as the printed boards. Writes
+  `work/hairpin_fr4_2440_3pol/` (project, `project_run.py`, `port2/`), offers
+  `--design` / `--skip-run` / `--mesh-only`, and merges both excitations into
+  `sparams/sparams.s2p` on a full run. Mesh: 149 × 95 × 14 = 198 170 cells
+  (run script 216 000), Δt = 0.174 ps; the 1e-4 end criterion stops a run
+  after ~5 ns (DFT ≈ 185 MHz). Manual mesh lines only at the metal x-faces and
+  in z — an interior x/y fill landed next to easyMesh's own lines and created
+  5–40 µm cells (Δt 0.017–0.13 ps instead of 0.174 ps). The doc covers the
+  dimensions, why the uniform 0.5 mm spacing over-couples (k ≈ 0.25 vs
+  0.34/0.14 for 10 %, giving the same broad rippled band as the article's
+  measured boards), the tap-position trade-off (0.75 → Qe ≈ 10), mesh
+  warnings, validation status (geometry/mesh verified, single resonator on
+  2440 MHz, 3-pole probe run shows the split modes) and the article's
+  εr-dispersion measurement finding.
+- **Optimized hairpin 3-pole variant for 2.44 GHz on FR4**
+  (`examples/run_pcb_hairpin_3pol_example.py --optimized`,
+  `docs/HAIRPIN_3POL_FR4_DE.md` §11): same look as the article rebuild
+  (tapped feeds, alternating folds) but with the coupling and external Q of
+  the 0.1 dB Chebyshev prototype instead of the MATLAB defaults — 0.70 mm
+  uniform gap between the resonators and the tap at 65 % of the arm
+  (FDTD-calibrated arm 17.754 mm, `ARM_SCALE` 1.191). Writes
+  `work/hairpin_fr4_2440_3pol_opt/`. Single-excitation FDTD (end criterion
+  1e-6): **S11 −20.4 dB / S21 −2.06 dB at 2.44 GHz**, the ISM band
+  2.400–2.4835 GHz covered with S11 < −13 dB and 2.1–2.3 dB insertion loss,
+  −3 dB band ≈ 2.36–2.59 GHz. The article-faithful default (0.5 mm, mid-arm
+  tap) stays available and is documented as over-coupled (S11 ≈ −1 dB,
+  S21 ≈ −18 dB at 2.44 GHz). Coupling/tap were tuned against FDTD: gap 1.357
+  → 5 % band, 0.70 → ≈ 9 %; a 0.5 mm gap makes the mesh so fine that the run
+  becomes impractical (killed after 30 min).
+- **CST Studio export-package import (Variant A)**
+  (`app/freecad_io/cst_import.py`, `app/ui/cst_import_dialog.py`):
+  File -> *Import CST Studio Package...* and Geometry -> same action import a
+  CST export folder or ZIP containing `manifest.json` plus one STL per solid.
+  The import previews objects, materials, ports, frequency range and boundary
+  conditions, converts CST's metre STLs to the project drawing unit, keeps
+  names such as `PEC/trace1`, and stores the options in `Project.cst`
+  (`CstSpec`). Re-imports replace only primitives from the same package and
+  preserve manual material/priority overrides. Floquet/unit-cell ports,
+  dispersive/anisotropic materials, CST mesh/schematic/field-monitor data are
+  reported as warnings rather than approximated. CST waveguide ports that lie
+  on a planar substrate with a thin PEC trace are recognized and imported as
+  MSL ports; true hollow-waveguide ports stay `rect_waveguide` and zero-length
+  port planes are extended for openEMS. The macro now also exports the CST
+  calculation/structure box; the importer converts it into the project's six
+  per-side air margins, preserving PEC walls that act as a ground plane when a
+  model has no explicit ground layer. The Simulation Parameters dialog now has
+  six editable per-side air margins (disabled in auto/global mode) and PCB
+  presets for an open board or a sheet-metal enclosure (x/y/zmin=0, editable
+  lid height as zmax). A matching VBA macro is included at
+  `app/freecad_io/cst_export_macro.bas`; the package schema and limitations
+  are documented in `docs/CST_IMPORT_DE.md`. Covered by
+  `tests/test_cst_import.py` (folder, ZIP, metre-to-mm/um conversion, ports,
+  MSL conversion, boundary distances, materials, re-import and persistence).
+- **Gerber/Excellon import foundation** (`app/freecad_io/gerber_import.py`):
+  reads a KiCad/Altium/Eagle-style Gerber + drill folder or ZIP with
+  `gerbonara`, vectorizes every copper layer via `shapely`, and returns native
+  CSXCAD primitive dictionaries (`polygon` sheets/prisms and `cylinder` vias).
+  The caller supplies the stackup (board/copper thickness, substrate material,
+  via diameter threshold), because Gerber itself carries no z information.
+  Covered by `tests/test_gerber_import.py` with a generated 2-layer set,
+  copper holes, PTH/NPTH drills and ZIP input.
+- **Gerber stackup dialog + project integration** (`app/ui/gerber_import_dialog.py`):
+  File → *Import Gerber/Excellon…* and Geometry → same action import a folder,
+  ZIP or single file. The dialog collects board/copper thickness, εr/tanδ,
+  per-layer z overrides, via threshold, NPTH and precision options. The import
+  replaces only primitives from the same source, preserves manual material
+  overrides by name, creates/updates the substrate material and stores every
+  option in `Project.gerber` (`GerberSpec`) in the `.fcsim.json` file.
+- **Gerber phase 3: via spans, slots and solder mask**:
+  `GerberSpec.via_spans` assigns blind/buried spans per drill diameter (Gerber
+  itself has no per-via layer data); Excellon milled slots (`G85`/routed
+  Line/Arc objects) become extruded copper or vacuum polygons; optional top/
+  bottom solder-mask layers are imported as a thin dielectric (board outline
+  minus mask openings) with their own εr/tanδ. The dialog exposes all three,
+  and the importer/tests cover a generated 4-layer stackup with a slot, a
+  blind via and mask openings.
+- **Native KiCad `.kicad_pcb` import** (`app/freecad_io/kicad_import.py`):
+  parses KiCad 6/7/8 S-expressions directly, including copper layers, custom
+  stackup (thickness, εr, tanδ), tracks/arcs, SMD/through-hole/NPTH pads,
+  filled zones and exact via spans from `(via ... (layers ...))`.  The board is
+  centred, optionally Y-mirrored to match Gerber top views, and emitted as the
+  same CSXCAD primitives as the Gerber path.  File → *Import KiCad PCB…* opens
+  the stackup/options dialog; `Project.kicad` (`KiCadSpec`) stores the settings.
+  Tests cover a generated 4-layer board (via span, pad barrels, zone, outline)
+  and fallback stackup behaviour. Copper can be imported as zero-thickness
+  sheets, extruded prisms, or one STL/Polyhedron per copper layer; the mesh
+  mode collapses large filled zones with many cutouts from thousands of
+  AddPolygon primitives to one PolyhedronReader primitive per layer.
+- **Automatic KiCad port suggestions** (`app/freecad_io/kicad_ports.py`):
+  derives lumped/MSL/probe candidates from explicit footprint properties
+  (`openems_port`, `openems_port_type`), RF/port-like net names, connector
+  footprints, pad/track topology and Edge.Cuts proximity.  A confirmation
+  dialog (`app/ui/kicad_ports_dialog.py`) lets the user rename, change the
+  type, choose the excited port and drop candidates before they become
+  `PortDef` entries.  The KiCad import dialog has an "suggest ports after
+  import" option; Geometry → *Ports from KiCad nets…* re-runs the suggestion
+  for the current board.
+- **Automatic Gerber/Excellon port suggestions** (`app/freecad_io/gerber_ports.py`):
+  reads Gerber X2 object attributes (`.Net`, `.ComponentRef`, `.Pin`) and an
+  optional IPC-D-356 netlist to derive the same port candidates as the KiCad
+  path.  Without net data it falls back to pads near `Edge.Cuts` with a
+  deliberately low confidence.  The Gerber import dialog has a "suggest ports
+  after import" option; Geometry → *Ports from Gerber…* re-runs it.  The shared
+  confirmation dialog lets the user review/rename/change type/excite before the
+  candidates become `PortDef` entries.
+- **Geometry menu: Add Extruded Polygon** (`app/ui/main_window.py`,
+  `app/ui/geometry_editors.py`): opens the polygon point editor with a
+  positive extrusion length and the title *Extruded polygon primitive*,
+  producing a solid CSXCAD `AddLinPoly` prism instead of a flat `AddPolygon`
+  sheet.  The normal *Add Polygon* entry remains the zero-thickness sheet;
+  editing an existing polygon keeps its length.  The dialog defaults to
+  `extruded_poly1` with 1.0 drawing-unit thickness and still permits switching
+  back to a sheet by setting Length to 0.
+- **Geometry menu: Wire and Curve primitives** (`app/ui/main_window.py`,
+  `app/ui/geometry_editors.py`, `app/meshing/build_task.py`,
+  `app/simulation/script_gen.py`): new *Add Wire...* and *Add Curve...*
+  entries edit 3-D polylines (`x, y, z` per line, >= 2 points).  Wire emits a
+  CSXCAD `AddWire` with an editable radius; Curve emits a zero-thickness
+  `AddCurve`.  Both persist as project primitive dicts, contribute their real
+  points to the Mesh Viewer/snapping and coordinate diagnostics, are blocked in
+  cylindrical mode, and are covered by `tests/sphere_polygon_smoke.py`
+  (dialog, mesh-only and FDTD run) plus the Geometry-menu smoke checks.
+- **Mesh Viewer: view controls moved to the plot's right-click menu**
+  (`app/ui/mesh_viewer.py`): the second toolbar row is gone. *Mesh grid*,
+  *Grid strength* (0-100 % presets), *Geometry*, *Ports*, *NF2FF*, *Mesh
+  editor* and *Pop-out viewer* now live in the right-click menu of the plot
+  area; selecting a grid strength also enables the mesh grid. The hidden
+  widgets remain as state/signal targets for saved projects and tests, while
+  the visible toolbar keeps only the slice navigation (view, plane, plane
+  slider). Help text updated.
+- **Mesh Viewer: Snap sensitivity in the right-click menu**
+  (`app/ui/mesh_viewer.py`): the menu now has a checkable *Snap sensitivity*
+  submenu.  *Zoom-relative (default)* measures the band against the currently
+  visible slice axis, so the snap distance stays the same on screen at every
+  zoom level.  The same reference span now also sizes the narrow band that
+  selects an existing mesh line (previously domain-relative, which made a
+  strongly zoomed slice select a far-away line).  Turning it off switches to
+  domain-relative snapping; the
+  presets *Off* (no edge snapping), *Fine* (0.5 %), *Normal* (1 %), *Wide*
+  (2.5 %, at least 0.05 mm) and *Very wide* (5 %, at least 0.1 mm) then use the
+  full simulation domain.  The absolute minimums apply only in domain-relative
+  mode.  The chosen value/mode is used by the next Mesh-Editor click and logged
+  in the main window.  The submenu is disabled while the Mesh editor is off
+  (Port mode never snaps).
+- **Mesh Parameters: PCB mesh preset** (`app/ui/mesh_params.py`,
+  `app/meshing/rules.py`): a *PCB preset* button next to the mesh-preset combo
+  fills frequency-aware mesh overrides for typical circuit boards - high air
+  density (20 cells/λ), max cell 0.5 mm (capped at λ/20 for high frequencies),
+  refined cell 0.25 mm, min cell 0.05 mm on all axes, grading 1.3, circle/arc
+  detection, closely placed edges and graded metal interfaces.  Values are
+  converted to the current drawing unit and only written on **Apply**; air
+  margin and PML size remain in Simulation Parameters.
+- **Mesh Parameters: explanations on every value** (`app/ui/mesh_params.py`):
+  the frequency fields (f0, fc, start/stop), excitation/custom waveform,
+  drawing unit, coordinate system, all cell-size overrides, grading, edge
+  options and smoothing now have tooltips on both the input and its left-hand
+  label. The dialog header says so, and the Mesh Parameters help topic repeats
+  the hint. This makes f0/fc vs. start/stop, the λ/20 max-cell cap and the
+  min/refined/max relationships visible without opening the full help.
+
+### Changed
+
+- **Mesh Parameters: three checkmarked presets** (`app/ui/mesh_params.py`,
+  `app/meshing/rules.py`, `app/models/project.py`): the old density dropdown +
+  “PCB preset” button is replaced by exclusive checkboxes for **Default**,
+  **Antenna** and **PCB**. Default uses 15 cells/λ with automatic sizes and
+  grading 2.0; Antenna uses 20 cells/λ, 0.1 mm min cell, grading 1.5, circle/arc
+  detection and graded metal interfaces; PCB keeps the frequency-aware 0.5 mm
+  max / 0.25 mm refined / 0.05 mm min profile with grading 1.3. The active
+  profile is stored as `mesh.mesh_profile`; old projects are recognised by the
+  PCB override fingerprint or the antenna-mode flag. The Mesh Parameters help
+  text and tooltips were updated accordingly.
+- **3D Design ruler follows visible bounds** (`app/ui/design_viewer.py`): when
+  the **Domain box** overlay is switched off, the numeric ruler now snaps to
+  the union of the visible geometry and port boxes instead of staying on the
+  hidden FDTD domain. `_scene_bounds_m()` and `_scene_diagonal()` gained an
+  `include_domain` switch; the in-scene triad and camera fit now follow the
+  same visible bounds, but the out-of-scene corner marker stays fixed. Empty
+  scenes fall back to the domain bounds so the ruler does not disappear.
+  Tooltip, 3D Design help and `tests/design_viewer_smoke.py` were updated.
+- **3D Design shows exactly one coordinate ruler** (`app/ui/design_viewer.py`):
+  the inherited Field-Viewer ``_apply_axes()`` added its own cube ruler/triad
+  on top of the design-specific ruler, so a flat PCB showed one axis set at the
+  geometry and another at the domain bounds. The design viewer now overrides
+  ``_apply_axes()`` (corner marker only) and defensively removes inherited
+  ruler/triad actors before redrawing. Domain box on -> one ruler at the
+  domain; off -> one ruler at the geometry. Checked by
+  `tests/design_viewer_smoke.py` (exactly one ``vtkCubeAxesActor``).
+- **3D Design hides overlapping ruler numbers** (`app/ui/design_viewer.py`):
+  each axis' numbers and minor ticks are hidden while its projected length is
+  shorter than a font-dependent threshold (~8 glyph heights, ~192 px at font
+  24). The axis line and title stay visible, so the ruler still shows the
+  correct extent. The check runs on redraw, camera fit and after camera
+  interaction / window resize; zooming in / enlarging the window brings the
+  numbers back. Checked by `tests/design_viewer_z_labels_smoke.py` (small
+  viewport hides all axes, 1200×800 shows them again, 0.1 mm Z stays hidden).
+- **Field Viewer drops old geometry when projects change**
+  (`app/ui/vtk_viewer.py`, `app/ui/main_window.py`): `clear()` now also drops
+  the `_geom_prims` / `_geom_actors` ghosts, `set_work_dir()` removes old
+  ghosts when the work folder changes, and `_load_last_results()` pushes the
+  opened project's primitive list into the Field Viewer before restoring a
+  dump. Opening a project without field results therefore no longer leaves the
+  previous PCB/antenna visible. Covered by `tests/vtk_geometry_reset_smoke.py`.
+- **Animated GIF export uses milliseconds** (`app/ui/vtk_viewer.py`,
+  `app/postproc/video_timing.py`): imageio's Pillow GIF writer passes
+  ``duration`` to Pillow, which expects **milliseconds**, not seconds. The old
+  ``1.0 / fps`` value was rounded to zero, so 5 fps and 10 fps both played at
+  Pillow's default ~100 ms. GIF frames now use
+  ``max(20, round(1000 / fps))`` ms; MP4 is unchanged. Covered by
+  `tests/test_gif_timing.py` and the 10-fps duration assertion in
+  `tests/vtk_viewer_smoke.py`.
+- **Field Viewer video-export options dialog** (`app/ui/video_export_dialog.py`,
+  `app/ui/vtk_viewer.py`): the Video button / menu entries now open a dialog
+  for MP4 vs animated GIF, output path, resolution (current view, 1920×1080,
+  1280×720, 960×540, 640×480/VGA, 640×360, 480×480, 320×240/QVGA, 1080×1080,
+  1080×1350 or custom), fps, target duration, and the
+  start/end frame range including every-Nth-frame. The dialog previews the
+  resulting frame count and duration; the exporter accepts the range, renders
+  each frame at the chosen resolution (letterboxed, no scene crop) and keeps the
+  existing MP4/GIF backends. Direct `export_video(path=...)` calls remain
+  supported. Covered by the ranged-export assertion in
+  `tests/vtk_viewer_smoke.py`.
+- **Smart S-parameter markers via right-click** (`app/ui/sparam_viewer.py`):
+  right-clicking a plot now opens a marker menu instead of only the analysis
+  dialog: add marker at the clicked point, trace minimum/maximum, nearest
+  local peak/valley, the two -3 dB points around the primary trace's peak
+  (transmission) or null (reflection), band center, clear markers, analysis
+  dialog and pop-out graph. Markers added by these functions are tagged in the
+  marker list (`S21 max`, `S11 -3dB low`, `S11 valley`, `band center`, …).
+  Clicking a marker row now selects/highlights that marker in the plot (bold
+  black line; larger gold-edged dot on the Smith chart). A selected marker can
+  be used as the reference for a **delta marker** (right-click → “Delta marker
+  here (from selected)”): the list shows the reference/target frequency, Δf
+  and the dB difference only, and the plot uses a violet dash-dot line /
+  diamond. Deleting the reference removes its dependent delta markers.
+  Right-clicking a marker row offers Copy marker value / Copy frequency
+  (clipboard) / Delete. Marker frequencies, tags and delta references are
+  stored in `Project.sparam_markers` and therefore in the project
+  `.fcsim.json`; reopening the project restores them. The analysis dialog
+  remains available from the same menu. Covered by
+  `tests/sparam_marker_smoke.py`.
+- **Unsaved Viewer settings prompt** (`app/ui/main_window.py`): closing the
+  Viewer settings dialog (Cancel or window close) after changing a control /
+  using Preview now asks “Discard these changes?” with Discard/Cancel instead
+  of silently reverting. A clean dialog still closes immediately. Implemented
+  with a small `_ConfirmDiscardDialog` subclass so both the Cancel button and
+  the window close path are covered.
+- **Unsaved project prompt when closing the main GUI** (`app/ui/main_window.py`):
+  the main window now keeps a serialized baseline of the project (settings,
+  primitives, S-parameter markers, …). Closing after a marker was set or a form
+  setting was changed asks **Save / Discard / Cancel**. Save writes the project
+  (including `sparam_markers`) and only then closes; a cancelled Save As keeps
+  the window open. Opening a project without loaded results no longer erases
+  its saved markers. Covered by `tests/main_window_close_prompt_smoke.py`.
+- **Field Viewer defaults: coordinate ruler + corner triad + isometric view**
+  (`app/ui/vtk_viewer.py`, `app/settings.py`): a fresh profile now opens a
+  field with the numeric coordinate ruler, the ParaView-style corner triad and
+  axis labels (font 24, 2× triad size, labels on the far bbox edge) and the
+  **Isometric** standard view. That is the display the user asked to make the
+  default; previously the in-scene triad, no ruler and the "keep" view were the
+  defaults. Saved `app_settings.json` values still win. `DEFAULT_AXES`
+  (corner=True, ruler=True, font=24, scale=2.0, origin_back=True) and
+  `AppSettings.field_viewer_view="iso"` changed; `tests/vtk_viewer_smoke.py`
+  and `tests/test_settings.py` updated to the new defaults.
+- **3D Design viewer uses the same axes defaults as the Field Viewer**
+  (`app/ui/design_viewer.py`): corner triad (bottom-left) instead of the
+  in-scene arrows, coordinate ruler, X/Y/Z labels, font 24 and 2× size; the
+  in-scene arrows come back when "Corner axes (bottom-left)" is unchecked, and
+  "Reset coordinate options" restores these defaults. The standard view is
+  applied as a mode (isometric by default) on the first render and on explicit
+  fits. `tests/design_viewer_smoke.py` updated (corner/ruler/font/scale after
+  reset, isometric camera).
+
+### Fixed
+
+- **Coordinate-ruler units and duplicate axes** (`app/ui/vtk_viewer.py`,
+  `app/ui/design_viewer.py`): the Field Viewer ruler now follows the project's
+  drawing unit (mm for PCB projects instead of a global "m" default); the
+  unused axes of the split z / x-y `vtkCubeAxesActor`s are hidden completely,
+  so no second x/y ruler appears; and a planar dump (z extent ~ 0) no longer
+  draws a bogus `z [m] (×10⁻⁶)` ruler. The 3D Design viewer uses the same
+  metre-to-unit mapping for its axis captions and ranges.
+- **3D Design tab kept a stale or rolled camera**
+  (`app/ui/design_viewer.py`): `_render_design()` always fitted with the
+  "keep" preset, so opening the tab (or the first render after a geometry
+  import) kept whatever camera direction was there - a top or rolled view
+  even though the View combo showed "Isometric". The selected standard view
+  is now applied as a mode on the first render and on explicit fits;
+  "Fit (keep direction)" still only fits. Regression in
+  `tests/design_viewer_smoke.py` (first render with `iso` -> camera
+  direction (0.577, 0.577, 0.577)).
+- **Field Viewer: axes defaults ignored on a geometry-only scene**
+  (`app/ui/vtk_viewer.py`): the triad / corner marker / coordinate ruler were
+  only drawn from `_refresh_display`, which returns early without a loaded
+  field grid — so after a CAD geometry import none of the configured defaults
+  (corner triad, ruler, "iso" view) appeared, although the options were set.
+  `_apply_axes()` now handles the geometry-only case: `_scene_bounds()` falls
+  back to the ghost actors, the in-scene triad and the ruler are drawn around
+  them, `_update_corner_marker()` no longer requires a grid, the ruler actor is
+  tracked and replaced instead of stacking on repeated imports, and
+  `set_geometry()` applies the configured standard view when no dump is loaded.
+  Deeper cause of the same report: the VTK pane itself was only created in
+  `load()` (the render window is lazy), so a geometry import without any field
+  left the viewer empty and the options had no target at all. `set_geometry()`
+  now creates the pane when it is already visible and otherwise keeps the
+  primitives for `showEvent()`, which builds the pane and draws ghosts + axes +
+  view as soon as the tab is opened. A geometry-only scene also treats the
+  “keep” preset as isometric: there is no previous direction to keep, so VTK
+  fell back to its top view - that was the remaining “axes there, view wrong”
+  symptom (the app had rewritten the stored
+  `field_viewer_view` back to “keep” on exit).
+  Regression in `tests/vtk_viewer_smoke.py` (geometry-only viewer: ruler bounds,
+  in-scene triad, removal; deferred path: import while hidden → `showEvent`
+  draws ruler and ghosts).
+- **Field Viewer: "Hide below" looked dead, display panel too wide**
+  (`app/ui/vtk_viewer.py`): the vector threshold interpolated on the
+  logarithmic colour axis and, when any sampled point was exactly zero
+  (common), fell back to `max*1e-9` as the lower anchor. That stretched the
+  cut over ~9 decades — the arrow count did not change at all between 0 % and
+  50 %, so the control appeared broken (e.g. 72600-point E dump: 57784 glyph
+  points at 0 %, 3 %, 30 % and 50 %). The cut is linear again ("share of the
+  peak", as the tooltip says), it is applied whenever points are dropped, and
+  a threshold that removes everything now returns no arrows instead of
+  silently keeping all of them. Default `min_pct` is 0 (was 5). The docked
+  display panel is 200 px wide (was 280–320); every section now uses one
+  label column (76 px) and one field width (100 px), so all inputs line up
+  (combos, sliders and spin boxes start at the same x). The Slice “Position”
+  slider spans the full row with its numeric field on the next line (side by
+  side the value box was pushed out of the narrow panel); the “seeds” spin
+  moved into a form row, and “field underneath” became “field below” — as
+  spanning checkboxes both labels forced the panel body wider than the panel
+  and clipped it. The full-width rows
+  (Auto/Log checkboxes, the “magnitude …” readout, Rescale) live outside the
+  QFormLayout: inside it they were squeezed into 104 px and the readout was
+  clipped to “magnitude 0 …”. The pop-out dialog can still
+  widen it. Regression in `tests/vtk_viewer_smoke.py`
+  (0 % vs 50 % must reduce the glyph point count).
+- **Field Viewer flickered on every time/frequency step**
+  (`app/ui/vtk_viewer.py`): `_refresh_display` cleared the scene, then
+  `_draw_geometry()` rendered the geometry-only scene and the field actor was
+  added afterwards with a second render — so every slider step (and every
+  playback frame) presented a frame without the field in between. That was
+  most visible while dragging the time slider over a series. `_draw_geometry`
+  now takes `render=False` when called from a refresh, so a refresh ends with
+  exactly one render, and a frame change with the same array set skips the
+  array-combo rebuild (`_arrays_match_selection` → `_on_array_changed`).
+  Regression in `tests/vtk_viewer_smoke.py`: a counting fake interactor
+  asserts exactly one render per refresh and per frame step.
+- **Mesh Viewer: STL/Polyhedron objects were drawn as bounding rectangles**
+  (`app/ui/mesh_viewer.py`): the viewer loaded only the AABB for
+  `PolyhedronReader` shapes, so the hairpin filter solids looked like plain
+  rectangles even though openEMS was meshing their real triangles. Slices now
+  draw the actual triangle-plane intersection and the Domain overview draws
+  the projected triangle mesh. The run path already used `PolyhedronReader`;
+  boxes remain rectangles and cylinders circles.
+- **Unsaved "untitled" project asked to overwrite an old file**
+  (`app/ui/main_window.py`): Save As used `work/untitled.fcsim.json`, so a
+  stale file made the native dialog ask for overwrite before the project had a
+  name. A nameless project now suggests the first free `untitled[_n].fcsim.json`;
+  once saved, its real name is stored and normal overwrite confirmation applies.
+- **NF2FF box: automatic fit and explicit Auto/Manual placement**
+  (`app/models/project.py`, `app/ui/sim_params.py`,
+  `app/ui/main_window.py`): enabling NF2FF now fits the integration box to the
+  geometry plus air margin instead of keeping the old/default ±1 mm box. A new
+  `Box placement` selector offers **Automatic** and **Manual**; `Edit box…`
+  switches to Manual, `Fit to geometry + air margin` switches back to
+  Automatic. The mode is persisted with the project.
+- **NF2FF frame stayed visible after disabling the option**
+  (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`): the viewer drew the
+  purple box whenever an NF2FF object existed, regardless of `nf2ff.enabled`.
+  It now requires the option to be enabled, and toggling the Simulation
+  Parameters / Ports+Dumps checkbox updates the frame immediately without a
+  rebuild.
+- **Run aborted before FDTD with `FileExistsError: ...\simulation`**
+  (`app/simulation/script_gen.py`): the generated script pre-created the
+  `simulation` directory, while openEMS's `Run(cleanup=True)` expects to create
+  it. On Windows an existing/locked directory therefore aborted the run with
+  exit code 1. With cleanup enabled the script now removes the old directory;
+  if a viewer still locks it, the run uses a fresh sibling directory instead
+  of aborting.
+- **Mesh Viewer Reset/Home view**
+  (`app/ui/mesh_viewer.py`): the toolbar Home button, right-click *Reset /
+  Home view*, and double-click now rebuild the current view with fresh
+  autoscaled axes. The previous toolbar home history was tied to the old
+  Matplotlib axes and did nothing after a redraw/CSX rebuild.
+- **Port placement recognizes PEC simulation-box walls**
+  (`app/ui/mesh_viewer.py`): click-to-place lumped/MSL ports now treats PEC
+  domain faces as metal layers, so a trace above `zmin = PEC` automatically
+  gets the ground-side port length even without an explicit ground primitive.
+- **Project tree: multi-select Show/Hide in the Geometry pane**
+  (`app/ui/main_window.py`): Ctrl/Shift-click now selects several objects;
+  the context menu has **Show selected objects** / **Hide selected objects**,
+  updating every selected Prim at once and refreshing the Mesh Viewer once.
+- **Live runtime and remaining-time display in the status bar**
+  (`app/simulation/progress.py`, `app/ui/main_window.py`): the status bar
+  shows the current engine wall-clock runtime (`Laufzeit …`) next to the
+  remaining ETA (`ETA ~…`).
+- **Live remaining-time estimate in the status bar**
+  (`app/simulation/progress.py`, `app/ui/main_window.py`): the engine's
+  `Speed … (s/TS)` field is parsed during the run; the status bar now shows
+  `ETA ~…` at the bottom right, extrapolated as
+  `(max_timesteps - current_timestep) × seconds_per_timestep`.
+- **NrTS suggestion from the built mesh and DFT window**
+  (`app/meshing/timing.py`, `app/ui/sim_params.py`, `app/ui/main_window.py`):
+  the *Max timesteps (NrTS)* row now has a **Suggest** button and a hint. It
+  derives the required run length from the smallest cell/timestep and the
+  201-point S-parameter sweep (including a safety factor and domain-crossing
+  minimum), so a too-short DFT window is visible before the run.
+- **CST boundary MSL ports get a matched line extension**
+  (`app/freecad_io/cst_import.py`): CST waveguide ports at the calculation-box
+  edge absorb at the port plane. openEMS MSL ports do not; a PCB ending at the
+  boundary becomes an open-circuited microstrip. The importer now adds a short
+  trace extension (1× trace width) and extends the substrate two trace widths
+  from the port plane, puts PML on that side, and keeps the CST port plane as
+  the reference plane.
+- **Late-time energy growth with thin copper / high mesh grading**
+  (`app/simulation/script_gen.py`, `app/ui/solver_params.py`): openEMS's
+  default `Rennings2` timestep was unstable for the CST hairpin mesh
+  (0.0178 mm copper line next to a 0.71 mm cell, grading 39): energy grew back
+  to 0 dB, S11 exceeded 1 and `Run All Ports` produced unusable data. "auto"
+  now selects **CFL (TimeStepMethod=1)** and the generated script additionally
+  forces the actual conservative CFL step (including the dielectric
+  `sqrt(eps_r)` slowdown) via `FDTD.SetTimeStep`; Rennings2 remains selectable
+  explicitly. A CFL test run decayed to about −16 dB before the timestep cap.
+- **A failed run with a generated S-param file was reported as "S-params
+  missing"** (`app/ui/main_window.py`): the file is now loaded and clearly
+  marked **UNTRUSTED** in the viewer (red banner, also mirrored in the pop-out
+  graph), and the status report shows its data instead of "Results: none
+  written" (the verdict remains ERROR/not trustworthy). Only a run that
+  actually wrote no file shows the missing-file warning.
+- **Antenna viewer showed old NF2FF data after a run without NF2FF**
+  (`app/ui/main_window.py`): opening the Antenna tab auto-loaded any
+  `nf2ff/nf2ff.json` left in the reused project folder, even when the current
+  run had NF2FF disabled or failed. It now only auto-loads a file produced by
+  the current run (or the result recorded for an explicitly opened project);
+  New Project and run start clear the viewer.
+- **Old S-parameters stayed visible after an aborted run / in a new project**
+  (`app/ui/main_window.py`): starting a run now clears the S-param, NF2FF and
+  field viewers plus the recorded result paths before the simulator starts.
+  A failed run no longer auto-loads the newest (old) `sparams` file from the
+  reused work folder, and partial files from a failed run are not loaded
+  automatically. New/untitled projects also suppress auto-loading old files;
+  successful runs restore loading. The files themselves are not deleted, so
+  they can still be opened manually.
+- **CST MSL ports on PEC port faces / thin copper top line**
+  (`app/freecad_io/cst_import.py`, `app/simulation/grid_dedupe.py`,
+  `app/simulation/msl.py`): CST calculation boxes often put the microstrip
+  port plane exactly on a PEC boundary, which openEMS treats as a shorted
+  metal wall. The import now sets the affected port side(s) to **MUR** (and
+  warns) while keeping the other PEC walls. Separately, grid dedupe removed the
+  0.01778 mm copper top line as a "tiny cell"; the MSL strip then sat between
+  grid lines and was reported as `Unused primitive`, giving S21 near -100 dB.
+  Authored geometry/port lines are now protected. Reversed MSL ports also grow
+  their start end now, so `oriented()` keeps the port plane at the edge. The
+  sheet-metal-enclosure preset keeps faces carrying an MSL port at MUR instead
+  of overwriting them with PEC (`app/ui/sim_params.py`). The port-side air
+  margin stays 0: an air gap makes the microstrip end before the absorber and
+  traps the energy (open substrate edge).
+- **CST MSL ports at the upper domain edge** (`app/simulation/msl.py`,
+  `app/meshing/build_task.py`): a zero-length CST/MSL port plane was widened to
+  a grid line that differed only by a float32 ULP when the port sat on the
+  upper domain edge. The resulting zero-width metal strip was ignored by
+  openEMS (and the Mesh Viewer preview could reject the port). The extension
+  now ignores near-duplicate lines and moves inward to the previous real grid
+  line; the preview applies the same extension as the run generator.
+- **Project / Geometry panel: hide only at the left edge; object menu in the
+  panel** (`app/ui/main_window.py`): "Hide Project / Geometry panel" was
+  removed from the pane's right-click menu and now belongs only to a dedicated
+  6 px handle at the extreme left window edge (right-click toggles hide/show;
+  Ctrl+B still works). Right-clicking the panel background, its title, empty
+  tree space or an item now starts with an **Add** submenu (Box, Cylinder,
+  Sphere, Polygon, Extruded Polygon, Wire, Curve, Port, Assignment, Material,
+  Field Dump), followed by *Geometries* (primitives and imported files), *Ports*
+  and *Fields* (dumps/NF2FF) selection submenus and *Delete selected*. The item
+  menu keeps Edit/Duplicate/Remove and the same Add/selection submenus; no hide
+  action remains inside the pane. Smoke coverage in `tests/menu_smoke.py`.
+- **Gerber import dialog was too tall and did not show the selected folder**
+  (`app/ui/gerber_import_dialog.py`, `app/ui/main_window.py`): the whole form
+  now sits in a `QScrollArea`; OK/Cancel/Standardwerte stay fixed at the bottom,
+  so the dialog works on small screens.  A new **Quelldateien** table lists
+  every file from the selected folder/ZIP with its recognised role (top/bottom
+  copper, board outline, PTH/NPTH drills, mask, IPC netlist, or "ignoriert"
+  for CSV/JSON/pick-and-place data).  Verified with
+  `gerber2ems/examples/basic/fab`; the source parameter is passed from the
+  File/Geometry import action.  Menu smoke covers the scroll area, fixed
+  buttons and the file list.
+- **Gerber import failed on fabrication folders with CSV/JSON files**
+  (`app/freecad_io/gerber_import.py`): `LayerStack.open()` scanned every file,
+  so `*-top-pos.csv` / `*-bottom-pos.csv` were mistaken for copper and
+  `basic-B_Cu.gbr` stayed "bottom unknown" ("Cannot figure out gerber file
+  mapping").  Folders/ZIPs are now filtered to Gerber/Excellon suffixes before
+  gerbonara sees them; if autoguess still fails, an explicit KiCad/Altium/
+  Protel filename map (F_Cu/B_Cu, Edge_Cuts, PTH/NPTH, .gtl/.gbl/.gko, masks,
+  silk, paste) is used as fallback.  Verified with the real
+  `gerber2ems/examples/basic/fab` set (2 copper layers, 2 vias) and covered by
+  `tests/test_gerber_import.py` (CSV folder + CSV-in-ZIP regressions).
+- **Mesh Viewer: mesh-line clicks are editor-only; removed redundant "Port
+  type" submenu** (`app/ui/mesh_viewer.py`): slice clicks no longer add or
+  select manual mesh lines unless the **Mesh editor** checkbox is on; leaving
+  the editor clears the line highlight, and "Delete selected line(s)" is
+  disabled outside the editor. The right-click menu no longer duplicates the
+  port type/width choice - it only toggles Port mode, and the Port dialog owns
+  type, width and MSL axes. Port mode and Mesh editor are mutually exclusive:
+  arming one switches the other off. Mesh-line snapping now uses the real
+  contour of nearby polygons (not only their AABB) and only considers geometry
+  that intersects the current slice plane. Polygon/triangle contours are only
+  interpolated where the slice coordinate actually lies on the segment, so the
+  snap can no longer extrapolate beyond a real edge (e.g. to 2.82 instead of
+  the 2.70 trace edge). Polyhedron/STL primitives now expose
+  their triangle vertices/faces to the Mesh Viewer and to easyMesh, so mesh
+  lines and snapping follow the real imported outline instead of only its AABB.
+- **KiCad import dialog is scrollable** (`app/ui/kicad_import_dialog.py`):
+  the stackup/geometry options moved into a `QScrollArea`; the OK/Cancel
+  buttons stay fixed at the bottom, so the dialog works on smaller screens.
+- **New Project left the previous mesh/domain visible in the Mesh Viewer**
+  (`app/ui/mesh_viewer.py`, `app/ui/main_window.py`): `clear()` reset only the
+  data caches, so the last drawn matplotlib figure, cached scene infos and the
+  domain outline stayed on screen.  New `MeshGeometryViewer.reset_view()`
+  drops the scene/domain/auto-grid/selection/highlight/critical marks, recreates
+  both canvases and draws a neutral "No project / mesh loaded" placeholder.
+  File -> New Project (and a project with no recorded results) uses it and also
+  clears the Mesh Viewer Scene Info tab.  Regression checks in
+  `tests/menu_smoke.py` and `tests/mesh_viewer_smoke.py`.
 
 ## [0.9.2] - 2026-10-31
 
@@ -2215,6 +2778,10 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.9]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.9
 [0.5.10]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.10
 [0.6.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.6.0
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.10.0
+[0.9.2]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.9.2
+[0.9.1]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.9.1
+[0.9.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.9.0
 [0.8.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.8.0
 [0.7.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.7.0

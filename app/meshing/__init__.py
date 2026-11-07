@@ -14,12 +14,26 @@ from app.meshing.easy_wrapper import (
     enhance_fdtd,
     generate_mesh,
 )
-from app.meshing.rules import MeshTargets, compute_targets, wavelength_m
+from app.meshing.rules import (
+    MESH_PROFILE_LABELS,
+    MESH_PROFILES,
+    MeshTargets,
+    compute_targets,
+    mesh_profile,
+    pcb_mesh_profile,
+    resolve_mesh_profile,
+    wavelength_m,
+)
 from app.meshing.validators import MeshReport, validate_mesh
 from app.meshing.preview import save_mesh_preview
 
 __all__ = [
     "compute_targets",
+    "mesh_profile",
+    "pcb_mesh_profile",
+    "resolve_mesh_profile",
+    "MESH_PROFILES",
+    "MESH_PROFILE_LABELS",
     "MeshTargets",
     "wavelength_m",
     "cartesian_primitive_bbox",

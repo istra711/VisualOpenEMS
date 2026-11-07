@@ -127,7 +127,7 @@ def main() -> int:
     v.set_vector_options({"enabled": True, "overlay": False}, notify=False)
     assert v._show_field_actor() is False, "arrows must not be covered by the field"
     v.set_vector_options({"enabled": True, "overlay": True}, notify=False)
-    assert v._show_field_actor() is True, "overlay requested -> field underneath"
+    assert v._show_field_actor() is True, "overlay requested -> field below"
     v._has_vectors = False
     assert v._show_field_actor() is True, "no vector array -> nothing to hide"
     v._has_vectors = True

@@ -22,6 +22,7 @@ _RE_TIMESTEP = re.compile(r"Timestep:\s*(\d+)")
 _RE_ENERGY = re.compile(r"Energy:\s*~\s*([-\d.eE+]+)\s*\(\s*(-?\s*[\d.]+)\s*dB\)")
 _RE_ELAPSED = re.compile(r"\[@\s*([0-9]+m[0-9]+s|[0-9]+s)\s*\]")
 _RE_MAX_TS = re.compile(r"Max\.\s*number of timesteps:\s*(\d+)")
+_RE_SEC_PER_TS = re.compile(r"\(\s*([0-9.eE+\-]+)\s*s/TS\s*\)")
 _RE_CRITERIA = re.compile(r"end[-\s]?criteria", re.IGNORECASE)
 
 
@@ -33,6 +34,8 @@ class EngineProgress:
     timestep: int = 0
     energy_db: float | None = None
     elapsed: str = ""
+    #: measured wall-clock seconds per timestep from the engine's Speed line
+    seconds_per_ts: float | None = None
     end_criteria_hit: bool = False
     stopped_before_criteria: bool = False
     #: end-criteria level as a positive dB drop to reach (config, set per run)
@@ -43,6 +46,7 @@ class EngineProgress:
         self.timestep = 0
         self.energy_db = None
         self.elapsed = ""
+        self.seconds_per_ts = None
         self.end_criteria_hit = False
         self.stopped_before_criteria = False
 
@@ -77,6 +81,16 @@ class EngineProgress:
         if m:
             if m.group(1) != self.elapsed:
                 self.elapsed = m.group(1)
+                changed = True
+
+        m = _RE_SEC_PER_TS.search(line)
+        if m:
+            try:
+                value = float(m.group(1))
+            except ValueError:
+                value = 0.0
+            if value > 0.0 and value != self.seconds_per_ts:
+                self.seconds_per_ts = value
                 changed = True
 
         if _RE_CRITERIA.search(line):
@@ -124,6 +138,29 @@ class EngineProgress:
             return f"Energy {self.energy_db:.0f} / -{self.target_db:.0f} dB"
         return f"Energy {self.energy_db:.0f} dB"
 
+    def elapsed_text(self) -> str:
+        """Current wall-clock runtime reported by the engine."""
+        return f"Laufzeit {self.elapsed}" if self.elapsed else ""
+
+    def eta_seconds(self) -> float | None:
+        """Estimated remaining wall-clock seconds from the engine's s/TS."""
+        if not self.max_timesteps or not self.seconds_per_ts:
+            return None
+        remaining = max(0, int(self.max_timesteps) - int(self.timestep))
+        return remaining * float(self.seconds_per_ts)
+
+    def eta_text(self) -> str:
+        seconds = self.eta_seconds()
+        if seconds is None:
+            return ""
+        if seconds < 60:
+            return f"ETA ~{seconds:.0f} s"
+        minutes, sec = divmod(int(round(seconds)), 60)
+        if minutes < 60:
+            return f"ETA ~{minutes} m {sec:02d} s"
+        hours, minutes = divmod(minutes, 60)
+        return f"ETA ~{hours} h {minutes:02d} m"
+
     @property
     def active(self) -> bool:
         return self.timestep > 0 or self.max_timesteps is not None
@@ -136,8 +173,9 @@ class EngineProgress:
             parts.append(f"TS {self.timestep}")
         if self.energy_db is not None:
             parts.append(f"Energy {self.energy_db:.1f} dB")
-        if self.elapsed:
-            parts.append(f"@{self.elapsed}")
+        # Keep the status-bar text free of the elapsed wall time: the dedicated
+        # right-hand label shows the remaining ETA instead (users read the
+        # old "@10m31s" as total run time).
         if self.end_criteria_hit:
             parts.append("converged")
         elif self.stopped_before_criteria:

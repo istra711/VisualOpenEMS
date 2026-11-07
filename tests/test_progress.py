@@ -50,7 +50,8 @@ def test_mid_run_percent_and_text():
     text = p.text()
     assert "TS 173900/200000" in text
     assert "Energy -25.9 dB" in text
-    assert "@10m31s" in text
+    assert "@10m31s" not in text
+    assert p.eta_text().startswith("ETA ~")
 
 
 def test_repeated_line_is_not_a_change():

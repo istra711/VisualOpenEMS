@@ -58,8 +58,9 @@ def ensure_polar_primitive(kind: str, name: str = "") -> None:
     raise ValueError(
         f"Primitive kind '{kind}'{what} is not supported in cylindrical mode. "
         f"Allowed: {', '.join(sorted(ALLOWED_PRIMITIVE_KINDS))}. "
-        "STL/FreeCAD imports, polygons, spheres and polyhedra need the "
-        "Cartesian coordinate system (Mesh Parameters -> Coordinate system)."
+        "STL/FreeCAD imports, polygons, spheres, wires, curves and polyhedra "
+        "need the Cartesian coordinate system (Mesh Parameters -> Coordinate "
+        "system)."
     )
 
 

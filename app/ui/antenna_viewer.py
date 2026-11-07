@@ -24,10 +24,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QFrame,
     QMainWindow,
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSplitter,
     QVBoxLayout,
@@ -68,17 +70,27 @@ def half_power_beamwidth(
     i_pk = int(np.nanargmax(work))
     peak = float(work[i_pk])
     thr = peak + float(level_db)
+    # A polar cut is a full circle and often has its peak at 0°/360° (broadside
+    # patch). The old one-directional walk started at the array edge and could
+    # not find the other -3 dB crossing there. Search cyclically for full
+    # circles; keep a linear search for half cuts.
+    full_circle = (float(np.nanmax(ang)) - float(np.nanmin(ang))) >= 300.0
 
     def _cross(i0: int, step: int) -> float | None:
         i = i0
-        for _ in range(n):
+        for _ in range(max(1, n - 1)):
             j = i + step
-            if j < 0 or j >= n:
+            if full_circle:
+                j %= n
+            elif j < 0 or j >= n:
                 return None
             a, b = work[i], work[j]
             if a >= thr > b:
                 t = (thr - a) / (b - a) if b != a else 0.0
-                return float(ang[i] + t * (ang[j] - ang[i]))
+                da = ang[j] - ang[i]
+                if full_circle:
+                    da = ((da + 180.0) % 360.0) - 180.0
+                return float(ang[i] + t * da)
             i = j
         return None
 
@@ -93,7 +105,7 @@ def half_power_beamwidth(
         "width_deg": float(width),
         "left_deg": float(left),
         "right_deg": float(right),
-        "peak_deg": float(ang[i_pk]),
+        "peak_deg": float(ang[i_pk]) % 360.0,
         "peak_dbi": peak,
         "level_db": float(level_db),
         "threshold_dbi": thr,
@@ -367,6 +379,10 @@ class AntennaPatternViewer(QWidget):
             "Axial ratio and phase center from the loaded NF2FF result\n"
             "(post-processing from E_theta/E_phi — no re-run)."
         )
+        self.btn_help = QPushButton("Antenna help…")
+        self.btn_help.setToolTip(
+            "Explain θ/φ, E-/H-plane cuts and how to read the polar dBi plot."
+        )
         self.cmb_plot = QComboBox()
         self.cmb_plot.addItems(self.PLOT_TYPES)
         self.cmb_freq = QComboBox()
@@ -382,6 +398,7 @@ class AntennaPatternViewer(QWidget):
             self.btn_reload,
             self.btn_scan,
             self.btn_polar,
+            self.btn_help,
         ):
             bar.addWidget(w)
         bar.addWidget(QLabel("Plot"))
@@ -414,7 +431,19 @@ class AntennaPatternViewer(QWidget):
         lv.addWidget(self.marker_list)
         lv.addStretch(1)
         self.left_panel = left
-        self._plot_split.addWidget(left)
+        # Details (HPBW/VRV blocks) can grow beyond the splitter height.  Keep
+        # the whole left pane scrollable instead of clipping the lower lines.
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setWidget(left)
+        self.left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.left_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._plot_split.addWidget(self.left_scroll)
 
         right = QWidget()
         rv = QVBoxLayout(right)
@@ -487,6 +516,7 @@ class AntennaPatternViewer(QWidget):
         self.btn_reload.clicked.connect(self._reload_current)
         self.btn_scan.clicked.connect(self._on_scan)
         self.btn_polar.clicked.connect(self._on_polarization)
+        self.btn_help.clicked.connect(self._on_help)
         self.btn_popout.clicked.connect(self.popout_graph)
         self.btn_clear_markers.clicked.connect(self._clear_markers)
         self.btn_hpbw.clicked.connect(self._on_hpbw)
@@ -830,6 +860,18 @@ class AntennaPatternViewer(QWidget):
             dlg = PolarizationDialog(self)
             self._polar_dlg = dlg
         dlg.refresh(payload)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _on_help(self) -> None:
+        """Open the illustrated antenna-angle help."""
+        from app.ui.antenna_help import AntennaHelpDialog
+
+        dlg = getattr(self, "_help_dlg", None)
+        if dlg is None:
+            dlg = AntennaHelpDialog(self)
+            self._help_dlg = dlg
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
@@ -1273,7 +1315,7 @@ class AntennaPatternViewer(QWidget):
             "Azimuth (theta=90)",
         ):
             return None
-        field = "gain_dBi" if self.data.get("gain_dBi") is not None else "D_dBi"
+        field = self._pattern_field()
         got = self._pattern_2d(field)
         if got is None:
             return None
@@ -1289,6 +1331,27 @@ class AntennaPatternViewer(QWidget):
 
     def _pattern_field_label(self, field: str) -> str:
         return "Gain" if field == "gain_dBi" else "Directivity"
+
+    def _pattern_field(self) -> str:
+        """Prefer the field that actually carries a varying pattern.
+
+        Older/partial nf2ff.json files may contain a gain array that is all
+        zero or NaN while the directivity is valid; blindly preferring
+        gain_dBi made HPBW fail with a flat curve.
+        """
+        if self.data:
+            for field in ("gain_dBi", "D_dBi"):
+                arr = self.data.get(field)
+                if arr is None:
+                    continue
+                a = np.asarray(arr, dtype=float)
+                if a.size and np.any(np.isfinite(a)):
+                    finite = a[np.isfinite(a)]
+                    if finite.size and np.nanmax(finite) - np.nanmin(finite) > 1e-6:
+                        return field
+            if self.data.get("gain_dBi") is not None:
+                return "gain_dBi"
+        return "D_dBi"
 
     def _on_hpbw(self, checked: bool = False) -> None:
         if not checked:
@@ -1315,6 +1378,11 @@ class AntennaPatternViewer(QWidget):
             self.lbl_info.setText(
                 f"HPBW {res['width_deg']:.1f}° on {plot} "
                 f"[{res['left_deg']:.1f}°..{res['right_deg']:.1f}°]"
+            )
+        else:
+            self.lbl_info.setText(
+                f"HPBW: no −3 dB crossing found on {plot} "
+                "(omnidirectional or the peak is too close to a null)."
             )
 
     def _on_vrv(self, checked: bool = False) -> None:
@@ -1344,7 +1412,7 @@ class AntennaPatternViewer(QWidget):
             )
 
     def _plot_polar_cut(self, plot: str) -> None:
-        field = "gain_dBi" if self.data.get("gain_dBi") is not None else "D_dBi"
+        field = self._pattern_field()
         got = self._pattern_2d(field)
         if got is None:
             self.figure.text(0.5, 0.5, f"{field} not available", ha="center", va="center")

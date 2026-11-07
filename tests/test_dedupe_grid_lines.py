@@ -49,6 +49,23 @@ def test_ulp_floor_does_not_touch_separated_lines() -> None:
     assert len(_x(csx)) == 4
 
 
+def test_authored_thin_copper_line_survives() -> None:
+    # 0.01778 mm copper on a 0.7 mm cell is geometry, not a numerical sliver.
+    thin = [0.0, 0.01778, 0.70994]
+    without = _csx(thin)
+    dedupe_grid_lines(without, ulp_align=True)
+    assert len(_x(without)) == 2  # the thin top line is dropped without protection
+
+    protected = _csx(thin)
+    dedupe_grid_lines(
+        protected,
+        ulp_align=True,
+        protect={"x": thin, "y": [], "z": []},
+    )
+    assert len(_x(protected)) == 3
+    assert _x(protected)[1] == pytest.approx(0.01778)
+
+
 def test_exact_duplicates_still_merge_in_both_modes() -> None:
     for flag in (True, False):
         csx = _csx([0.0, 5.0, 5.0, 9.0])

@@ -139,7 +139,7 @@ farbigen Slice-/Surface-/Volume-Darstellung gezeichnet; ein opaker Schnitt oder
 Körper verdeckt jeden Pfeil, der in ihn hineinzeigt. Neu:
 `_show_field_actor()` — bei aktiven Vektoren wird die Felddarstellung **nicht**
 gezeichnet (die Pfeile *sind* die Darstellung, wie in ParaView). Die neue
-Checkbox **„field underneath"** (`DEFAULT_VECTORS["overlay"]`, Default **aus**)
+Checkbox **„field below"** (`DEFAULT_VECTORS["overlay"]`, Default **aus**)
 holt die Überlagerung zurück. Der Farbbalken bleibt, weil er die Pfeilfarben
 erklärt.
 

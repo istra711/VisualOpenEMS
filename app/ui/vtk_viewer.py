@@ -20,11 +20,12 @@ import os
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QPoint, Qt, QTimer
-from PySide6.QtGui import QActionGroup
+from PySide6.QtCore import QByteArray, QEvent, QPoint, Qt, QTimer
+from PySide6.QtGui import QActionGroup, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -54,6 +55,7 @@ from app.postproc.vtk_export import (  # noqa: F401
     export_dumps_to_vtk,
     field_unit,
 )
+from app.postproc.video_timing import gif_frame_duration_ms
 from app.colormaps import (  # noqa: F401 — re-exported for the settings dialog
     COLORMAPS,
     COLOR_SCALE_MAX_STEPS,
@@ -98,15 +100,28 @@ AXES_SCALES: tuple[tuple[str, float], ...] = (
 #: Label font sizes offered in the axes menu.
 AXES_FONT_SIZES: tuple[int, ...] = (8, 10, 12, 14, 18, 24)
 
+#: Ruler units: key -> (label, factor from metres)
+RULER_UNITS: tuple[tuple[str, str, float], ...] = (
+    ("m", "m", 1.0),
+    ("cm", "cm", 1e2),
+    ("mm", "mm", 1e3),
+    ("um", "µm", 1e6),
+    ("nm", "nm", 1e9),
+)
+
 #: Defaults for the axes display options (also persisted in AppSettings).
 DEFAULT_AXES: dict = {
     "show": True,  # master switch for the triad / corner marker
-    "corner": False,  # True = ParaView-style corner widget, False = in-scene triad
+    "corner": True,  # True = ParaView-style corner widget, False = in-scene triad
     "labels": True,  # X / Y / Z captions on the triad
-    "font": 12,  # caption font size (pt)
-    "scale": 1.0,  # triad size factor (see AXES_SCALES)
-    "ruler": False,  # numeric coordinate ticks around the dataset bounds
-    "origin_back": False,  # put the in-scene triad on the far bbox corner
+    "font": 24,  # caption font size (pt)
+    "scale": 2.0,  # triad size factor (see AXES_SCALES)
+    "ruler": True,  # numeric coordinate ticks around the dataset bounds
+    "ruler_unit": "mm",  # m | cm | mm | um | nm (follows the project on load)
+    "ruler_labels": {"x": True, "y": True, "z": True},
+    #: shift the x/y rulers along the z axis (% of the z range)
+    "xy_ruler_z_offset": 0.0,
+    "origin_back": True,  # put the in-scene triad on the far bbox corner
 }
 
 #: Defaults for the vector glyph display (ParaView "Glyph"; persisted in
@@ -125,10 +140,55 @@ DEFAULT_VECTORS: dict = {
     #: overlay is off by default and only drawn on request.
     "overlay": False,
     #: minimum arrow strength (share of the peak) and sampling mode
-    "min_pct": 5,
+    "min_pct": 0,
     "random": True,
     #: geometry ghost opacity in percent
     "geom_opacity": 12,
+}
+
+#: Streamline appearance presets (Phase 1). They change the look only; the
+#: seed grid and integration parameters stay as they are.
+STREAMLINE_PRESETS: dict[str, dict] = {
+    "Draft": {
+        "representation": "line",
+        "radius_pct": 0.20,
+        "sides": 6,
+        "line_width": 1.0,
+        "opacity": 100,
+        "color_mode": "field",
+    },
+    "Standard": {
+        "representation": "tube",
+        "radius_pct": 0.20,
+        "sides": 8,
+        "line_width": 2.0,
+        "opacity": 100,
+        "color_mode": "field",
+    },
+    "Publication": {
+        "representation": "tube",
+        "radius_pct": 0.12,
+        "sides": 16,
+        "line_width": 2.0,
+        "opacity": 75,
+        "color_mode": "field",
+    },
+}
+
+#: Default streamline appearance / seeding (also persisted in AppSettings).
+#: ``radius_pct`` is the tube radius as a percentage of the data diagonal;
+#: ``color_mode`` is field | speed | solid.
+DEFAULT_STREAMLINES: dict = {
+    "enabled": False,
+    "preset": "Standard",
+    "representation": "tube",
+    "radius_pct": 0.20,
+    "sides": 8,
+    "line_width": 2.0,
+    "opacity": 100,
+    "color_mode": "field",
+    "color": [0.25, 0.65, 1.0],
+    "seeds": 6,
 }
 
 #: Colour-bar title options (Viewer settings). "left" draws the title rotated
@@ -253,6 +313,39 @@ def axes_total_length(bounds, scale: float = 1.0) -> float:
     return 0.18 * diag * factor
 
 
+PANEL_LABEL_W = 76   # display panel: every label column gets this width …
+PANEL_FIELD_W = 100  # … and every input field this width, so rows line up
+
+
+def _uniform_form(form: QFormLayout) -> None:
+    """Give every row of a display-panel form the same label/field widths."""
+    form.setContentsMargins(0, 0, 0, 0)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+    for row in range(form.rowCount()):
+        label_item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+        field_item = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+        if label_item is None:
+            # spanning row (slider, checkbox, button): keep the full width
+            continue
+        if label_item.widget() is not None:
+            label_item.widget().setFixedWidth(PANEL_LABEL_W)
+        if field_item is None:
+            continue
+        widget = field_item.widget()
+        if widget is not None:
+            widget.setFixedWidth(PANEL_FIELD_W)
+            continue
+        layout = field_item.layout()
+        if layout is not None:
+            # e.g. "Position": slider + spin box -> only the spin gets a width
+            for i in range(layout.count()):
+                sub = layout.itemAt(i).widget()
+                if sub is not None and sub.__class__.__name__.endswith("SpinBox"):
+                    sub.setFixedWidth(64)
+
+
 def style_axes_triad(
     axes, *, show_labels: bool = True, font_size: int = 12
 ) -> None:
@@ -370,6 +463,7 @@ class FieldViewerWindow(QMainWindow):
         self.viewer.on_axes_changed = self._on_viewer_axes_changed
         self.viewer.on_view_changed = self._on_viewer_view_changed
         self.viewer.on_vectors_changed = self._on_viewer_vectors_changed
+        self.viewer.on_streamlines_changed = self._on_viewer_streamlines_changed
         self.viewer.on_color_scale_changed = self._on_viewer_color_scale_changed
         self.setWindowTitle("Field Viewer - pop-out")
         self.resize(1000, 780)
@@ -397,6 +491,15 @@ class FieldViewerWindow(QMainWindow):
         if src is not None and src is not self.viewer:
             try:
                 src.set_vector_options(options, notify=True)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_viewer_streamlines_changed(self, options: dict) -> None:
+        """Streamlines changed in the pop-out: mirror to the tab view + persist."""
+        src = self.source
+        if src is not None and src is not self.viewer:
+            try:
+                src.set_streamline_options(options, notify=True)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -467,12 +570,18 @@ class VtkFieldViewer(QWidget):
         self._popout_win: FieldViewerWindow | None = None
         # axes display options (menu + persisted settings)
         self._axes = dict(DEFAULT_AXES)
+        #: True once the user picked a ruler unit; then project loading must not
+        #: overwrite it (the default follows the project's drawing unit).
+        self._ruler_unit_user = False
         self.on_axes_changed = None  # callback(options: dict) for persistence
         #: standard view key (VIEW_PRESETS), persisted as the Field Viewer default
         self.on_view_changed = None  # callback(key: str) for persistence
         #: vector glyph settings (DEFAULT_VECTORS); the widgets mirror them
         self._vectors = dict(DEFAULT_VECTORS)
         self.on_vectors_changed = None  # callback(options: dict) for persistence
+        #: streamline appearance / seeding (DEFAULT_STREAMLINES)
+        self._stream = dict(DEFAULT_STREAMLINES)
+        self.on_streamlines_changed = None  # callback(options: dict) for persistence
         #: colour scale of the field plot (DEFAULT_COLOR_SCALE); changed in
         #: Settings, mirrored to the pop-out
         self._color_scale = dict(DEFAULT_COLOR_SCALE)
@@ -578,9 +687,12 @@ class VtkFieldViewer(QWidget):
         self.btn_display.setVisible(False)
         self.btn_video = QPushButton("Video…")
         self.btn_video.setToolTip(
-            "Render the loaded field sequence to an MP4 video with the current\n"
-            "3D settings (representation, array, colour range, axes, camera).\n"
-            "Frames per second: the \"fps\" value next to Play."
+            "Open the export dialog for the loaded field sequence.\n"
+            "Choose MP4 or animated GIF, output resolution, fps/duration and\n"
+            "a start/end frame range. The current 3D settings (representation,\n"
+            "array, colour range, axes, camera) are used for every frame.\n"
+            "MP4 needs imageio-ffmpeg; GIF only needs Pillow (256 colours, can\n"
+            "get large for long series)."
         )
         self.btn_video.setEnabled(False)  # needs a loaded time series
         self.btn_video.clicked.connect(self._on_export_video)
@@ -699,28 +811,6 @@ class VtkFieldViewer(QWidget):
         self.spn_contours.setToolTip("Number of contour lines.")
         self.spn_contours.valueChanged.connect(self._on_slider)
         row2.addWidget(self.spn_contours)
-        self.chk_stream = QCheckBox("Streamlines")
-        self.chk_stream.setToolTip(
-            "Field lines integrated through the whole volume (n³ seeds, like\n"
-            "ParaView's Stream Tracer). They update with every time/frequency step."
-        )
-        self.chk_stream.toggled.connect(self._on_slider)
-        self.spn_stream_seeds = QSpinBox()
-        self.spn_stream_seeds.setRange(2, 10)
-        self.spn_stream_seeds.setValue(6)
-        self.spn_stream_seeds.setSuffix("³")
-        self.spn_stream_seeds.setFixedWidth(64)
-        self.spn_stream_seeds.setEnabled(False)
-        self.spn_stream_seeds.setToolTip(
-            "Seeds per axis: n³ start points spread through the whole volume.\n"
-            "6³ = 216 lines (default, like the ParaView reference); raise for\n"
-            "density, lower for faster time playback."
-        )
-        self.spn_stream_seeds.valueChanged.connect(self._on_slider)
-        self.chk_stream.toggled.connect(self.spn_stream_seeds.setEnabled)
-        row2.addWidget(self.chk_stream)
-        row2.addWidget(QLabel("seeds"))
-        row2.addWidget(self.spn_stream_seeds)
         row2.addWidget(QLabel("Iso-level"))
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)
@@ -826,9 +916,10 @@ class VtkFieldViewer(QWidget):
         self.spn_vec_min.setValue(int(DEFAULT_VECTORS["min_pct"]))
         self.spn_vec_min.setSuffix(" %")
         self.spn_vec_min.setToolTip(
-            "Hide arrows whose field is below this share of the peak.\n"
-            "0 % keeps every sampled point; 5-20 % drops the near-zero\n"
-            "clutter that hides the structure behind long blue arrows."
+            "Hide arrows whose field is below this share of the strongest |v|\n"
+            "in the current frame (linear). 0 % keeps every sampled point;\n"
+            "1-3 % already remove most of the near-zero clutter because the\n"
+            "field spans decades."
         )
         self.spn_vec_min.valueChanged.connect(self._on_vector_option_changed)
         self.chk_vec_random = QCheckBox("random")
@@ -850,7 +941,7 @@ class VtkFieldViewer(QWidget):
             "'size' length)."
         )
         self.chk_vec_norm.toggled.connect(self._on_vector_option_changed)
-        self.chk_vec_overlay = QCheckBox("field underneath")
+        self.chk_vec_overlay = QCheckBox("field below")
         self.chk_vec_overlay.setChecked(DEFAULT_VECTORS["overlay"])
         self.chk_vec_overlay.setToolTip(
             "Also draw the coloured field representation (slice / surface /\n"
@@ -967,9 +1058,6 @@ class VtkFieldViewer(QWidget):
         )
         data_form = QFormLayout()
         data_form.setContentsMargins(0, 0, 0, 0)
-        data_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
-        )
         data_form.addRow("Show", self.cmb_rep)
         data_form.addRow("Array", self.cmb_array)
         data_form.addRow("View", self.cmb_view_preset)
@@ -989,11 +1077,11 @@ class VtkFieldViewer(QWidget):
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
         slice_form.addRow("Axis", self.cmb_slice_axis)
-        pos_row = QHBoxLayout()
-        pos_row.setContentsMargins(0, 0, 0, 0)
-        pos_row.addWidget(self.slider_slice, 1)
-        pos_row.addWidget(self.spn_slice)
-        slice_form.addRow("Position", pos_row)
+        # The slider takes the full panel width, its numeric value sits on the
+        # next row in the same column as every other input: side by side the
+        # value field was pushed out of the panel once it got narrow.
+        slice_form.addRow(self.slider_slice)
+        slice_form.addRow("Position", self.spn_slice)
         slice_form.addRow(self.chk_planes)
         contours_row = QHBoxLayout()
         contours_row.setContentsMargins(0, 0, 0, 0)
@@ -1001,12 +1089,6 @@ class VtkFieldViewer(QWidget):
         contours_row.addWidget(self.spn_contours)
         contours_row.addStretch(1)
         slice_form.addRow(contours_row)
-        stream_row = QHBoxLayout()
-        stream_row.setContentsMargins(0, 0, 0, 0)
-        stream_row.addWidget(self.chk_stream)
-        stream_row.addWidget(QLabel("seeds"))
-        stream_row.addWidget(self.spn_stream_seeds)
-        stream_row.addStretch(1)
         slice_layout.addWidget(self._slice_controls)
         self._iso_controls = QWidget()
         iso_form = QFormLayout(self._iso_controls)
@@ -1014,34 +1096,144 @@ class VtkFieldViewer(QWidget):
         iso_form.addRow("Iso-level", self.slider)
         slice_layout.addWidget(self._iso_controls)
         # Streamlines apply to the whole volume and work for both Slice and
-        # Iso-surface, so the row lives outside the slice-only container.
-        slice_layout.addLayout(stream_row)
+        # Iso-surface, so they get their own collapsible section.  The
+        # appearance controls are hidden behind its header (the panel is only
+        # 200 px wide); the seed count stays with them.
+        stream_btn, stream_body, stream_layout = self._add_section(
+            panel_layout, "Streamlines", expanded=True
+        )
+        self._stream_btn = stream_btn
+        self.chk_stream = QCheckBox("Enable streamlines")
+        self.chk_stream.setToolTip(
+            "Field lines integrated through the whole volume (n³ seeds, like\n"
+            "ParaView's Stream Tracer). They update with every time/frequency step."
+        )
+        self.cmb_stream_preset = QComboBox()
+        for _name in ("Standard", "Draft", "Publication", "Custom"):
+            self.cmb_stream_preset.addItem(_name, _name)
+        self.cmb_stream_preset.setToolTip(
+            "Appearance preset. Draft = thin lines (fast), Standard = tubes,\n"
+            "Publication = slim high-resolution tubes with slight transparency."
+        )
+        self.cmb_stream_rep = QComboBox()
+        self.cmb_stream_rep.addItem("Tube", "tube")
+        self.cmb_stream_rep.addItem("Line", "line")
+        self.cmb_stream_rep.setToolTip(
+            "Tube is shaded and volumetric; Line is faster and clearer for\n"
+            "dense seed grids."
+        )
+        self.spn_stream_radius = QDoubleSpinBox()
+        self.spn_stream_radius.setRange(0.01, 5.0)
+        self.spn_stream_radius.setDecimals(3)
+        self.spn_stream_radius.setSingleStep(0.02)
+        self.spn_stream_radius.setSuffix(" % diag")
+        self.spn_stream_radius.setToolTip(
+            "Tube radius as a percentage of the data diagonal.\n"
+            "0.20 % ≈ the previous fixed radius on a 60 mm wide domain."
+        )
+        self.spn_stream_sides = QSpinBox()
+        self.spn_stream_sides.setRange(3, 24)
+        self.spn_stream_sides.setSuffix(" sides")
+        self.spn_stream_sides.setToolTip(
+            "Tube cross-section: 6 = fast, 12–16 = smooth publication quality."
+        )
+        self.spn_stream_width = QDoubleSpinBox()
+        self.spn_stream_width.setRange(0.5, 10.0)
+        self.spn_stream_width.setDecimals(1)
+        self.spn_stream_width.setSingleStep(0.5)
+        self.spn_stream_width.setSuffix(" px")
+        self.spn_stream_width.setToolTip(
+            "Line width in screen pixels (only for the Line representation)."
+        )
+        self.spn_stream_opacity = QSpinBox()
+        self.spn_stream_opacity.setRange(5, 100)
+        self.spn_stream_opacity.setSuffix(" %")
+        self.spn_stream_opacity.setToolTip(
+            "Line opacity. 60–80 % keeps the field plot visible underneath."
+        )
+        self.cmb_stream_color = QComboBox()
+        self.cmb_stream_color.addItem("Field (selected array)", "field")
+        self.cmb_stream_color.addItem("Vector magnitude |v|", "speed")
+        self.cmb_stream_color.addItem("Solid colour", "solid")
+        self.cmb_stream_color.setToolTip(
+            "Field = colour by the selected array; |v| = vector magnitude;\n"
+            "Solid = one fixed colour for every line."
+        )
+        self.btn_stream_color = QPushButton("Colour…")
+        self.btn_stream_color.setToolTip("Colour used for the Solid colour mode.")
+        self.spn_stream_seeds = QSpinBox()
+        self.spn_stream_seeds.setRange(2, 10)
+        self.spn_stream_seeds.setSuffix("³")
+        self.spn_stream_seeds.setToolTip(
+            "Seeds per axis: n³ start points spread through the whole volume.\n"
+            "6³ = 216 lines (default, like the ParaView reference); raise for\n"
+            "density, lower for faster playback."
+        )
+        self.btn_stream_reset = QPushButton("Reset appearance")
+        self.btn_stream_reset.setToolTip(
+            "Restore the standard streamline appearance and seed count.\n"
+            "The on/off state is kept."
+        )
+        stream_form = QFormLayout()
+        stream_form.setContentsMargins(0, 0, 0, 0)
+        stream_form.addRow(self.chk_stream)
+        stream_form.addRow("Preset", self.cmb_stream_preset)
+        stream_form.addRow("Show as", self.cmb_stream_rep)
+        stream_form.addRow("Radius", self.spn_stream_radius)
+        stream_form.addRow("Sides", self.spn_stream_sides)
+        stream_form.addRow("Line width", self.spn_stream_width)
+        stream_form.addRow("Opacity", self.spn_stream_opacity)
+        stream_form.addRow("Colour by", self.cmb_stream_color)
+        stream_form.addRow("Colour", self.btn_stream_color)
+        stream_form.addRow("Seeds", self.spn_stream_seeds)
+        stream_form.addRow(self.btn_stream_reset)
+        stream_layout.addLayout(stream_form)
+
+        self.chk_stream.toggled.connect(self._on_stream_toggled)
+        self.cmb_stream_preset.currentTextChanged.connect(
+            self._on_stream_preset_changed
+        )
+        for _widget in (
+            self.cmb_stream_rep,
+            self.spn_stream_radius,
+            self.spn_stream_sides,
+            self.spn_stream_width,
+            self.spn_stream_opacity,
+            self.cmb_stream_color,
+            self.spn_stream_seeds,
+        ):
+            signal = (
+                _widget.currentIndexChanged
+                if isinstance(_widget, QComboBox)
+                else _widget.valueChanged
+            )
+            signal.connect(self._on_stream_option_changed)
+        self.btn_stream_color.clicked.connect(self._choose_stream_color)
+        self.btn_stream_reset.clicked.connect(self._reset_streamlines)
+        self._set_streamline_widgets(DEFAULT_STREAMLINES)
+        self._update_stream_controls()
 
         colour_btn, colour_body, colour_layout = self._add_section(
             panel_layout, "Colour"
         )
         colour_form = QFormLayout()
         colour_form.setContentsMargins(0, 0, 0, 0)
-        colour_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
-        )
-        colour_form.addRow(self.chk_auto)
         colour_form.addRow("min", self.spn_min)
         colour_form.addRow("max", self.spn_max)
-        self.lbl_level.setWordWrap(True)
-        colour_form.addRow(self.lbl_level)
-        colour_form.addRow(self.chk_log)
-        colour_form.addRow(self.btn_rescale)
+        # full-width rows (a QFormLayout field column would squeeze them to
+        # 104 px and clip the wrapped readout)
+        colour_layout.addWidget(self.chk_auto)
         colour_layout.addLayout(colour_form)
+        self.lbl_level.setWordWrap(True)
+        colour_layout.addWidget(self.lbl_level)
+        colour_layout.addWidget(self.chk_log)
+        colour_layout.addWidget(self.btn_rescale)
 
         vec_btn, vec_body, vec_layout = self._add_section(
             panel_layout, "Vectors"
         )
         vec_form = QFormLayout()
         vec_form.setContentsMargins(0, 0, 0, 0)
-        vec_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
-        )
         vec_form.addRow(self.chk_vectors)
         vec_form.addRow("Size", self.spn_vec_size)
         vec_form.addRow("Max arrows", self.spn_vec_count)
@@ -1051,6 +1243,11 @@ class VtkFieldViewer(QWidget):
         vec_form.addRow(self.chk_vec_random)
         vec_layout.addLayout(vec_form)
 
+        # same label/field width in every section -> all inputs line up
+        for _form in (data_form, slice_form, iso_form, stream_form,
+                      colour_form, vec_form):
+            _uniform_form(_form)
+
         panel_layout.addStretch(1)
         panel_scroll = QScrollArea()
         panel_scroll.setWidgetResizable(True)
@@ -1059,8 +1256,9 @@ class VtkFieldViewer(QWidget):
         panel_scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        panel_scroll.setMinimumWidth(280)
-        panel_scroll.setMaximumWidth(320)
+        # docked panel: compact; uniform label/field widths (above) keep
+        # every row aligned. The pop-out dialog may widen it.
+        panel_scroll.setFixedWidth(200)
         self.panel_scroll = panel_scroll
 
         main_row = QHBoxLayout()
@@ -1235,6 +1433,7 @@ class VtkFieldViewer(QWidget):
             dlg.resize(380, 760)
         layout = QVBoxLayout(dlg)
         self._main_row.removeWidget(self.panel_scroll)
+        self.panel_scroll.setMinimumWidth(260)
         self.panel_scroll.setMaximumWidth(420)
         self.panel_scroll.setVisible(True)
         layout.addWidget(self.panel_scroll)
@@ -1263,7 +1462,8 @@ class VtkFieldViewer(QWidget):
                 layout.removeWidget(self.panel_scroll)
             dlg.deleteLater()
         self._main_row.insertWidget(0, self.panel_scroll)
-        self.panel_scroll.setMaximumWidth(320)
+        self.panel_scroll.setMinimumWidth(200)
+        self.panel_scroll.setMaximumWidth(200)
         self.panel_scroll.setVisible(self._layout_mode == "panel")
 
     def _ensure_render_window(self) -> bool:
@@ -1287,6 +1487,10 @@ class VtkFieldViewer(QWidget):
 
             self.lbl_hint.setVisible(False)
             self._iren = QVTKRenderWindowInteractor(self._host)
+            # VTK consumes right-clicks on its own widget, so the containing
+            # tab's CustomContextMenu never fires there.  Filter the 3D pane
+            # as well, so the same menu is available inside the render window.
+            self._iren.installEventFilter(self)
             self._host_layout.addWidget(self._iren, 1)
             self._renderer = vtk.vtkRenderer()
             self._renderer.SetBackground(0.15, 0.15, 0.18)
@@ -1323,16 +1527,44 @@ class VtkFieldViewer(QWidget):
         """
         self._geom_prims = [dict(p) for p in (primitives or [])]
         self._geom_unit = float(unit_m or 1e-3)
+        # The render window is normally created when a dump is loaded; a
+        # geometry-only preview (CAD import before any field) creates it here
+        # when the pane is already on screen, otherwise in showEvent() - the
+        # primitives are stored either way and drawn there.
+        if self._iren is not None or self.isVisible():
+            self._ensure_render_window()
+        self._apply_geometry_scene()
+
+    def _apply_geometry_scene(self) -> None:
+        """Draw the ghosts, the axes/ruler and fit/apply the standard view."""
+        if self._renderer is None:
+            return  # created later in showEvent()
         self._draw_geometry()
-        if self._geom_actors and self._renderer is not None:
+        self._apply_axes()  # corner triad / in-scene triad / coordinate ruler
+        if self._geom_actors:
             # geometry may extend far beyond the field dump; fit once so the
-            # freshly added ghosts are actually inside the current view
+            # freshly added ghosts are actually inside the current view. With
+            # no field loaded the configured standard view is applied; "keep"
+            # has no previous direction to keep here, so it falls back to the
+            # isometric default instead of VTK's top view.
+            key = self.view_preset()
+            if self._grid is not None:
+                key = "keep"
+            elif key in ("", "keep"):
+                key = "iso"
             try:
-                self.apply_view_preset("keep")
-            except Exception:  # noqa: BLE001 — never block on a camera fit
+                self.apply_view_preset(key)
+            except Exception:  # noqa: BLE001 - never block on a camera fit
                 pass
 
-    def _draw_geometry(self, *_args) -> None:
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        """Create the 3D pane when the tab becomes visible (e.g. after import)."""
+        super().showEvent(event)
+        if self._iren is None and not getattr(self, "_vtk_failed", False):
+            if self._ensure_render_window():
+                self._apply_geometry_scene()
+
+    def _draw_geometry(self, *_args, render: bool = True) -> None:
         if self._renderer is None:
             return
         vtk = self._vtk or _vtk()
@@ -1358,6 +1590,11 @@ class VtkFieldViewer(QWidget):
             self._renderer.AddActor(actor)
             self._geom_actors.append(actor)
 
+        if not render:
+            # Called from _refresh_display: rendering here would present the
+            # scene without the field actor (geometry only) and the next Render
+            # would show the field again -> the view flickers on every step.
+            return
         try:
             if self._iren is not None:
                 self._iren.GetRenderWindow().Render()
@@ -1507,7 +1744,16 @@ class VtkFieldViewer(QWidget):
         return pd
 
     def set_work_dir(self, work_dir: Path | None) -> None:
-        self.work_dir = Path(work_dir) if work_dir else None
+        new_dir = Path(work_dir) if work_dir else None
+        if new_dir != getattr(self, "work_dir", None):
+            # Switching projects/folders must not leave geometry ghosts from
+            # the previous dump's work dir on screen.
+            self._geom_prims = []
+            if self._renderer is not None:
+                self._draw_geometry(render=False)  # removes the old actors
+            else:
+                self._geom_actors = []
+        self.work_dir = new_dir
         self._load_workdir_geometry()
 
     def _load_workdir_geometry(self) -> None:
@@ -1534,8 +1780,14 @@ class VtkFieldViewer(QWidget):
         except Exception:  # noqa: BLE001 — fall back to the project JSON
             prims = []
         try:
-            for name in ("project.fcsim.json", "project_copy.json", "project.json"):
-                proj = work / name
+            candidates = [
+                work / "project.fcsim.json",
+                work / "project_copy.json",
+                work / "project.json",
+                # strict layout: JSON is the sibling of the data folder
+                work.parent / f"{work.name}.fcsim.json",
+            ]
+            for proj in candidates:
                 if not proj.exists():
                     continue
                 data = json.loads(proj.read_text(encoding="utf-8"))
@@ -1553,6 +1805,12 @@ class VtkFieldViewer(QWidget):
                     "um": 1e-6,
                     "nm": 1e-9,
                 }.get(drawing, 1e-3)
+                # Ruler labels follow the project's drawing unit unless the user
+                # picked one explicitly (otherwise a mm PCB shows 0.09 "m").
+                if not self._ruler_unit_user and drawing in {
+                    u[0] for u in RULER_UNITS
+                }:
+                    self._axes["ruler_unit"] = drawing
                 break
         except Exception:  # noqa: BLE001 — never block loading the dump
             pass
@@ -1584,6 +1842,19 @@ class VtkFieldViewer(QWidget):
                 try:
                     if key in ("show", "corner", "labels", "ruler", "origin_back"):
                         value = bool(value)
+                    elif key == "ruler_unit":
+                        value = str(value)
+                        if value not in {u[0] for u in RULER_UNITS}:
+                            value = "mm"
+                    elif key == "ruler_labels":
+                        current = dict(self._axes.get("ruler_labels", {}) or {})
+                        incoming = value if isinstance(value, dict) else {}
+                        value = {
+                            axis: bool(incoming.get(axis, current.get(axis, True)))
+                            for axis in ("x", "y", "z")
+                        }
+                    elif key == "xy_ruler_z_offset":
+                        value = max(-200.0, min(200.0, float(value)))
                     elif key == "font":
                         value = max(6, min(72, int(value)))
                     elif key == "scale":
@@ -1601,27 +1872,55 @@ class VtkFieldViewer(QWidget):
 
     def set_axes_option(self, key: str, value) -> None:
         """Change one axes option and notify (menu slots)."""
+        if key == "ruler_unit":
+            self._ruler_unit_user = True
         self.set_axes_options({key: value}, notify=True)
+
+    def _set_ruler_label_visible(self, axis: str, on: bool) -> None:
+        """Show/hide the numeric labels of one ruler axis only."""
+        labels = dict(self._axes.get("ruler_labels", {}) or {})
+        if axis not in ("x", "y", "z"):
+            return
+        labels[axis] = bool(on)
+        self.set_axes_options({"ruler_labels": labels}, notify=True)
 
     def _apply_axes(self) -> None:
         """Re-render the triad / corner marker / ruler with the current options."""
-        if self._renderer is not None and self._grid is not None:
+        if self._renderer is None:
+            return
+        if self._grid is not None:
             self._refresh_display()
+            return
+        # Geometry-only scene (imported CAD, no field dump loaded): there is no
+        # _refresh_display path, so apply the axes/ruler here - otherwise the
+        # configured defaults (corner triad, ruler, labels) never showed up.
+        vtk = self._vtk or _vtk()
+        self._vtk = vtk
+        if self._axes["show"] and not self._axes["corner"]:
+            self._add_orientation_triad(vtk)
+        elif getattr(self, "_triad_actor", None) is not None:
+            self._renderer.RemoveActor(self._triad_actor)
+            self._triad_actor = None
+        if self._axes["ruler"]:
+            self._add_coordinate_ruler(vtk)
         else:
-            self._update_corner_marker()
-            if self._iren is not None:
-                try:
-                    self._iren.GetRenderWindow().Render()
-                except Exception:  # noqa: BLE001
-                    pass
+            for attr in ("_ruler_actor", "_z_ruler_actor"):
+                actor = getattr(self, attr, None)
+                if actor is not None:
+                    self._renderer.RemoveActor(actor)
+                    setattr(self, attr, None)
+        self._update_corner_marker()
+        if self._iren is not None:
+            try:
+                self._iren.GetRenderWindow().Render()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _update_corner_marker(self) -> None:
         """Small, fixed-size orientation axes in the lower-left corner."""
         if self._iren is None:
             return
-        show = bool(
-            self._axes["show"] and self._axes["corner"] and self._grid is not None
-        )
+        show = bool(self._axes["show"] and self._axes["corner"])
         if show and self._marker is None:
             try:
                 vtk = self._vtk or _vtk()
@@ -1658,31 +1957,201 @@ class VtkFieldViewer(QWidget):
         else:
             self._marker.SetEnabled(0)
 
-    def _add_coordinate_ruler(self, vtk) -> None:
-        """Numeric x/y/z ticks around the dataset bounds (vtkCubeAxesActor)."""
-        cube = vtk.vtkCubeAxesActor()
-        cube.SetBounds(self._grid.GetBounds())
-        cube.SetCamera(self._renderer.GetActiveCamera())
+    def _scene_bounds(self):
+        """Bounds of what is on screen: the field grid, else the geometry ghosts."""
+        if self._grid is not None:
+            b = self._grid.GetBounds()
+            if b[0] <= b[1]:
+                return b
+        actors = getattr(self, "_geom_actors", [])
+        if not actors:
+            return None
+        bounds = [1e308, -1e308, 1e308, -1e308, 1e308, -1e308]
+        for actor in actors:
+            try:
+                b = actor.GetBounds()
+            except Exception:  # noqa: BLE001 - skip actors without bounds
+                continue
+            if not b or len(b) != 6 or b[0] > b[1]:
+                continue
+            bounds[0] = min(bounds[0], b[0])
+            bounds[1] = max(bounds[1], b[1])
+            bounds[2] = min(bounds[2], b[2])
+            bounds[3] = max(bounds[3], b[3])
+            bounds[4] = min(bounds[4], b[4])
+            bounds[5] = max(bounds[5], b[5])
+        if bounds[0] > bounds[1]:
+            return None
+        return tuple(bounds)
+
+    def _add_orientation_triad(self, vtk) -> None:
+        """In-scene triad at the near (or far) bbox corner, sized to the scene."""
+        if self._renderer is None:
+            return
+        if getattr(self, "_triad_actor", None) is not None:
+            self._renderer.RemoveActor(self._triad_actor)
+            self._triad_actor = None
+        bounds = self._scene_bounds()
+        if bounds is None:
+            return
+        axes = vtk.vtkAxesActor()
+        length = axes_total_length(bounds, self._axes["scale"])
+        axes.SetTotalLength(length, length, length)
+        origin = (bounds[0], bounds[2], bounds[4])
         if self._axes.get("origin_back"):
-            # axes/labels on the far edges -> behind the field like the triad
-            cube.SetFlyModeToFurthestTriad()
-        else:
-            cube.SetFlyModeToClosestTriad()
+            try:
+                cam = self._renderer.GetActiveCamera().GetPosition()
+                corners = [
+                    (bounds[i], bounds[j], bounds[k])
+                    for i in (0, 1)
+                    for j in (2, 3)
+                    for k in (4, 5)
+                ]
+                origin = max(
+                    corners,
+                    key=lambda p: (
+                        (p[0] - cam[0]) ** 2
+                        + (p[1] - cam[1]) ** 2
+                        + (p[2] - cam[2]) ** 2
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — keep the near corner
+                pass
+        axes.SetPosition(*origin)
+        style_axes_triad(
+            axes,
+            show_labels=bool(self._axes["labels"]),
+            font_size=int(self._axes["font"]),
+        )
+        self._renderer.AddActor(axes)
+        self._triad_actor = axes
+
+    def _add_coordinate_ruler(self, vtk) -> None:
+        """Numeric x/y/z ticks around the dataset bounds (vtkCubeAxesActor).
+
+        ``xy_ruler_z_offset`` shifts the x/y rulers along z, as a percentage of
+        the z range.  The z ruler is a separate actor and stays at the original
+        bounds, so the horizontal rulers can be pulled away from the origin
+        corner without moving the z scale.
+        """
+        for attr in ("_ruler_actor", "_z_ruler_actor"):
+            actor = getattr(self, attr, None)
+            if actor is not None:
+                self._renderer.RemoveActor(actor)
+                setattr(self, attr, None)
+        bounds = self._scene_bounds()
+        if bounds is None:
+            return
+        unit_key = str(self._axes.get("ruler_unit", "mm") or "mm")
+        unit_label, unit_factor = next(
+            ((label, factor) for key, label, factor in RULER_UNITS if key == unit_key),
+            ("mm", 1e3),
+        )
+        font = int(self._axes["font"])
+        titles = (
+            f"x [{unit_label}]",
+            f"y [{unit_label}]",
+            f"z [{unit_label}]",
+        )
+        label_vis = dict(self._axes.get("ruler_labels", {}) or {})
+        b = bounds
+        dx, dy, dz = b[1] - b[0], b[3] - b[2], b[5] - b[4]
+        diag = math.sqrt(dx * dx + dy * dy + dz * dz)
+        eps = max(diag * 1e-6, 1e-12)
+        flat_x = abs(dx) <= eps
+        flat_y = abs(dy) <= eps
+        flat_z = abs(dz) <= eps
+        try:
+            offset = float(self._axes.get("xy_ruler_z_offset", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            offset = 0.0
+        shift = offset / 100.0 * dz
+
+        def _style(cube, axes) -> None:
+            for axis in axes:
+                color = AXIS_COLORS[("X", "Y", "Z").index(axis)]
+                label = getattr(cube, f"Get{axis}AxesLabelProperty")()
+                label.SetColor(0.9, 0.9, 0.9)
+                label.SetFontSize(font)
+                caption = getattr(cube, f"Get{axis}AxesTitleProperty")()
+                caption.SetColor(0.9, 0.9, 0.9)
+                caption.SetFontSize(font)
+                getattr(cube, f"Get{axis}AxesLinesProperty")().SetColor(*color)
+
+        def _hide_axis(cube, axis) -> None:
+            """Hide one axis completely (visibility last: VTK re-enables it)."""
+            for suffix in (
+                "AxisTitleVisibility",
+                "AxisLabelVisibility",
+                "AxisTickVisibility",
+                "AxisMinorTickVisibility",
+            ):
+                try:
+                    getattr(cube, f"Set{axis}{suffix}")(False)
+                except Exception:  # noqa: BLE001 — older VTK
+                    pass
+            try:
+                getattr(cube, f"Set{axis}Title")("")
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                getattr(cube, f"Set{axis}AxisVisibility")(False)
+            except Exception:  # noqa: BLE001
+                pass
+
+        def _fly(cube) -> None:
+            if self._axes.get("origin_back"):
+                cube.SetFlyModeToFurthestTriad()
+            else:
+                cube.SetFlyModeToClosestTriad()
+
+        # z-only actor at the original bounds.  A planar dump (dz ~ 0) must not
+        # draw a z ruler: VTK would auto-scale numerical noise to "(x10^-6)".
+        if not flat_z:
+            zcube = vtk.vtkCubeAxesActor()
+            zcube.SetBounds(b)
+            zcube.SetZAxisRange(b[4] * unit_factor, b[5] * unit_factor)
+            zcube.SetCamera(self._renderer.GetActiveCamera())
+            _fly(zcube)
+            zcube.SetUseTextActor3D(False)
+            zcube.SetPickable(False)
+            _hide_axis(zcube, "X")
+            _hide_axis(zcube, "Y")
+            zcube.SetZTitle(titles[2])
+            zcube.SetZAxisVisibility(True)
+            zcube.SetZAxisTickVisibility(True)
+            zcube.SetZAxisMinorTickVisibility(True)
+            zcube.SetZAxisLabelVisibility(bool(label_vis.get("z", True)))
+            zcube.SetZLabelFormat("%.4g")
+            _style(zcube, ("Z",))
+            self._renderer.AddActor(zcube)
+            self._z_ruler_actor = zcube
+
+        # x/y ruler: same x/y extents, translated along z.
+        xy_bounds = (b[0], b[1], b[2], b[3], b[4] + shift, b[5] + shift)
+        cube = vtk.vtkCubeAxesActor()
+        cube.SetBounds(xy_bounds)
+        # Scale only the numeric ranges; the box itself stays attached to the
+        # simulation bounds.  VTK then draws the labels in the chosen unit.
+        cube.SetXAxisRange(b[0] * unit_factor, b[1] * unit_factor)
+        cube.SetYAxisRange(b[2] * unit_factor, b[3] * unit_factor)
+        cube.SetCamera(self._renderer.GetActiveCamera())
+        _fly(cube)
         cube.SetUseTextActor3D(False)
         cube.SetPickable(False)
-        font = int(self._axes["font"])
-        titles = ("x [m]", "y [m]", "z [m]")
-        for axis, title, color in zip(("X", "Y", "Z"), titles, AXIS_COLORS):
-            getattr(cube, f"Set{axis}Title")(title)
+        _hide_axis(cube, "Z")
+        for axis in ("X", "Y"):
+            if (axis == "X" and flat_x) or (axis == "Y" and flat_y):
+                _hide_axis(cube, axis)
+                continue
+            getattr(cube, f"Set{axis}Title")(titles[("X", "Y").index(axis)])
+            getattr(cube, f"Set{axis}AxisLabelVisibility")(
+                bool(label_vis.get(axis.lower(), True))
+            )
             getattr(cube, f"Set{axis}LabelFormat")("%.4g")
-            label = getattr(cube, f"Get{axis}AxesLabelProperty")()
-            label.SetColor(0.9, 0.9, 0.9)
-            label.SetFontSize(font)
-            caption = getattr(cube, f"Get{axis}AxesTitleProperty")()
-            caption.SetColor(0.9, 0.9, 0.9)
-            caption.SetFontSize(font)
-            getattr(cube, f"Get{axis}AxesLinesProperty")().SetColor(*color)
+        _style(cube, ("X", "Y"))
         self._renderer.AddActor(cube)
+        self._ruler_actor = cube
 
     def build_views_menu(self, parent=None) -> QMenu:
         """Standard-view submenu (same presets as the View combo/View menu)."""
@@ -1728,8 +2197,50 @@ class VtkFieldViewer(QWidget):
         acts["labels"].setToolTip("Show the X/Y/Z captions on the axes (colours stay).")
         acts["ruler"] = menu.addAction("Coordinate ruler (numbers)")
         acts["ruler"].setToolTip(
-            "Numeric coordinate ticks around the dataset bounds (in metres)."
+            "Numeric coordinate ticks around the dataset bounds (unit selectable)."
         )
+        unit_menu = menu.addMenu("Ruler units")
+        unit_group = QActionGroup(unit_menu)
+        unit_group.setExclusive(True)
+        self._axes_unit_group = unit_group
+        acts["ruler_unit"] = {}
+        for key, label, _factor in RULER_UNITS:
+            act = unit_menu.addAction(label)
+            act.setCheckable(True)
+            unit_group.addAction(act)
+            acts["ruler_unit"][key] = act
+            act.triggered.connect(
+                lambda _checked=False, k=key: self.set_axes_option("ruler_unit", k)
+            )
+        labels_menu = menu.addMenu("Ruler labels")
+        acts["ruler_labels"] = {}
+        for axis in ("x", "y", "z"):
+            act = labels_menu.addAction(f"{axis.upper()} labels")
+            act.setCheckable(True)
+            acts["ruler_labels"][axis] = act
+            act.toggled.connect(
+                lambda on, a=axis: self._set_ruler_label_visible(a, bool(on))
+            )
+        zoff_menu = menu.addMenu("XY ruler Z offset")
+        zoff_menu.setToolTip(
+            "Move the x/y rulers along the z axis (percentage of the z range).\n"
+            "The z ruler itself stays at its original position."
+        )
+        zoff_group = QActionGroup(zoff_menu)
+        zoff_group.setExclusive(True)
+        self._axes_zoff_group = zoff_group
+        acts["xy_ruler_z_offset"] = {}
+        for value in (-50.0, -20.0, -10.0, 0.0, 10.0, 20.0, 50.0):
+            text = f"{value:+.0f} %" if value else "0 %"
+            act = zoff_menu.addAction(text)
+            act.setCheckable(True)
+            zoff_group.addAction(act)
+            acts["xy_ruler_z_offset"][value] = act
+            act.triggered.connect(
+                lambda _checked=False, v=value: self.set_axes_option(
+                    "xy_ruler_z_offset", v
+                )
+            )
         menu.addSeparator()
         size_menu = menu.addMenu("Size")
         acts["size"] = {}
@@ -1789,6 +2300,22 @@ class VtkFieldViewer(QWidget):
             act.blockSignals(True)
             act.setChecked(int(self._axes["font"]) == size)
             act.blockSignals(False)
+        current_unit = str(self._axes.get("ruler_unit", "mm") or "mm")
+        for key, act in acts.get("ruler_unit", {}).items():
+            act.blockSignals(True)
+            act.setChecked(key == current_unit)
+            act.blockSignals(False)
+        label_vis = dict(self._axes.get("ruler_labels", {}) or {})
+        for axis, act in acts.get("ruler_labels", {}).items():
+            act.blockSignals(True)
+            act.setChecked(bool(label_vis.get(axis, True)))
+            act.blockSignals(False)
+        current_zoff = float(self._axes.get("xy_ruler_z_offset", 0.0) or 0.0)
+        for value, act in acts.get("xy_ruler_z_offset", {}).items():
+            act.blockSignals(True)
+            act.setChecked(abs(current_zoff - value) < 1e-9)
+            act.blockSignals(False)
+
 
     def clear(self, message: str | None = None) -> None:
         """Drop the loaded field/series so no stale scene stays visible.
@@ -1806,6 +2333,10 @@ class VtkFieldViewer(QWidget):
         self._series_times, self._series_freqs = [], []
         self._current_path = None
         self._grid = None
+        # Geometry ghosts are project-owned too: clearing the field without
+        # dropping them left the previous project's PCB/Antenna visible.
+        self._geom_prims = []
+        self._geom_actors = []
         self._vec_series_ref = None
         self._vec_ref_name = None
         self._slice_pos_exact = None
@@ -1872,17 +2403,26 @@ class VtkFieldViewer(QWidget):
         self.btn_popout.setText("Pop out")
 
     def _context_menu_allowed(self, pos) -> bool:
-        """True unless the click is inside the 3D pane (VTK right-click there)."""
-        host = getattr(self, "_host", None)
-        return host is None or not host.geometry().contains(pos)
+        """The menu is available on the controls *and* inside the 3D pane."""
+        return True
 
-    def _show_context_menu(self, pos) -> None:
-        if not self._context_menu_allowed(pos):
-            return
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt API
+        """Open the field-viewer menu for right-clicks inside the VTK pane."""
+        if obj is getattr(self, "_iren", None):
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
+                self._show_context_menu(event.position().toPoint(), source=obj)
+                return True
+            if event.type() == QEvent.Type.ContextMenu:
+                self._show_context_menu(event.pos(), source=obj)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _show_context_menu(self, pos, source=None) -> None:
         menu = QMenu(self)
         menu.addAction("Open…", self._on_open)
         menu.addAction("Export project dumps → VTK", self.export_and_load)
-        menu.addAction("Save video…", self._on_export_video)
+        menu.addAction("Export video…", self._on_export_video)
+        menu.addAction("Export animated GIF…", self._on_export_gif)
         menu.addSeparator()
         if self._popout_win is not None:
             menu.addAction("Dock view (close pop-out)", self.restore_from_popout)
@@ -1896,7 +2436,10 @@ class VtkFieldViewer(QWidget):
         menu.addSeparator()
         menu.addMenu(self.build_views_menu(menu))
         menu.addMenu(self.build_axes_menu(menu))
-        menu.exec(self.mapToGlobal(pos))
+        widget = source if source is not None else self.sender()
+        if not isinstance(widget, QWidget):
+            widget = self
+        menu.exec(widget.mapToGlobal(pos))
 
     def _copy_state_from(self, other: "VtkFieldViewer") -> None:
         """Mirror representation / colour / playback settings (for the pop-out)."""
@@ -1918,6 +2461,7 @@ class VtkFieldViewer(QWidget):
             lambda: self.chk_autoplay.setChecked(other.chk_autoplay.isChecked()),
             lambda: self.set_axes_options(other.axes_options()),
             lambda: self.set_vector_options(other.vector_options()),
+            lambda: self.set_streamline_options(other.streamline_options()),
             lambda: self.set_color_scale_options(other.color_scale_options()),
             lambda: self.set_bar_title_options(other.bar_title_options()),
             lambda: self.set_color_bar_options(other.color_bar_options()),
@@ -1950,16 +2494,40 @@ class VtkFieldViewer(QWidget):
         if path:
             self.load(path)
 
+    def _latest_dump_dir(self) -> Path | None:
+        """Run folder that actually contains field dumps.
+
+        ``script_gen`` writes each run into ``simulation/`` or a unique
+        ``simulation_<timestamp>/`` (when the old folder already exists).  The
+        exporter used to look only at ``simulation/``, so every later run
+        appeared to have "no field data".  Use the newest folder that has
+        ``*.h5`` dumps.
+        """
+        if self.work_dir is None:
+            return None
+        base = Path(self.work_dir)
+        candidates = [base / "simulation"]
+        candidates += sorted(
+            base.glob("simulation_*"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        for folder in candidates:
+            if folder.is_dir() and any(folder.glob("*.h5")):
+                return folder
+        return None
+
     def export_and_load(self) -> None:
         if not self.btn_export.isEnabled():  # an export is already running
             return
         if self.work_dir is None:
             QMessageBox.information(self, "VTK", "No work directory set.")
             return
-        sim = Path(self.work_dir) / "simulation"
-        if not sim.is_dir():
+        sim = self._latest_dump_dir()
+        if sim is None:
             QMessageBox.information(
-                self, "VTK", f"No simulation folder found:\n{sim}\n\nRun a simulation first."
+                self,
+                "VTK",
+                f"No simulation field dump found in:\n{self.work_dir}\n\n"
+                "Run a simulation with field dumps enabled first.",
             )
             return
 
@@ -2029,8 +2597,12 @@ class VtkFieldViewer(QWidget):
         if not self._read_into_grid(path, show_errors=True):
             return
         self._current_path = path
-        if self.work_dir is None and path.parent.name.lower() == "vtk":
-            self.work_dir = path.parent.parent
+        if path.parent.name.lower() == "vtk":
+            # A dump opened directly may come from a different project than the
+            # last one; switch the work dir (and drop its stale geometry).
+            self.set_work_dir(path.parent.parent)
+        elif self.work_dir is None:
+            self.work_dir = path.parent
         self._load_workdir_geometry()
         if self._series:
             self.slider_time.blockSignals(True)
@@ -2110,6 +2682,26 @@ class VtkFieldViewer(QWidget):
         # have no times/frequencies)
         self._series_times = (times + [None] * n)[:n]
         self._series_freqs = (freqs + [None] * n)[:n]
+
+    def _arrays_match_selection(self) -> bool:
+        """True when the loaded grid carries exactly the arrays the combo lists.
+
+        Frame changes then only need ``_on_array_changed`` (data range + one
+        redraw) instead of rebuilding the array combo, which fires an extra
+        refresh per slider step.
+        """
+        if self._grid is None or self.cmb_array.count() == 0:
+            return False
+        pd = self._grid.GetPointData()
+        cd = self._grid.GetCellData()
+        have = {("point", pd.GetArrayName(i)) for i in range(pd.GetNumberOfArrays())}
+        have |= {("cell", cd.GetArrayName(i)) for i in range(cd.GetNumberOfArrays())}
+        want = {
+            tuple(self.cmb_array.itemData(i))
+            for i in range(self.cmb_array.count())
+            if self.cmb_array.itemData(i)
+        }
+        return have == want
 
     def _populate_arrays(self) -> None:
         self.cmb_array.blockSignals(True)
@@ -2453,6 +3045,231 @@ class VtkFieldViewer(QWidget):
             + ("" if has else "\n\n(this dump has no 3-component field array)")
         )
 
+    # ------------------------------------------------------------- streamlines
+    def streamline_options(self) -> dict:
+        """Current streamline appearance / seeding options (JSON-serialisable)."""
+        color = self._stream.get("color", DEFAULT_STREAMLINES["color"])
+        return {
+            "enabled": bool(self.chk_stream.isChecked()),
+            "preset": self.cmb_stream_preset.currentText() or "Custom",
+            "representation": str(self.cmb_stream_rep.currentData() or "tube"),
+            "radius_pct": float(self.spn_stream_radius.value()),
+            "sides": int(self.spn_stream_sides.value()),
+            "line_width": float(self.spn_stream_width.value()),
+            "opacity": int(self.spn_stream_opacity.value()),
+            "color_mode": str(self.cmb_stream_color.currentData() or "field"),
+            "color": [float(c) for c in color],
+            "seeds": int(self.spn_stream_seeds.value()),
+        }
+
+    def _set_streamline_widgets(self, opts: dict) -> None:
+        """Mirror a normalised options dict into the streamline widgets."""
+        for widget in (
+            self.chk_stream,
+            self.cmb_stream_preset,
+            self.cmb_stream_rep,
+            self.spn_stream_radius,
+            self.spn_stream_sides,
+            self.spn_stream_width,
+            self.spn_stream_opacity,
+            self.cmb_stream_color,
+            self.spn_stream_seeds,
+        ):
+            widget.blockSignals(True)
+        try:
+            self.chk_stream.setChecked(bool(opts["enabled"]))
+            preset = str(opts.get("preset", "Custom"))
+            if self.cmb_stream_preset.findText(preset) < 0:
+                preset = "Custom"
+            self.cmb_stream_preset.setCurrentText(preset)
+            index = self.cmb_stream_rep.findData(str(opts["representation"]))
+            self.cmb_stream_rep.setCurrentIndex(max(0, index))
+            self.spn_stream_radius.setValue(float(opts["radius_pct"]))
+            self.spn_stream_sides.setValue(int(opts["sides"]))
+            self.spn_stream_width.setValue(float(opts["line_width"]))
+            self.spn_stream_opacity.setValue(int(opts["opacity"]))
+            index = self.cmb_stream_color.findData(str(opts["color_mode"]))
+            self.cmb_stream_color.setCurrentIndex(max(0, index))
+            self.spn_stream_seeds.setValue(int(opts["seeds"]))
+        finally:
+            for widget in (
+                self.chk_stream,
+                self.cmb_stream_preset,
+                self.cmb_stream_rep,
+                self.spn_stream_radius,
+                self.spn_stream_sides,
+                self.spn_stream_width,
+                self.spn_stream_opacity,
+                self.cmb_stream_color,
+                self.spn_stream_seeds,
+            ):
+                widget.blockSignals(False)
+        self._update_stream_color_button()
+
+    def set_streamline_options(
+        self, options: dict | None, *, notify: bool = False
+    ) -> None:
+        """Apply streamline appearance options (startup / preset / pop-out).
+
+        Unknown keys and out-of-range values are ignored or clamped; the
+        streamline actor is rebuilt immediately when a grid is loaded.
+        """
+        opts = dict(DEFAULT_STREAMLINES)
+        if isinstance(options, dict):
+            for key in DEFAULT_STREAMLINES:
+                if key in options:
+                    opts[key] = options[key]
+        try:
+            opts["enabled"] = bool(opts["enabled"])
+            preset = str(opts.get("preset") or "Custom")
+            if preset not in ("Standard", "Draft", "Publication", "Custom"):
+                preset = "Custom"
+            opts["preset"] = preset
+            representation = str(opts.get("representation") or "tube")
+            opts["representation"] = (
+                representation if representation in ("tube", "line") else "tube"
+            )
+            opts["radius_pct"] = max(
+                0.01, min(5.0, float(opts.get("radius_pct", 0.20)))
+            )
+            opts["sides"] = max(3, min(24, int(opts.get("sides", 8))))
+            opts["line_width"] = max(
+                0.5, min(10.0, float(opts.get("line_width", 2.0)))
+            )
+            opts["opacity"] = max(5, min(100, int(opts.get("opacity", 100))))
+            mode = str(opts.get("color_mode") or "field")
+            opts["color_mode"] = (
+                mode if mode in ("field", "speed", "solid") else "field"
+            )
+            color = opts.get("color")
+            if isinstance(color, (list, tuple)) and len(color) >= 3:
+                opts["color"] = [
+                    max(0.0, min(1.0, float(c))) for c in color[:3]
+                ]
+            else:
+                opts["color"] = list(DEFAULT_STREAMLINES["color"])
+            opts["seeds"] = max(2, min(10, int(opts.get("seeds", 6))))
+        except (TypeError, ValueError):
+            opts = dict(DEFAULT_STREAMLINES)
+        self._stream = dict(opts)
+        self._set_streamline_widgets(opts)
+        self._update_stream_controls()
+        if self._grid is not None:
+            self._refresh_display()
+        if notify and callable(self.on_streamlines_changed):
+            self.on_streamlines_changed(self.streamline_options())
+
+    def _update_stream_color_button(self) -> None:
+        color = self._stream.get("color", DEFAULT_STREAMLINES["color"])
+        try:
+            r, g, b = (max(0.0, min(1.0, float(c))) for c in color[:3])
+        except (TypeError, ValueError):
+            r, g, b = DEFAULT_STREAMLINES["color"]
+        ri, gi, bi = (int(round(v * 255)) for v in (r, g, b))
+        # readable text on both dark and light swatches
+        lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        fg = "black" if lum > 0.55 else "white"
+        self.btn_stream_color.setText(f"#{ri:02x}{gi:02x}{bi:02x}")
+        self.btn_stream_color.setStyleSheet(
+            f"QPushButton {{ background-color: rgb({ri},{gi},{bi});"
+            f" color: {fg}; }}"
+        )
+
+    def _update_stream_controls(self) -> None:
+        """Enable only the controls that apply to the current appearance."""
+        on = bool(self.chk_stream.isChecked())
+        rep = str(self.cmb_stream_rep.currentData() or "tube")
+        mode = str(self.cmb_stream_color.currentData() or "field")
+        for widget in (
+            self.cmb_stream_preset,
+            self.cmb_stream_rep,
+            self.spn_stream_opacity,
+            self.cmb_stream_color,
+            self.spn_stream_seeds,
+            self.btn_stream_reset,
+        ):
+            widget.setEnabled(on)
+        for widget in (self.spn_stream_radius, self.spn_stream_sides):
+            widget.setEnabled(on and rep == "tube")
+        self.spn_stream_width.setEnabled(on and rep == "line")
+        self.btn_stream_color.setEnabled(on and mode == "solid")
+
+    def _on_stream_toggled(self, _on: bool) -> None:
+        self._stream["enabled"] = bool(self.chk_stream.isChecked())
+        self._update_stream_controls()
+        if self._grid is not None:
+            self._refresh_display()
+        if callable(self.on_streamlines_changed):
+            self.on_streamlines_changed(self.streamline_options())
+
+    def _on_stream_option_changed(self, *_args) -> None:
+        # Any manual tweak makes the selected preset "Custom".
+        self.cmb_stream_preset.blockSignals(True)
+        self.cmb_stream_preset.setCurrentText("Custom")
+        self.cmb_stream_preset.blockSignals(False)
+        self._stream.update(self.streamline_options())
+        self._update_stream_controls()
+        if self._grid is not None:
+            self._refresh_display()
+        if callable(self.on_streamlines_changed):
+            self.on_streamlines_changed(self.streamline_options())
+
+    def _on_stream_preset_changed(self, name: str) -> None:
+        if name == "Custom":
+            return
+        preset = STREAMLINE_PRESETS.get(str(name))
+        if preset is None:
+            return
+        opts = self.streamline_options()
+        opts.update(preset)
+        opts["preset"] = str(name)
+        self.set_streamline_options(opts, notify=True)
+
+    def _choose_stream_color(self) -> None:
+        color = self._stream.get("color", DEFAULT_STREAMLINES["color"])
+        try:
+            initial = QColor.fromRgbF(*(max(0.0, min(1.0, float(c))) for c in color[:3]))
+        except (TypeError, ValueError):
+            initial = QColor.fromRgbF(*DEFAULT_STREAMLINES["color"])
+        chosen = QColorDialog.getColor(initial, self, "Streamline colour")
+        if not chosen.isValid():
+            return
+        self._stream["color"] = [chosen.redF(), chosen.greenF(), chosen.blueF()]
+        self.cmb_stream_preset.blockSignals(True)
+        self.cmb_stream_preset.setCurrentText("Custom")
+        self.cmb_stream_preset.blockSignals(False)
+        self._stream.update(self.streamline_options())
+        self._update_stream_color_button()
+        if self._grid is not None:
+            self._refresh_display()
+        if callable(self.on_streamlines_changed):
+            self.on_streamlines_changed(self.streamline_options())
+
+    def _reset_streamlines(self) -> None:
+        opts = dict(DEFAULT_STREAMLINES)
+        opts["enabled"] = bool(self.chk_stream.isChecked())  # keep the switch
+        self.set_streamline_options(opts, notify=True)
+
+    def _stream_lookup_table(self, vtk, lo: float, hi: float):
+        """Separate LUT for |v| colouring (must not alter the field LUT)."""
+        lut = vtk.vtkLookupTable()
+        colors = colormap_colors(
+            str(self._color_scale.get("cmap", DEFAULT_COLOR_SCALE["cmap"])),
+            int(self._color_scale.get("steps", DEFAULT_COLOR_SCALE["steps"])),
+            bool(self._color_scale.get("reverse", False)),
+        )
+        if colors:
+            fill_lookup_table(lut, colors)
+        else:  # defensive fallback, same as _lookup_table
+            lut.SetNumberOfTableValues(256)
+            lut.SetHueRange(0.667, 0.0)
+        if hi <= lo:
+            hi = lo + 1.0
+        lut.SetScaleToLinear()
+        lut.SetTableRange(float(lo), float(hi))
+        lut.Build()
+        return lut
+
     # ------------------------------------------------------------ colour scale
     def color_scale_options(self) -> dict:
         """Current colour scale settings (JSON-serialisable)."""
@@ -2784,18 +3601,21 @@ class VtkFieldViewer(QWidget):
             # direction is undefined, so those arrows carry no information.
             keep &= mags_all > 0.0
         if min_pct > 0.0:
-            lo = float(np.nanmin(mags_all))
-            hi = float(np.nanmax(mags_all))
-            if self.chk_log.isChecked() and hi > 0.0:
-                base = lo if lo > 0.0 else hi * 1e-9
-                cut = 10.0 ** (
-                    math.log10(base)
-                    + (math.log10(hi) - math.log10(base)) * (min_pct / 100.0)
-                )
-            else:
+            # Linear share of this frame's peak: "3 %" hides the arrows below
+            # 3 % of the strongest |v|. Interpolating on the logarithmic colour
+            # axis (with a max*1e-9 floor for exactly-zero points) stretched
+            # the scale over ~9 decades and made the slider do nothing below
+            # ~70 % - it looked broken.
+            finite = mags_all[np.isfinite(mags_all)]
+            if finite.size:
+                lo = float(np.min(finite))
+                hi = float(np.max(finite))
                 cut = lo + (hi - lo) * (min_pct / 100.0)
-            keep &= mags_all >= cut
-        if 2 <= int(keep.sum()) < mags_all.size:
+                keep &= mags_all >= cut
+        n_keep = int(keep.sum())
+        if n_keep == 0:
+            return None
+        if n_keep < mags_all.size:
             sampled = self._subset_points(vtk, ns, sampled, keep)
             arr = sampled.GetPointData().GetArray(name)
             if arr is None:
@@ -2863,8 +3683,14 @@ class VtkFieldViewer(QWidget):
 
     # ------------------------------------------------------------- rendering
     def _apply_bar_title(self, bar):
-        """Title above the bar, or rotated beside it (Viewer settings)."""
-        text = getattr(self, "_bar_title", "") or bar.GetTitle()
+        """Title above the bar, or rotated beside it (Viewer settings).
+
+        Always take the freshly built bar title first.  The old code cached the
+        first field's title (e.g. "E-Field … [V/m]") and kept showing it after
+        loading an H dump, even though the data panel and tab header were
+        already correct.
+        """
+        text = bar.GetTitle() or getattr(self, "_bar_title", "")
         self._bar_title = text
         if self._renderer is None:
             return bar
@@ -3017,7 +3843,7 @@ class VtkFieldViewer(QWidget):
 
         False while the arrows are shown (the default): an opaque slice,
         surface or volume covers every arrow that points into it, which is what
-        made the vector display unusable. The "field underneath" option brings
+        made the vector display unusable. The "field below" option brings
         the colour plot back for those who want the overlay.
         """
         vectors_on = bool(self.chk_vectors.isChecked()) and self._has_vectors
@@ -3081,26 +3907,19 @@ class VtkFieldViewer(QWidget):
         actor.GetProperty().SetLineWidth(1.0)
         return actor
 
-    def _streamline_actor(self, vtk, name: str, lut=None):
-        """Field lines through the volume, seeded on a plane near the centre."""
+    def _streamline_actor(self, vtk, name: str | None, lut=None):
+        """Field lines through the volume (appearance from ``self._stream``)."""
         try:
             # the tracer needs a VECTOR array; a scalar (e.g. "magnitude")
-            # cannot be integrated. Fall back to the first 3-component array.
-            vec_name = None
-            pd = self._grid.GetPointData()
-            for i in range(pd.GetNumberOfArrays()):
-                arr = pd.GetArray(i)
-                if arr is not None and arr.GetNumberOfComponents() == 3:
-                    vec_name = arr.GetName()
-                    break
+            # cannot be integrated.
+            vec_name = self._vector_array_name()
             if vec_name is None:
                 return None
+            opts = self.streamline_options()
             b = self._grid.GetBounds()
             dx, dy, dz = b[1] - b[0], b[3] - b[2], b[5] - b[4]
-            try:
-                n = max(2, min(10, int(self.spn_stream_seeds.value())))
-            except (TypeError, ValueError):
-                n = 6
+            diag = math.sqrt(dx * dx + dy * dy + dz * dz)
+            n = max(2, min(10, int(opts["seeds"])))
             # n³ start points spread evenly through the whole volume (6 % margin
             # keeps the seeds/integration away from the domain boundary). A small
             # deterministic jitter breaks the regular lattice look.
@@ -3124,7 +3943,6 @@ class VtkFieldViewer(QWidget):
                         )
             seed_pd = vtk.vtkPolyData()
             seed_pd.SetPoints(pts)
-            diag = math.sqrt(dx * dx + dy * dy + dz * dz)
             tracer = vtk.vtkStreamTracer()
             tracer.SetInputData(self._grid)
             tracer.SetSourceData(seed_pd)
@@ -3144,27 +3962,82 @@ class VtkFieldViewer(QWidget):
             tracer.SetMaximumIntegrationStep(0.05 * diag)
             tracer.SetTerminalSpeed(1e-12)
             tracer.Update()
-            tube = vtk.vtkTubeFilter()
-            tube.SetInputConnection(tracer.GetOutputPort())
-            tube.SetRadius(0.0025 * dx)
-            tube.SetNumberOfSides(6)
-            tube.Update()
-            mapper = vtk.vtkPolyDataMapper()
-            mapper.SetInputConnection(tube.GetOutputPort())
-            colored = bool(
-                name and tube.GetOutput().GetPointData().GetArray(name) is not None
-            )
-            if colored and lut is not None:
+            traced = tracer.GetOutput()
+
+            # Colour by |v|: derive the scalar on the traced lines so the mapper
+            # gets a real array (the field LUT must not be modified in place).
+            scalar_name = name
+            speed_range = None
+            if opts["color_mode"] == "speed":
+                from vtk.util import numpy_support as ns
+
+                arr = traced.GetPointData().GetArray(vec_name)
+                if arr is not None:
+                    vals = np.asarray(ns.vtk_to_numpy(arr), dtype=float)
+                    if vals.ndim == 2:
+                        speed = np.linalg.norm(vals, axis=1)
+                    else:
+                        speed = np.abs(vals)
+                    speed = np.nan_to_num(speed, nan=0.0, posinf=0.0, neginf=0.0)
+                    vtk_speed = ns.numpy_to_vtk(
+                        np.ascontiguousarray(speed), deep=True
+                    )
+                    vtk_speed.SetName("|v|")
+                    traced.GetPointData().AddArray(vtk_speed)
+                    traced.GetPointData().SetActiveScalars("|v|")
+                    scalar_name = "|v|"
+                    finite = speed[np.isfinite(speed)]
+                    if finite.size:
+                        lo_v = float(finite.min())
+                        hi_v = float(finite.max())
+                        speed_range = (lo_v, hi_v if hi_v > lo_v else lo_v + 1.0)
+
+            if opts["representation"] == "line":
+                poly = traced
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputData(poly)
+            else:
+                tube = vtk.vtkTubeFilter()
+                tube.SetInputData(traced)
+                tube.SetRadius(max(1e-15, diag * float(opts["radius_pct"]) / 100.0))
+                tube.SetNumberOfSides(int(opts["sides"]))
+                tube.Update()
+                poly = tube.GetOutput()
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputConnection(tube.GetOutputPort())
+
+            colored = False
+            if opts["color_mode"] == "speed" and speed_range is not None:
+                mapper.SetLookupTable(
+                    self._stream_lookup_table(vtk, speed_range[0], speed_range[1])
+                )
+                mapper.SetScalarModeToUsePointFieldData()
+                mapper.SelectColorArray("|v|")
+                mapper.SetScalarRange(*speed_range)
+                mapper.ScalarVisibilityOn()
+                colored = True
+            elif (
+                opts["color_mode"] == "field"
+                and scalar_name
+                and lut is not None
+                and poly.GetPointData().GetArray(scalar_name) is not None
+            ):
                 mapper.SetLookupTable(lut)
                 mapper.SetScalarModeToUsePointFieldData()
-                mapper.SelectColorArray(name)
+                mapper.SelectColorArray(scalar_name)
                 mapper.SetScalarRange(*self._effective_range())
                 mapper.ScalarVisibilityOn()
-            else:
+                colored = True
+            if not colored:
                 mapper.ScalarVisibilityOff()
+
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
-            actor.GetProperty().SetColor(0.25, 0.65, 1.0)
+            color = opts.get("color") or DEFAULT_STREAMLINES["color"]
+            actor.GetProperty().SetColor(*[float(c) for c in color[:3]])
+            actor.GetProperty().SetOpacity(float(opts["opacity"]) / 100.0)
+            if opts["representation"] == "line":
+                actor.GetProperty().SetLineWidth(float(opts["line_width"]))
             return actor
         except Exception as exc:  # noqa: BLE001 - a failed tracer must not kill the view
             print("streamline failed:", type(exc).__name__, exc)
@@ -3175,7 +4048,10 @@ class VtkFieldViewer(QWidget):
             return
         vtk = self._vtk
         self._renderer.RemoveAllViewProps()
-        self._draw_geometry()
+        self._triad_actor = None  # removed with the props, re-created below
+        self._ruler_actor = None
+        self._z_ruler_actor = None
+        self._draw_geometry(render=False)
 
         rep = self.cmb_rep.currentText()
         loc, name = self._array()
@@ -3228,7 +4104,8 @@ class VtkFieldViewer(QWidget):
                 has_vec = True
                 break
         self.chk_stream.setEnabled(bool(has_vec))
-        if self.chk_stream.isChecked() and name and has_vec:
+        self._update_stream_controls()
+        if self.chk_stream.isChecked() and has_vec:
             sa = self._streamline_actor(vtk, name, lut)
             if sa is not None:
                 self._renderer.AddActor(sa)
@@ -3260,37 +4137,7 @@ class VtkFieldViewer(QWidget):
         # Options: corner marker instead of the in-scene triad, labels on/off,
         # font size, size factor, numeric coordinate ruler.
         if self._axes["show"] and not self._axes["corner"]:
-            bounds = self._grid.GetBounds()
-            axes = vtk.vtkAxesActor()
-            length = axes_total_length(bounds, self._axes["scale"])
-            axes.SetTotalLength(length, length, length)
-            origin = (bounds[0], bounds[2], bounds[4])
-            if self._axes.get("origin_back"):
-                try:
-                    cam = self._renderer.GetActiveCamera().GetPosition()
-                    corners = [
-                        (bounds[i], bounds[j], bounds[k])
-                        for i in (0, 1)
-                        for j in (2, 3)
-                        for k in (4, 5)
-                    ]
-                    origin = max(
-                        corners,
-                        key=lambda p: (
-                            (p[0] - cam[0]) ** 2
-                            + (p[1] - cam[1]) ** 2
-                            + (p[2] - cam[2]) ** 2
-                        ),
-                    )
-                except Exception:  # noqa: BLE001 — keep the near corner
-                    pass
-            axes.SetPosition(*origin)
-            style_axes_triad(
-                axes,
-                show_labels=bool(self._axes["labels"]),
-                font_size=int(self._axes["font"]),
-            )
-            self._renderer.AddActor(axes)
+            self._add_orientation_triad(vtk)
         if self._axes["ruler"]:
             self._add_coordinate_ruler(vtk)
         self._update_corner_marker()
@@ -3388,7 +4235,13 @@ class VtkFieldViewer(QWidget):
         if not self._series or idx < 0 or idx >= len(self._series):
             return
         if self._read_into_grid(self._series[idx]):
-            self._populate_arrays()  # rebuilds arrays + rescales + refreshes
+            if self._arrays_match_selection():
+                # same arrays as before: keep the combo, only update the range
+                # and repaint once (a full _populate_arrays rebuild used to
+                # redraw twice per frame and made the view flicker)
+                self._on_array_changed()
+            else:
+                self._populate_arrays()  # rebuilds arrays + rescales + refreshes
             self._log_title(self._series[idx])
 
     def _on_play_toggled(self, on: bool) -> None:
@@ -3543,17 +4396,17 @@ class VtkFieldViewer(QWidget):
         self.lbl_sim_time.setVisible(bool(text) and getattr(self, "_time_controls_on", False))
 
     # ------------------------------------------------------------ video export
-    def _default_video_path(self) -> Path:
-        """``<series>.mp4`` next to the loaded frames (``Et-E_0000`` -> Et-E)."""
+    def _default_video_path(self, suffix: str = ".mp4") -> Path:
+        """``<series>.<suffix>`` next to the loaded frames (``Et-E_0000`` -> Et-E)."""
         p = self._current_path or (self._series[0] if self._series else None)
         if p is None:
-            return Path("field.mp4")
+            return Path("field" + suffix)
         p = Path(p)
         stem = p.stem
         m = re.match(r"(?P<base>.+)_(?P<idx>\d+)$", stem)
         if m and self._series:
             stem = m.group("base")
-        return p.parent / (stem + ".mp4")
+        return p.parent / (stem + suffix)
 
     def _select_array(self, loc, name) -> None:
         for i in range(self.cmb_array.count()):
@@ -3574,8 +4427,12 @@ class VtkFieldViewer(QWidget):
         w -= w % 2
         return np.ascontiguousarray(rgb[:h, :w])
 
-    def _grab_frame_rgb(self):
-        """Render the current view and return it as an RGB numpy array."""
+    def _grab_frame_rgb(self, target_size: tuple[int, int] | None = None):
+        """Render the current view and return it as an RGB numpy array.
+
+        ``target_size`` letterboxes/scales the grabbed frame to the requested
+        output resolution; the VTK scene is not resized or cropped.
+        """
         rw = self._iren.GetRenderWindow()
         rw.Render()
         grab = self._vtk.vtkWindowToImageFilter()
@@ -3583,7 +4440,25 @@ class VtkFieldViewer(QWidget):
         grab.ReadFrontBufferOff()  # read the back buffer (no swap needed)
         grab.SetInputBufferTypeToRGB()
         grab.Update()
-        return self._image_to_rgb(grab.GetOutput())
+        frame = self._image_to_rgb(grab.GetOutput())
+        if target_size:
+            tw = max(2, int(target_size[0]))
+            th = max(2, int(target_size[1]))
+            tw -= tw % 2
+            th -= th % 2
+            if (frame.shape[1], frame.shape[0]) != (tw, th):
+                from PIL import Image, ImageOps
+                import numpy as np
+
+                img = Image.fromarray(frame)
+                img = ImageOps.pad(
+                    img,
+                    (tw, th),
+                    method=Image.Resampling.LANCZOS,
+                    color=(0, 0, 0),
+                )
+                frame = np.asarray(img)
+        return frame
 
     def _apply_frame_range(self, loc, name, auto: bool) -> None:
         """Update the data range for a new frame without touching the widgets."""
@@ -3600,54 +4475,164 @@ class VtkFieldViewer(QWidget):
         self._scalar_name = name
 
     def _on_export_video(self) -> None:
-        self.export_video()
+        self.open_video_export_dialog(fmt="mp4")
 
-    def export_video(self, path: Path | str | None = None) -> Path | None:
-        """Render the loaded time series to an MP4 using the current view.
+    def _on_export_gif(self) -> None:
+        self.open_video_export_dialog(fmt="gif")
 
-        All display settings are used as they are (representation, array,
-        slice/iso position, colour range/scale, outline, axes, camera) plus the
-        "fps" value for the frame rate. Returns the written file (None on
-        cancel/error).
-        """
+    def open_video_export_dialog(self, fmt: str = "mp4") -> None:
+        """Open the video-export options dialog and run the export."""
+        is_gif = str(fmt).strip().lower() == "gif"
         if self._iren is None or self._renderer is None:
             QMessageBox.information(
                 self,
-                "Save video",
-                "The 3D view is not available (no OpenGL), so no video can be "
-                "rendered.",
+                "Save animation" if is_gif else "Save video",
+                "The 3D view is not available (no OpenGL), so no animation can "
+                "be rendered.",
+            )
+            return
+        if len(self._series) < 2:
+            QMessageBox.information(
+                self,
+                "Save animation" if is_gif else "Save video",
+                "Load a time series first (multiple steps), e.g. via\n"
+                "\"Export project dumps → VTK\".",
+            )
+            return
+        from app.ui.video_export_dialog import VideoExportDialog
+
+        try:
+            size = self._iren.GetRenderWindow().GetSize()
+        except Exception:  # noqa: BLE001
+            size = (0, 0)
+        if int(size[0]) <= 2 or int(size[1]) <= 2:
+            size = (1280, 720)
+        dialog = VideoExportDialog(
+            self,
+            suggested_path=self._default_video_path(".gif" if is_gif else ".mp4"),
+            frame_count=len(self._series),
+            current_size=(int(size[0]), int(size[1])),
+            initial_fmt="gif" if is_gif else "mp4",
+        )
+        if dialog.exec() and dialog.options is not None:
+            self.export_video(options=dialog.options)
+
+    def export_video(
+        self,
+        path: Path | str | None = None,
+        fmt: str | None = None,
+        options=None,
+    ) -> Path | None:
+        """Render the loaded time series to MP4 or an animated GIF.
+
+        ``fmt`` is ``"mp4"`` (default) or ``"gif"`` and only chooses the dialog
+        default/filter; an explicit ``path`` suffix wins.  ``options`` is a
+        :class:`app.ui.video_export_dialog.VideoExportOptions` from the export
+        dialog: it supplies the exact path, size, fps and frame range.  All
+        display settings are used as they are (representation, array,
+        slice/iso position, colour range/scale, outline, axes, camera).  MP4
+        needs imageio + imageio-ffmpeg; GIF only needs Pillow.
+        Returns the written file (None on cancel/error).
+        """
+        preferred = str(getattr(options, "fmt", fmt) or "mp4").strip().lower()
+        is_gif = preferred == "gif"
+        if self._iren is None or self._renderer is None:
+            QMessageBox.information(
+                self,
+                "Save animation" if is_gif else "Save video",
+                "The 3D view is not available (no OpenGL), so no animation can "
+                "be rendered.",
             )
             return None
         n = len(self._series)
         if n < 2:
             QMessageBox.information(
                 self,
-                "Save video",
+                "Save animation" if is_gif else "Save video",
                 "Load a time series first (multiple steps), e.g. via\n"
                 "\"Export project dumps → VTK\".",
             )
             return None
 
-        target = Path(path) if path else None
-        if target is None:
-            chosen, _ = QFileDialog.getSaveFileName(
-                self,
-                "Save field video",
-                str(self._default_video_path()),
-                "MP4 video (*.mp4);;All files (*)",
+        target_size: tuple[int, int] | None = None
+        if options is not None:
+            is_gif = str(getattr(options, "fmt", "mp4")).lower() == "gif"
+            target = Path(options.path)
+            fps = max(1, int(getattr(options, "fps", 24)))
+            target_size = (
+                max(2, int(getattr(options, "width", 1280))),
+                max(2, int(getattr(options, "height", 720))),
             )
-            if not chosen:
+            total = len(self._series)
+            start = max(1, min(total, int(getattr(options, "start", 1))))
+            end = max(start, min(total, int(getattr(options, "end", total))))
+            step = max(1, int(getattr(options, "step", 1)))
+            frame_paths = self._series[start - 1:end:step]
+            n = len(frame_paths)
+            if n < 1:
+                QMessageBox.warning(
+                    self,
+                    "Save animation" if is_gif else "Save video",
+                    "The selected frame range is empty.",
+                )
                 return None
-            target = Path(chosen)
-        if target.suffix.lower() not in (".mp4", ".m4v"):
-            target = target.with_suffix(".mp4")
+        else:
+            target = Path(path) if path else None
+            if target is not None:
+                suffix = target.suffix.lower()
+                if suffix == ".gif":
+                    is_gif = True
+                elif suffix in (".mp4", ".m4v"):
+                    is_gif = False
+                elif not suffix:
+                    target = target.with_suffix(".gif" if is_gif else ".mp4")
+
+            if target is None:
+                default_suffix = ".gif" if is_gif else ".mp4"
+                filters = (
+                    "Animated GIF (*.gif);;MP4 video (*.mp4);;All files (*)"
+                    if is_gif
+                    else "MP4 video (*.mp4);;Animated GIF (*.gif);;All files (*)"
+                )
+                chosen, selected = QFileDialog.getSaveFileName(
+                    self,
+                    "Save field animation" if is_gif else "Save field video",
+                    str(self._default_video_path(default_suffix)),
+                    filters,
+                )
+                if not chosen:
+                    return None
+                target = Path(chosen)
+                suffix = target.suffix.lower()
+                sel = (selected or "").lower()
+                if "gif" in sel:
+                    # the chosen filter wins; make sure the extension matches it
+                    is_gif = True
+                    if suffix != ".gif":
+                        target = target.with_suffix(".gif")
+                elif "mp4" in sel or "m4v" in sel:
+                    is_gif = False
+                    if suffix not in (".mp4", ".m4v"):
+                        target = target.with_suffix(".mp4")
+                elif suffix == ".gif":
+                    is_gif = True
+                elif suffix in (".mp4", ".m4v"):
+                    is_gif = False
+                else:
+                    # "All files" without a known suffix: keep the requested format
+                    target = target.with_suffix(".gif" if is_gif else ".mp4")
+            fps = max(1, int(self.spn_fps.value()))
+            frame_paths = list(self._series)
+            n = len(frame_paths)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            QMessageBox.warning(self, "Save video", f"Cannot create folder:\n{e}")
+            QMessageBox.warning(
+                self, "Save animation" if is_gif else "Save video",
+                f"Cannot create folder:\n{e}",
+            )
             return None
 
-        fps = max(1, int(self.spn_fps.value()))
         loc, name = self._array()
         auto = self.chk_auto.isChecked()
         manual = (self.spn_min.value(), self.spn_max.value())
@@ -3659,8 +4644,14 @@ class VtkFieldViewer(QWidget):
         self.btn_play.setText("▶ Play")
         self.btn_play.blockSignals(False)
 
-        progress = QProgressDialog("Rendering field video…", "Cancel", 0, n, self)
-        progress.setWindowTitle("Save video")
+        progress = QProgressDialog(
+            "Rendering field animation…" if is_gif else "Rendering field video…",
+            "Cancel",
+            0,
+            n,
+            self,
+        )
+        progress.setWindowTitle("Save animation" if is_gif else "Save video")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
@@ -3674,40 +4665,63 @@ class VtkFieldViewer(QWidget):
             except ImportError:
                 QMessageBox.warning(
                     self,
-                    "Save video",
-                    "Video export needs imageio + imageio-ffmpeg\n"
-                    "(pip install imageio imageio-ffmpeg).",
+                    "Save animation" if is_gif else "Save video",
+                    "Animation export needs imageio\n(pip install imageio).",
                 )
                 return None
-            # The distributed EXE does not bundle ffmpeg (it would add ~60 MB
-            # to the download); the user installs imageio-ffmpeg once or points
-            # IMAGEIO_FFMPEG_EXE at an ffmpeg.exe.
-            try:
-                import imageio_ffmpeg  # noqa: F401
-            except ImportError:
-                QMessageBox.warning(
-                    self,
-                    "Save video",
-                    "MP4 export needs ffmpeg, which this build does not bundle\n"
-                    "(it would add ~60 MB to the download).\n\n"
-                    "Install it once with:  pip install imageio-ffmpeg\n"
-                    "or set IMAGEIO_FFMPEG_EXE to an ffmpeg.exe on this machine.",
-                )
-                return None
-            try:
-                writer = imageio.get_writer(
-                    str(target),
-                    fps=fps,
-                    codec="libx264",
-                    quality=8,
-                    macro_block_size=1,  # keep the exact render size
-                )
-            except Exception as e:  # noqa: BLE001 — ffmpeg missing/broken
-                QMessageBox.warning(
-                    self, "Save video", f"Cannot open the video writer:\n{e}"
-                )
-                return None
-            for i, frame_path in enumerate(self._series, start=1):
+            if is_gif:
+                # GIF uses imageio's Pillow plugin - no ffmpeg needed.
+                try:
+                    from PIL import Image  # noqa: F401
+                except ImportError:
+                    QMessageBox.warning(
+                        self,
+                        "Save animation",
+                        "GIF export needs Pillow\n(pip install Pillow).",
+                    )
+                    return None
+                try:
+                    writer = imageio.get_writer(
+                        str(target),
+                        mode="I",
+                        duration=gif_frame_duration_ms(fps),
+                        loop=0,  # loop forever
+                    )
+                except Exception as e:  # noqa: BLE001 — Pillow/GIF writer broken
+                    QMessageBox.warning(
+                        self, "Save animation", f"Cannot open the GIF writer:\n{e}"
+                    )
+                    return None
+            else:
+                # The distributed EXE does not bundle ffmpeg (it would add ~60 MB
+                # to the download); the user installs imageio-ffmpeg once or points
+                # IMAGEIO_FFMPEG_EXE at an ffmpeg.exe.
+                try:
+                    import imageio_ffmpeg  # noqa: F401
+                except ImportError:
+                    QMessageBox.warning(
+                        self,
+                        "Save video",
+                        "MP4 export needs ffmpeg, which this build does not bundle\n"
+                        "(it would add ~60 MB to the download).\n\n"
+                        "Install it once with:  pip install imageio-ffmpeg\n"
+                        "or set IMAGEIO_FFMPEG_EXE to an ffmpeg.exe on this machine.",
+                    )
+                    return None
+                try:
+                    writer = imageio.get_writer(
+                        str(target),
+                        fps=fps,
+                        codec="libx264",
+                        quality=8,
+                        macro_block_size=1,  # keep the exact render size
+                    )
+                except Exception as e:  # noqa: BLE001 — ffmpeg missing/broken
+                    QMessageBox.warning(
+                        self, "Save video", f"Cannot open the video writer:\n{e}"
+                    )
+                    return None
+            for i, frame_path in enumerate(frame_paths, start=1):
                 if progress.wasCanceled():
                     cancelled = True
                     break
@@ -3715,11 +4729,18 @@ class VtkFieldViewer(QWidget):
                     continue
                 self._apply_frame_range(loc, name, auto)
                 self._refresh_display()
-                writer.append_data(self._grab_frame_rgb())
+                frame = (
+                    self._grab_frame_rgb(target_size)
+                    if target_size
+                    else self._grab_frame_rgb()
+                )
+                writer.append_data(frame)
                 written += 1
                 progress.setValue(i)
                 progress.setLabelText(
-                    f"Rendering field video… {i}/{n}  ({int(100 * i / n)} %)"
+                    f"Rendering field "
+                    f"{'animation' if is_gif else 'video'}… {i}/{n}  "
+                    f"({int(100 * i / n)} %)"
                 )
                 QApplication.processEvents()
         finally:
@@ -3738,12 +4759,17 @@ class VtkFieldViewer(QWidget):
             except OSError:
                 pass
             if not cancelled:
-                QMessageBox.warning(self, "Save video", "No frames could be rendered.")
+                QMessageBox.warning(
+                    self,
+                    "Save animation" if is_gif else "Save video",
+                    "No frames could be rendered.",
+                )
             return None
         QMessageBox.information(
             self,
-            "Save video",
-            f"Video written:\n{target}\n\n{written} frames at {fps} fps.",
+            "Save animation" if is_gif else "Save video",
+            f"{'Animation' if is_gif else 'Video'} written:\n{target}\n\n"
+            f"{written} frames at {fps} fps.",
         )
         return target
 

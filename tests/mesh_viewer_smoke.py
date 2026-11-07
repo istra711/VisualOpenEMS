@@ -12,7 +12,7 @@ import numpy as np
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMenu
 
 
 def main() -> int:
@@ -639,6 +639,19 @@ def main() -> int:
         box = types.SimpleNamespace(start=[-20.0, -30.0, -10.0], stop=[20.0, 40.0, 10.0])
         viewer.set_nf2ff(box)
         assert viewer._nf2ff is box, "set_nf2ff did not store the new box"
+        # Disabled in Simulation Parameters -> no purple NF2FF frame at all.
+        disabled = types.SimpleNamespace(
+            start=box.start, stop=box.stop, enabled=False
+        )
+        viewer.set_nf2ff(disabled)
+        viewer.chk_nf2ff.setChecked(True)
+        viewer._draw_overview()
+        labels = [
+            patch.get_label()
+            for ax in viewer.fig_slice.axes
+            for patch in ax.patches
+        ]
+        assert "NF2FF" not in labels, "disabled NF2FF frame is still drawn"
         viewer.set_nf2ff(project.nf2ff)
         assert viewer._nf2ff is project.nf2ff
         empty = MeshGeometryViewer()
@@ -658,6 +671,13 @@ def main() -> int:
             ev = MouseEvent("button_press_event", cv, cx, cy, button=1, dblclick=True)
             cv.callbacks.process("button_press_event", ev)  # must not raise
         assert len(viewer.canvas_slice.figure.axes) >= 1, "slice canvas has no axes"
+        ax0 = viewer.fig_slice.axes[0]
+        xlim = ax0.get_xlim()
+        mid = 0.5 * (xlim[0] + xlim[1])
+        ax0.set_xlim(mid - 0.02, mid + 0.02)
+        viewer.home_view()
+        xlim_home = viewer.fig_slice.axes[0].get_xlim()
+        assert xlim_home[1] - xlim_home[0] > 0.04, xlim_home
         print("  dblclick reset view: OK")
         # --- cylinders are drawn as circles (true cross-section) -------------
         from matplotlib.patches import Circle
@@ -812,7 +832,95 @@ def main() -> int:
         assert abs(
             viewer._snap_to_edge("z", _e + 0.4 * _span) - (_e + 0.4 * _span)
         ) < 1e-9  # far away -> unchanged
-        print("  geometry-edge snapping: OK")
+        # right-click snap sensitivity presets + Off disables snapping
+        viewer.chk_editor.setChecked(True)
+        _snap_menu = QMenu()
+        _snap_actions = viewer._add_snap_sensitivity_menu(_snap_menu)
+        assert [a.text() for a in _snap_actions] == [
+            "Zoom-relative (default)",
+            "Off",
+            "Fine (0.5 %)",
+            "Normal (1 %)",
+            "Wide (2.5 %)",
+            "Very wide (5 %)",
+        ]
+        assert viewer.snap_sensitivity_mode() is True
+        viewer.set_snap_sensitivity(0.05, 0.10)
+        assert viewer.snap_sensitivity() == (0.05, 0.10)
+        _snap_menu2 = QMenu()
+        _snap_actions2 = viewer._add_snap_sensitivity_menu(_snap_menu2)
+        assert [a.text() for a in _snap_actions2 if a.isChecked()] == [
+            "Zoom-relative (default)",
+            "Very wide (5 %)",
+        ]
+        viewer.set_snap_sensitivity(0.05, 0.10, False)
+        assert viewer.snap_sensitivity_mode() is False
+        _snap_menu3 = QMenu()
+        _snap_actions3 = viewer._add_snap_sensitivity_menu(_snap_menu3)
+        assert [a.text() for a in _snap_actions3 if a.isChecked()] == [
+            "Very wide (5 %)"
+        ]
+        # A zoom-relative band must use the visible span, not the domain.
+        assert abs(
+            viewer._snap_to_edge(
+                "z",
+                _e + 0.005 * _span,
+                band_frac=0.01,
+                span_override=0.01 * _span,
+            )
+            - (_e + 0.005 * _span)
+        ) < 1e-9
+        viewer.set_snap_sensitivity(0.0, 0.0, True)
+        assert abs(
+            viewer._snap_to_edge("z", _e + 0.005 * _span, band_frac=0.0)
+            - (_e + 0.005 * _span)
+        ) < 1e-9
+        viewer.set_snap_sensitivity(0.01, 0.0, True)
+        # Regression: at high zoom the existing-line selection band must use
+        # the visible span too.  With the old domain-relative band this click
+        # selected the far-away line instead of adding a new one.
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer.cmb_edit_axis.setCurrentText("x")
+        _ax = viewer.fig_slice.axes[0]
+        _old_xlim = _ax.get_xlim()
+        _xl = _np.sort(_np.asarray(mesh_lines_from_csx(viewer._csx)["x"], float))
+        _xline = float(_xl[len(_xl) // 2])
+        _dom_span = viewer._axis_span("x")
+        try:
+            _ax.set_xlim(_xline - 0.0002 * _dom_span, _xline + 0.0008 * _dom_span)
+            viewer.clear_line_selection()
+            _click_x = _xline + 0.0005 * _dom_span
+            _evz = _types.SimpleNamespace(
+                button=1,
+                key=None,
+                inaxes=_ax,
+                xdata=_click_x,
+                ydata=0.0,
+            )
+            viewer._last_click_t = 0.0
+            viewer._on_slice_click(_evz)
+            assert viewer._sel_line is None, (
+                "zoom-relative line band selected a far-away line",
+                viewer._sel_line,
+                _xline,
+                _click_x,
+            )
+        finally:
+            _ax.set_xlim(*_old_xlim)
+        print("  geometry-edge snap sensitivity: OK")
+
+        # View switches are in the plot menu now; the second toolbar row is gone.
+        for _w in (
+            viewer.chk_mesh,
+            viewer.slider_mesh,
+            viewer.chk_geom,
+            viewer.chk_ports,
+            viewer.chk_nf2ff,
+            viewer.chk_editor,
+            viewer.btn_popout,
+        ):
+            assert _w.isHidden(), f"{_w} must not be in the viewer toolbar"
+        print("  view controls no longer in the toolbar: OK")
 
         # no mesh lines outside the domain
         _dr = viewer._domain_range("z")
@@ -826,6 +934,21 @@ def main() -> int:
             _zadds = (viewer._project.mesh.manual_mesh_lines or {}).get("z", [])
             assert _zadds and all(_lo - 1e-6 <= v <= _hi + 1e-6 for v in _zadds), _zadds
             print("  no lines outside the domain (clamp): OK")
+
+        # New Project / no results: data AND the drawn figures must be empty.
+        viewer.reset_view()
+        assert viewer._csx is None
+        assert viewer._scene_infos == [] and viewer._scene_area is None
+        assert viewer._auto_mesh is None and viewer.info_text() == ""
+        for _fig in (viewer.fig_slice, viewer.fig_cells):
+            assert _fig.axes, "reset left no placeholder axes"
+            assert all(not ax.patches and not ax.lines for ax in _fig.axes)
+            assert any(
+                "No project / mesh loaded" in txt.get_text()
+                for ax in _fig.axes
+                for txt in ax.texts
+            )
+        print("  reset clears data + figures: OK")
 
         print("MESH VIEWER SMOKE PASS")
         return 0

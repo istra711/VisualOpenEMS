@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
@@ -11,7 +12,9 @@ from app import PROJECT_EXT
 
 MaterialKind = Literal["pec", "dielectric", "conducting_sheet", "lumped_rlc", "ignore"]
 PortType = Literal["lumped", "msl", "rect_waveguide", "waveguide", "probe"]
-DumpType = Literal["E", "H", "J", "Jtot", "D", "B", "SAR", "custom"]
+DumpType = Literal[
+    "E", "H", "J", "Jtot", "D", "B", "SAR", "SAR1g", "SAR10g", "SARraw", "custom"
+]
 
 #: Metres per drawing unit — the single source for every unit conversion
 #: (CSXCAD delta unit, STEP export, grid JSON).
@@ -77,6 +80,11 @@ class PortDef:
     capacitance: float = 0.0
     direction: str = "x"  # x|y|z for waveguide ports
     excite_port: bool = True
+    #: Excitation phase in degrees at the project's target frequency.  Used only
+    #: for multi-port runs where several ports are excited at once (e.g. the two
+    #: orthogonal feeds of a CP patch driven by an ideal 90 deg hybrid).
+    #: openEMS implements it as an equivalent non-negative excitation delay.
+    excite_phase_deg: float = 0.0
     #: False = the port is switched off: it is not written to the simulation
     #: (no AddLumpedPort/MSLPort), does not get a port number and is ignored by
     #: the S-param / multi-run bookkeeping (kept in the project, greyed out)
@@ -152,11 +160,20 @@ class DumpDef:
     #: optional explicit list of frequencies for a frequency-domain dump
     #: (overrides ``frequency`` when set)
     frequencies: list[float] | None = None
+    #: numeric CSXCAD dump type used when ``quantity == "custom"``
+    #: (e.g. 12 = J, 21 = 1 g SAR, 29 = raw SAR).  Defaults to 10 (E field).
+    custom_dump_type: int = 10
+    #: optional CSXCAD spatial dump resolution (drawing units) per axis.
+    #: ``None`` = use the mesh; values > 0 resample the dump box.
+    opt_resolution: list[float] | None = None
 
 
 @dataclass
 class NF2FFDef:
     enabled: bool = False
+    # "auto" = fit the integration box to the geometry + air margin whenever
+    # NF2FF is switched on; "manual" = keep the explicit start/stop box.
+    box_mode: str = "auto"
     start: list[float] = field(default_factory=lambda: [-1.0, -1.0, -1.0])
     stop: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     center: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
@@ -270,6 +287,9 @@ class MeshSpec:
     #             time in seconds) — only if the installed openEMS has it.
     excitation: str = "gauss"
     excitation_file: str = ""
+    # High-level Mesh Parameters profile (UI checkmarks). None = old project;
+    # the UI resolves it from the override fingerprint / antenna mode.
+    mesh_profile: Literal["default", "antenna", "pcb"] | None = None
 
     @property
     def is_cylindrical(self) -> bool:
@@ -389,6 +409,198 @@ class SimSpec:
 
 
 @dataclass
+class Mesh2FreeCADSpec:
+    """Mesh → Mesh2FreeCAD export settings (stored in the project file).
+
+    The export writes a temporary discretised FreeCAD document.  These options
+    choose what that document contains; they are project-specific because the
+    right choice depends on the model size and on the objects in the project.
+    """
+
+    export_step: bool = False
+    fcstd_object_type: str = "mesh"  # part | mesh
+    voxel_grid: bool = True
+    voxel_grid_mode: str = "all"  # boundary | all
+    include_sheets: bool = True
+    export_ports: bool = True
+    keep_temp: bool = False
+
+
+@dataclass
+class GerberSpec:
+    """Gerber/Excellon import settings stored with the project.
+
+    Gerber carries no stackup information, so these values are user input.
+    They are reused on re-import and keep the generated primitives
+    reproducible.
+    """
+
+    source: str = ""
+    board_thickness_mm: float = 1.6
+    copper_thickness_mm: float = 0.035
+    copper_as_sheet: bool = True
+    via_plating_radius_mm: float = 0.025
+    via_max_diameter_mm: float = 0.8
+    include_npth: bool = False
+    arc_error_mm: float = 0.01
+    simplify_mm: float = 0.0
+    min_area_mm2: float = 0.005
+    clip_to_outline: bool = True
+    create_substrate: bool = True
+    substrate_material: str = "substrate"
+    substrate_epsilon: float = 4.4
+    substrate_tand: float = 0.02
+    #: optional solder mask as a thin dielectric layer (top/bottom)
+    include_mask: bool = False
+    solder_mask_thickness_mm: float = 0.02
+    solder_mask_epsilon: float = 3.3
+    solder_mask_tand: float = 0.02
+    solder_mask_material: str = "solder_mask"
+    #: optional side -> z override, e.g. {"top": 0.8, "inner_1": 0.4}
+    layer_z: dict[str, float] = field(default_factory=dict)
+    #: drill diameter key ("0.4000") -> [from_side, to_side]; missing = through
+    via_spans: dict[str, list[str]] = field(default_factory=dict)
+    #: open the port-suggestion dialog after a successful import
+    suggest_ports: bool = True
+
+    def import_options(self):
+        """Return a :class:`GerberImportOptions` matching this spec."""
+        from app.freecad_io.gerber_import import GerberImportOptions
+
+        return GerberImportOptions(
+            board_thickness_mm=float(self.board_thickness_mm),
+            copper_thickness_mm=float(self.copper_thickness_mm),
+            copper_as_sheet=bool(self.copper_as_sheet),
+            via_plating_radius_mm=float(self.via_plating_radius_mm),
+            via_max_diameter_mm=float(self.via_max_diameter_mm),
+            include_npth=bool(self.include_npth),
+            arc_error_mm=float(self.arc_error_mm),
+            simplify_mm=float(self.simplify_mm),
+            min_area_mm2=float(self.min_area_mm2),
+            clip_to_outline=bool(self.clip_to_outline),
+            create_substrate=bool(self.create_substrate),
+            substrate_material=str(self.substrate_material or "substrate"),
+            layer_z={str(k): float(v) for k, v in (self.layer_z or {}).items()},
+            include_mask=bool(self.include_mask),
+            solder_mask_thickness_mm=float(self.solder_mask_thickness_mm),
+            solder_mask_epsilon=float(self.solder_mask_epsilon),
+            solder_mask_tand=float(self.solder_mask_tand),
+            solder_mask_material=str(
+                self.solder_mask_material or "solder_mask"
+            ),
+            via_spans={
+                str(k): [str(v[0]), str(v[1])]
+                for k, v in (self.via_spans or {}).items()
+                if isinstance(v, (list, tuple)) and len(v) == 2
+            },
+        )
+
+
+@dataclass
+class KiCadSpec:
+    """Native KiCad board import settings stored with the project.
+
+    The .kicad_pcb file carries the real stackup, via spans and nets; these
+    values only control how the board is turned into openEMS primitives and
+    provide fallbacks when a board has no custom stackup.
+    """
+
+    source: str = ""
+    use_stackup: bool = True
+    board_thickness_mm: float = 1.6
+    copper_thickness_mm: float = 0.035
+    copper_as_sheet: bool = True
+    #: "" = derive from copper_as_sheet; "sheet" | "prism" | "mesh"
+    copper_mode: str = ""
+    substrate_material: str = "kicad_substrate"
+    substrate_epsilon: float = 4.4
+    substrate_tand: float = 0.02
+    via_plating_radius_mm: float = 0.025
+    include_npth: bool = False
+    include_zones: bool = True
+    include_unfilled_zones: bool = False
+    include_pad_barrels: bool = True
+    include_tracks: bool = True
+    include_smd_pads: bool = True
+    include_vias: bool = True
+    flip_y: bool = True
+    #: open the port-suggestion dialog after a successful import
+    suggest_ports: bool = True
+    arc_error_mm: float = 0.01
+    simplify_mm: float = 0.0
+    min_area_mm2: float = 0.005
+    clip_to_outline: bool = True
+    create_substrate: bool = True
+
+    def import_options(self):
+        """Return a :class:`KiCadImportOptions` matching this spec."""
+        from app.freecad_io.kicad_import import KiCadImportOptions
+
+        return KiCadImportOptions(
+            use_stackup=bool(self.use_stackup),
+            board_thickness_mm=float(self.board_thickness_mm),
+            copper_thickness_mm=float(self.copper_thickness_mm),
+            copper_as_sheet=bool(self.copper_as_sheet),
+            copper_mode=str(self.copper_mode or ""),
+            substrate_material=str(self.substrate_material or "kicad_substrate"),
+            substrate_epsilon=float(self.substrate_epsilon),
+            substrate_tand=float(self.substrate_tand),
+            via_plating_radius_mm=float(self.via_plating_radius_mm),
+            include_npth=bool(self.include_npth),
+            include_zones=bool(self.include_zones),
+            include_unfilled_zones=bool(self.include_unfilled_zones),
+            include_pad_barrels=bool(self.include_pad_barrels),
+            include_tracks=bool(self.include_tracks),
+            include_smd_pads=bool(self.include_smd_pads),
+            include_vias=bool(self.include_vias),
+            flip_y=bool(self.flip_y),
+            arc_error_mm=float(self.arc_error_mm),
+            simplify_mm=float(self.simplify_mm),
+            min_area_mm2=float(self.min_area_mm2),
+            clip_to_outline=bool(self.clip_to_outline),
+            create_substrate=bool(self.create_substrate),
+        )
+
+
+@dataclass
+class CstSpec:
+    """CST Studio export-package import settings stored with the project.
+
+    Variant A reads a CST export package (``manifest.json`` plus one STL per
+    solid).  The package is the interchange format; the proprietary ``.cst``
+    container itself is never parsed.  These options mirror the import dialog
+    and make a re-import reproducible.
+    """
+
+    source: str = ""
+    include_materials: bool = True
+    include_ports: bool = True
+    include_frequency: bool = True
+    include_boundaries: bool = True
+    #: Import zero-thickness/sheet objects too (CST ``sheet`` solids)
+    include_sheets: bool = True
+    #: Mirror Y (CST exports are z-up; this is only for mirrored CAD models)
+    flip_y: bool = False
+    #: Ports created by this package on the last import.  A re-import from the
+    #: same source replaces exactly these entries; manually added ports are kept.
+    port_names: list[str] = field(default_factory=list)
+
+    def import_options(self, target_unit: str = "mm"):
+        """Return :class:`CstImportOptions` matching this spec."""
+        from app.freecad_io.cst_import import CstImportOptions
+
+        return CstImportOptions(
+            include_materials=bool(self.include_materials),
+            include_ports=bool(self.include_ports),
+            include_frequency=bool(self.include_frequency),
+            include_boundaries=bool(self.include_boundaries),
+            include_sheets=bool(self.include_sheets),
+            flip_y=bool(self.flip_y),
+            target_unit=str(target_unit or "mm"),
+        )
+
+
+@dataclass
 class GeometryFile:
     path: str
     format: str = "step"  # step|stp|stl|obj|fcstd
@@ -396,6 +608,58 @@ class GeometryFile:
     # optional saved triangle mesh (.npy) for STL/OBJ/FCStd imports
     mesh_path: str = ""
     object_names: list[str] = field(default_factory=list)
+
+
+def _path_for_json(value: Any, base: Path, *, relative: bool) -> Any:
+    """Convert one path string; non-strings and empty strings pass through."""
+    if not isinstance(value, str) or not value.strip():
+        return value
+    p = Path(value)
+    if relative:
+        if not p.is_absolute():
+            return Path(value).as_posix()
+        try:
+            rel = os.path.relpath(os.fspath(p), os.fspath(base))
+        except ValueError:  # different Windows drive: cannot be relative
+            return value
+        return Path(rel).as_posix()
+    # load: relative paths are anchored at the project JSON's folder
+    return str(p if p.is_absolute() else base / p)
+
+
+def _map_project_paths(data: dict[str, Any], base: Path, *, relative: bool) -> None:
+    """Make every project-owned path portable or absolute.
+
+    ``relative=True`` is used before writing: paths under ``<base>`` become
+    ``data/...`` instead of ``C:\\Users\\...``.  ``relative=False`` resolves
+    those entries again when the JSON is loaded from its (possibly moved)
+    folder.  Executable paths (``freecad_cmd``) are intentionally untouched.
+    """
+    results = data.get("results")
+    if isinstance(results, dict):
+        for key, value in list(results.items()):
+            if key != "time":
+                results[key] = _path_for_json(value, base, relative=relative)
+
+    for geom in data.get("geometry_files") or []:
+        if isinstance(geom, dict):
+            for key in ("path", "mesh_path"):
+                if key in geom:
+                    geom[key] = _path_for_json(geom[key], base, relative=relative)
+
+    for prim in data.get("primitives") or []:
+        if isinstance(prim, dict):
+            for key in ("path", "mesh_path"):
+                if key in prim:
+                    prim[key] = _path_for_json(prim[key], base, relative=relative)
+
+    for section in ("sim", "nf2ff", "gerber", "kicad", "cst"):
+        block = data.get(section)
+        if not isinstance(block, dict):
+            continue
+        for key in ("excitation_file", "output_dir", "source"):
+            if key in block:
+                block[key] = _path_for_json(block[key], base, relative=relative)
 
 
 @dataclass
@@ -411,6 +675,14 @@ class Project:
     mesh: MeshSpec = field(default_factory=MeshSpec)
     boundary: BoundarySpec = field(default_factory=BoundarySpec)
     sim: SimSpec = field(default_factory=SimSpec)
+    #: Mesh → Mesh2FreeCAD export options (persisted with the project)
+    mesh2freecad: Mesh2FreeCADSpec = field(default_factory=Mesh2FreeCADSpec)
+    #: Gerber/Excellon stackup + import options (persisted with the project)
+    gerber: GerberSpec = field(default_factory=GerberSpec)
+    #: Native KiCad board import options (persisted with the project)
+    kicad: KiCadSpec = field(default_factory=KiCadSpec)
+    #: CST Studio export-package import options (persisted with the project)
+    cst: CstSpec = field(default_factory=CstSpec)
     freecad_cmd: str = ""
     notes: str = ""
     # optional patch-antenna geometry overrides (GUI dialog); None => example defaults
@@ -421,10 +693,15 @@ class Project:
     #: ``{name: {"color": [r, g, b] | None, "transparency": 0-100,
     #: "visible": bool}}`` — ``color=None`` = the per-kind default colours
     object_display: dict[str, Any] = field(default_factory=dict)
-    #: artifacts of the last simulation run (absolute paths), written by the
-    #: GUI so a re-opened project can restore the Mesh Viewer / S-param Viewer
-    #: without rebuilding: {"sim_dir", "csx_xml", "sparams", "nf2ff", "time"}
+    #: artifacts of the last simulation run, written by the GUI so a re-opened
+    #: project can restore the Mesh Viewer / S-param Viewer without rebuilding:
+    #: {"project_dir", "sim_dir", "csx_xml", "sparams", "nf2ff", "time"}.
+    #: On disk these are relative to the project JSON; in memory they are
+    #: absolute (Project.load resolves them against the JSON's current folder).
     results: dict[str, Any] | None = None
+    #: S-parameter viewer markers persisted with the project:
+    #: [{"f": Hz, "tag": str, "delta_ref": Hz | None}, ...]
+    sparam_markers: list[dict[str, Any]] = field(default_factory=list)
 
     def material_by_name(self, name: str) -> MaterialDef | None:
         for m in self.materials:
@@ -491,6 +768,27 @@ class Project:
         data["mesh"] = _make(MeshSpec, data.get("mesh", {}))
         data["boundary"] = _make(BoundarySpec, data.get("boundary", {}))
         data["sim"] = _make(SimSpec, data.get("sim", {}))
+        data["mesh2freecad"] = _make(
+            Mesh2FreeCADSpec, data.get("mesh2freecad", {})
+        )
+        gerber_data = data.get("gerber")
+        data["gerber"] = _make(
+            GerberSpec, gerber_data if isinstance(gerber_data, dict) else {}
+        )
+        if not isinstance(data["gerber"].layer_z, dict):
+            data["gerber"].layer_z = {}
+        if not isinstance(data["gerber"].via_spans, dict):
+            data["gerber"].via_spans = {}
+        kicad_data = data.get("kicad")
+        data["kicad"] = _make(
+            KiCadSpec, kicad_data if isinstance(kicad_data, dict) else {}
+        )
+        cst_data = data.get("cst")
+        data["cst"] = _make(
+            CstSpec, cst_data if isinstance(cst_data, dict) else {}
+        )
+        if not isinstance(data["cst"].port_names, list):
+            data["cst"].port_names = []
         pp = data.get("patch_params")
         data["patch_params"] = dict(pp) if isinstance(pp, dict) else None
         prims = data.get("primitives")
@@ -505,13 +803,19 @@ class Project:
         if path.suffix == "":
             path = path.with_name(path.name + PROJECT_EXT)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+        data = self.to_dict()
+        # The JSON is the anchor: store project-owned paths relative to its
+        # folder so the whole project can be copied/moved without rewriting.
+        _map_project_paths(data, path.parent, relative=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         return path
 
     @classmethod
     def load(cls, path: Path | str) -> "Project":
         path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
+        # Resolve relative paths against the JSON's *current* location.
+        _map_project_paths(data, path.parent, relative=False)
         return cls.from_dict(data)
 
     @classmethod

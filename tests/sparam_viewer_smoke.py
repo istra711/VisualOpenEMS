@@ -65,6 +65,33 @@ def main() -> int:
                 return 4
             print("  smith: scikit-rf full grid + labels OK")
 
+    # Multi-trace presets: several S-parameters in one plot
+    viewer.cmb_trace_set.setCurrentText("Return loss (Sii)")
+    rl_keys = viewer._checked_traces()
+    print("return-loss traces:", rl_keys)
+    if rl_keys != ["S11", "S22", "S33", "S44"]:
+        print("FAIL: return-loss preset selection")
+        return 12
+    viewer._redraw()
+    rl_lines = [ln.get_label() for ln in viewer.figure.axes[0].lines]
+    if rl_keys[0] not in rl_lines or rl_keys[-1] not in rl_lines:
+        print("FAIL: return-loss traces not drawn together:", rl_lines)
+        return 12
+    viewer.cmb_trace_set.setCurrentText("Transmission (Sij)")
+    tr_keys = viewer._checked_traces()
+    print("transmission traces:", len(tr_keys), tr_keys[:4])
+    if "S12" not in tr_keys or "S21" not in tr_keys or any(
+        k in tr_keys for k in ("S11", "S22", "S33", "S44")
+    ):
+        print("FAIL: transmission preset selection")
+        return 12
+    viewer._redraw()
+    if len([ln for ln in viewer.figure.axes[0].lines if ln.get_label() in tr_keys]) != len(tr_keys):
+        print("FAIL: not all transmission traces drawn")
+        return 12
+    print("multi-trace presets OK")
+    viewer.cmb_trace_set.setCurrentText("Single trace")
+
     # Unsimulated S-matrix cells (NaN in sparams.json, zeros in Touchstone)
     # must not drive autoscaling: show a hint and keep the marker machinery idle.
     nan_case = work / "pcb_notch_ports" / "sparams" / "sparams.json"

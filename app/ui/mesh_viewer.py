@@ -14,11 +14,12 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+import types
 from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QCursor
+from PySide6.QtGui import QActionGroup, QBrush, QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -47,6 +48,8 @@ matplotlib.use("QtAgg")
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
+from matplotlib.colors import to_rgba
+from matplotlib.collections import LineCollection, PolyCollection
 from matplotlib.patches import Circle, FancyBboxPatch, Rectangle
 from matplotlib.patches import Polygon as MplPolygon
 
@@ -186,6 +189,33 @@ def _draw_polygon_paths(
             )
 
 
+def _line_cut_paths(
+    points,
+    ia: int,
+    ib: int,
+    inorm: int,
+    plane: float,
+    tol: float,
+) -> list[list[tuple[float, float]]]:
+    """2-D polyline pieces of a 3-D wire/curve that lie in the slice."""
+    paths: list[list[tuple[float, float]]] = []
+    current: list[tuple[float, float]] = []
+    for raw in points or ():
+        try:
+            pt = [float(raw[0]), float(raw[1]), float(raw[2])]
+        except (TypeError, ValueError, IndexError):
+            continue
+        if abs(pt[inorm] - float(plane)) <= tol:
+            current.append((pt[ia], pt[ib]))
+        else:
+            if len(current) >= 2:
+                paths.append(current)
+            current = []
+    if len(current) >= 2:
+        paths.append(current)
+    return paths
+
+
 def _circle_in_slice(
     start, stop, radius, ia: int, ib: int, inorm: int
 ) -> tuple[float, float, float] | None:
@@ -213,6 +243,82 @@ def _circle_in_slice(
     return cx, cy, r
 
 
+def _nf2ff_is_on(nf2ff) -> bool:
+    """True when an NF2FF definition exists AND the project option is enabled."""
+    return nf2ff is not None and bool(getattr(nf2ff, "enabled", True))
+
+
+def _triangle_slice_segments(
+    triangles: np.ndarray,
+    ia: int,
+    ib: int,
+    inorm: int,
+    plane: float,
+) -> list[list[tuple[float, float]]]:
+    """Intersection segments of an STL triangle soup with an axis plane."""
+    if triangles is None or len(triangles) == 0:
+        return []
+    tol = 1e-6 * max(1.0, abs(float(plane)))
+    segments: list[list[tuple[float, float]]] = []
+    for tri in np.asarray(triangles, dtype=float):
+        if tri.shape != (3, 3):
+            continue
+        d = [float(tri[k, inorm]) - float(plane) for k in range(3)]
+        if all(v > tol for v in d) or all(v < -tol for v in d):
+            continue
+        points: list[np.ndarray] = []
+        coplanar = all(abs(v) <= tol for v in d)
+        if coplanar:
+            points = [tri[0], tri[1], tri[2]]
+        else:
+            for a, b in ((0, 1), (1, 2), (2, 0)):
+                da, db = d[a], d[b]
+                if abs(da) <= tol:
+                    points.append(tri[a])
+                if abs(db) <= tol:
+                    points.append(tri[b])
+                if da * db < -(tol * tol):
+                    f = da / (da - db)
+                    points.append(tri[a] + f * (tri[b] - tri[a]))
+        # Deduplicate points (float32 coordinate collisions at shared edges).
+        unique: list[np.ndarray] = []
+        for point in points:
+            if not any(
+                np.linalg.norm(point[[ia, ib]] - other[[ia, ib]]) <= tol
+                for other in unique
+            ):
+                unique.append(point)
+        if len(unique) >= 2:
+            for k in range(len(unique) - 1):
+                segments.append(
+                    [
+                        (float(unique[k][ia]), float(unique[k][ib])),
+                        (float(unique[k + 1][ia]), float(unique[k + 1][ib])),
+                    ]
+                )
+            if len(unique) >= 3:
+                segments.append(
+                    [
+                        (float(unique[-1][ia]), float(unique[-1][ib])),
+                        (float(unique[0][ia]), float(unique[0][ib])),
+                    ]
+                )
+    return segments
+
+
+def _triangle_projections(
+    triangles: np.ndarray, ia: int, ib: int
+) -> list[np.ndarray]:
+    """Project every triangle onto a 2-D overview plane."""
+    if triangles is None or len(triangles) == 0:
+        return []
+    out: list[np.ndarray] = []
+    for tri in np.asarray(triangles, dtype=float):
+        if tri.shape == (3, 3):
+            out.append(tri[:, [ia, ib]])
+    return out
+
+
 class ResponsiveCanvas(FigureCanvas):
     """FigureCanvas that tracks the Qt widget size (no tiny fixed figsize)."""
 
@@ -233,6 +339,19 @@ class ResponsiveCanvas(FigureCanvas):
                 self.figure.set_size_inches(w, h, forward=False)
         except Exception:  # noqa: BLE001
             pass
+
+
+class MeshNavigationToolbar(NavigationToolbar):
+    """Matplotlib toolbar whose Home button uses the live mesh-view reset."""
+
+    def __init__(self, canvas, parent, home_cb=None):
+        self._home_cb = home_cb
+        super().__init__(canvas, parent)
+
+    def home(self, *args, **kwargs):
+        if callable(self._home_cb):
+            return self._home_cb()
+        return super().home(*args, **kwargs)
 
 
 def bind_wheel_zoom(canvas: FigureCanvas) -> None:
@@ -282,6 +401,10 @@ def bind_wheel_zoom(canvas: FigureCanvas) -> None:
     def _on_dblclick(event) -> None:
         if not getattr(event, "dblclick", False):
             return
+        home = getattr(canvas, "_home_cb", None)
+        if callable(home):
+            home()
+            return
         for ax in canvas.figure.axes:
             ax.relim()
             ax.autoscale()
@@ -301,6 +424,23 @@ def bind_wheel_zoom(canvas: FigureCanvas) -> None:
     )
 
 
+#: colours used by the Mesh Viewer overlays; editable in Viewer settings
+DEFAULT_MESH_COLORS = {
+    "grid": "#707070",
+    "domain": "#000000",
+    "nf2ff": "#800080",
+    "port": "#e53935",
+    "port_inactive": "#8a8a8a",
+    "critical": "#c62828",
+}
+
+#: selectable critical-cell runtime-penalty thresholds
+CRITICAL_PENALTY_STEPS = (
+    1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
+    15.0, 20.0, 30.0, 50.0, 75.0, 100.0,
+)
+
+
 class MeshGeometryViewer(QWidget):
     """Matplotlib-based mesh / geometry inspector + Mesh Editor."""
 
@@ -311,6 +451,8 @@ class MeshGeometryViewer(QWidget):
     critical_changed = Signal(bool)
     #: the list of critical-cell marks changed (build, accept, remove, repair)
     critical_cells_changed = Signal()
+    #: minimum runtime penalty shown in the critical-cell overlay (1/10/100 x)
+    critical_threshold_changed = Signal(float)
     #: emitted by "Rebuild from scratch" — the caller clears the overrides and
     #: runs a full (easyMesh) build, discarding the manual lines.
     rebuild_requested = Signal()
@@ -324,6 +466,9 @@ class MeshGeometryViewer(QWidget):
     port_mode_changed = Signal(bool)
     #: Port type (lumped / MSL) + the in-plane width axis chosen in the menu.
     port_type_changed = Signal(str, str)
+    #: Mesh-line snap sensitivity (fraction of the span, absolute minimum in
+    #: drawing units, zoom-relative mode) chosen in the right-click menu.
+    snap_sensitivity_changed = Signal(float, float, bool)
 
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -340,6 +485,10 @@ class MeshGeometryViewer(QWidget):
         #: draw them? Off by default — the marks are a diagnostic overlay the
         #: user switches on via the right-click menu (count is always shown there)
         self._critical_on = False
+        #: only marks with at least this runtime penalty are drawn (1/10/100x)
+        self._critical_min_penalty = 1.0
+        #: overlay colours (editable in Viewer settings)
+        self._colors = dict(DEFAULT_MESH_COLORS)
         # auto grid (per axis) before manual overrides — lets editor edits be
         # re-applied to the EXISTING mesh without re-running easyMesh
         self._auto_mesh: dict | None = None
@@ -347,6 +496,9 @@ class MeshGeometryViewer(QWidget):
         # domain stay visible after the mesh grid is deleted
         self._scene_infos: list = []
         self._scene_area = None
+        #: live domain outline after a boundary/air-margin edit; overrides the
+        #: cached CSX area until the next set_csx() rebuild supplies a new one
+        self._domain_override = None
         self._editor_panel = None
         self._split = None
         # port mode (right-click menu): click in a slice -> red dot + dialog
@@ -356,6 +508,14 @@ class MeshGeometryViewer(QWidget):
         #: line along the slice normal, i.e. lumped without width).
         self._port_type = "lumped"
         self._port_width_axis = ""
+        #: Mesh-editor edge snapping: band = max(span * fraction, minimum).
+        #: 0 for the fraction disables snapping (right-click menu).
+        #: ``_snap_use_view`` (default) uses the visible axis span, so the
+        #: band stays a constant fraction of the screen at every zoom level;
+        #: off uses the full simulation domain instead.
+        self._snap_band_frac = 0.01
+        self._snap_min_band = 0.0
+        self._snap_use_view = True
         #: object selected in the Project / Geometry list (boxes + names)
         self._highlight: dict = {"boxes": [], "names": [], "label": ""}
         #: per-object display (colour / transparency / visible) of the drawn
@@ -457,21 +617,20 @@ class MeshGeometryViewer(QWidget):
         bar.addStretch(1)
         root.addLayout(bar)
 
-        bar2 = QHBoxLayout()
+        # These view switches live in the plot's right-click menu.  Keep the
+        # widgets as hidden state/signal targets, but do not add a second
+        # toolbar row to the viewer.
         for w in (
             self.chk_mesh,
-            QLabel("Grid"),
             self.slider_mesh,
             self.lbl_mesh,
             self.chk_geom,
             self.chk_ports,
             self.chk_nf2ff,
             self.chk_editor,
+            self.btn_popout,
         ):
-            bar2.addWidget(w)
-        bar2.addStretch(1)
-        bar2.addWidget(self.btn_popout)
-        root.addLayout(bar2)
+            w.hide()
 
         # object appearance (colour / transparency / visibility) is edited per
         # object in the Geometry dialogs (see app.ui.object_display)
@@ -618,12 +777,18 @@ class MeshGeometryViewer(QWidget):
 
     def _on_editor_toggled(self, checked: bool) -> None:
         """Show / hide the editor panel; give it width when shown."""
+        if checked and self._port_mode:
+            # Mesh-line editing and port placement are mutually exclusive.
+            self.set_port_mode(False)
         if self._editor_panel is not None:
             self._editor_panel.setVisible(bool(checked))
         if checked and self._split is not None:
             self._split.setSizes([1000, 330])
         if checked:
             self._refresh_editor()
+        else:
+            # leaving the editor also drops the line selection/highlight
+            self.clear_line_selection()
 
     def _on_editor_selection(self, *_args) -> None:
         """Remember the highlighted line(s) so the slice can emphasise them."""
@@ -745,12 +910,7 @@ class MeshGeometryViewer(QWidget):
 
     def _domain_range(self, axis_name: str) -> tuple[float, float] | None:
         """FDTD domain extent [lo, hi] on one axis, or None if unknown."""
-        if self._csx is None:
-            return None
-        try:
-            area = get_sim_area(self._csx)
-        except Exception:  # noqa: BLE001
-            return None
+        area = self._grid_area()
         if area is None:
             return None
         idx = _AXIS[axis_name]
@@ -850,45 +1010,297 @@ class MeshGeometryViewer(QWidget):
         adds = self._lines_dict(mesh, "manual_mesh_lines", create=False).get(axis_name, []) if mesh else []
         return sorted(set(built) | {float(v) for v in adds})
 
-    def _edge_coords(self, axis_name: str) -> list[float]:
-        """Geometry-edge coordinates on one axis (primitive AABB faces + ports).
+    def _edge_coords(
+        self,
+        axis_name: str,
+        *,
+        other_axis: str | None = None,
+        other_val: float | None = None,
+        plane_axis: str | None = None,
+        plane_val: float | None = None,
+    ) -> list[float]:
+        """Geometry-edge coordinates on one axis.
 
-        Used to snap a newly clicked line exactly onto a geometry edge.
+        For boxes/cylinders/spheres this is the AABB face.  For polygons and
+        extruded polygons the *actual* outline is used (not just the bbox), so
+        a click can snap onto a slanted/hexagonal edge.  Polyhedron/STL
+        primitives contribute their real triangle edges cut by the current
+        slice plane.  When ``other_axis`` / ``other_val`` are given only
+        geometry whose cross-section contains that point (plus tolerance)
+        contributes.
         """
         idx = _AXIS[axis_name]
+        other_idx = _AXIS[other_axis] if other_axis in _AXIS else None
+        plane_idx = _AXIS[plane_axis] if plane_axis in _AXIS else None
+        other_tol = (
+            0.01 * self._axis_span(other_axis)
+            if other_axis in _AXIS and other_axis
+            else 0.0
+        )
+
+        def in_slice(info) -> bool:
+            if other_idx is None or other_val is None:
+                return True
+            lo = float(info.start[other_idx]) - other_tol
+            hi = float(info.stop[other_idx]) + other_tol
+            return lo <= float(other_val) <= hi
+
         vals: list[float] = []
         if self._csx is not None:
             try:
                 for info in iter_primitive_infos(
-                    self._csx, coord_system=self._coord_system()
+                    self._csx,
+                    coord_system=self._coord_system(),
+                    include_triangles=True,
                 ):
-                    try:
-                        vals.append(float(info.start[idx]))
-                        vals.append(float(info.stop[idx]))
-                    except Exception:  # noqa: BLE001
+                    if not in_slice(info):
                         continue
+                    got: list[float] = []
+                    triangles = getattr(info, "triangles", None)
+                    if triangles is not None and len(triangles):
+                        # Exact cross-section of an STL/Polyhedron at the
+                        # current slice plane.  Build the triangle-plane
+                        # intersection, then evaluate it at the clicked
+                        # in-plane coordinate: this also catches slanted
+                        # triangle edges, not just their vertices.
+                        eps = 1e-9
+                        for tri in triangles:
+                            points: list = []
+                            if plane_idx is not None and plane_val is not None:
+                                for a, b in ((0, 1), (1, 2), (2, 0)):
+                                    p1, p2 = tri[a], tri[b]
+                                    v1 = float(p1[plane_idx])
+                                    v2 = float(p2[plane_idx])
+                                    d1, d2 = v1 - plane_val, v2 - plane_val
+                                    if abs(d1) <= eps:
+                                        points.append(p1)
+                                    if abs(d2) <= eps:
+                                        points.append(p2)
+                                    if d1 * d2 < -eps:
+                                        t = (plane_val - v1) / (v2 - v1)
+                                        points.append(p1 + t * (p2 - p1))
+                            else:
+                                points.extend(tri)
+
+                            if (
+                                other_idx is not None
+                                and other_val is not None
+                            ):
+                                # Intersect each cross-section segment with
+                                # other_axis = other_val.
+                                for i in range(len(points)):
+                                    p1 = points[i]
+                                    if abs(
+                                        float(p1[other_idx])
+                                        - float(other_val)
+                                    ) <= eps:
+                                        got.append(float(p1[idx]))
+                                    for j in range(i + 1, len(points)):
+                                        p2 = points[j]
+                                        o1 = float(p1[other_idx])
+                                        o2 = float(p2[other_idx])
+                                        if abs(o2 - o1) <= eps:
+                                            continue
+                                        if (
+                                            min(o1, o2)
+                                            <= float(other_val)
+                                            <= max(o1, o2)
+                                        ):
+                                            t = (
+                                                float(other_val) - o1
+                                            ) / (o2 - o1)
+                                            p = p1 + t * (p2 - p1)
+                                            got.append(float(p[idx]))
+                            else:
+                                for p in points:
+                                    got.append(float(p[idx]))
+                    else:
+                        poly_axis = str(getattr(info, "poly_axis", "") or "")
+                        if getattr(info, "poly_points", ()) and poly_axis:
+                            if poly_axis == axis_name:
+                                got.append(float(info.poly_coord))
+                                if float(getattr(info, "poly_length", 0.0)) > 0:
+                                    got.append(
+                                        float(info.poly_coord)
+                                        + float(info.poly_length)
+                                    )
+                            else:
+                                # CSXCAD cyclic mapping: normal x -> (y,z),
+                                # normal y -> (z,x), normal z -> (x,y).
+                                inplane = {
+                                    "x": ("y", "z"),
+                                    "y": ("z", "x"),
+                                    "z": ("x", "y"),
+                                }.get(poly_axis, ())
+                                if len(inplane) == 2:
+                                    has_contour_cut = (
+                                        other_axis in inplane
+                                        and other_val is not None
+                                        and other_axis != axis_name
+                                    )
+                                    if not has_contour_cut:
+                                        # No slice position: offer all
+                                        # projected vertices.
+                                        if axis_name == inplane[0]:
+                                            got.extend(
+                                                float(pt[0])
+                                                for pt in info.poly_points
+                                            )
+                                        elif axis_name == inplane[1]:
+                                            got.extend(
+                                                float(pt[1])
+                                                for pt in info.poly_points
+                                            )
+                                    # Exact contour coordinate at the clicked
+                                    # in-plane position (for slanted edges, not
+                                    # just the vertices/AABB).
+                                    if has_contour_cut:
+                                        iu = 0 if axis_name == inplane[0] else 1
+                                        iv = 1 - iu
+                                        pts = list(info.poly_points)
+                                        for p1, p2 in zip(
+                                            pts, pts[1:] + pts[:1]
+                                        ):
+                                            v1, v2 = (
+                                                float(p1[iv]),
+                                                float(p2[iv]),
+                                            )
+                                            u1, u2 = (
+                                                float(p1[iu]),
+                                                float(p2[iu]),
+                                            )
+                                            if (
+                                                min(v1, v2)
+                                                <= float(other_val)
+                                                <= max(v1, v2)
+                                            ):
+                                                if abs(v2 - v1) > 1e-12:
+                                                    t = (
+                                                        float(other_val) - v1
+                                                    ) / (v2 - v1)
+                                                    got.append(
+                                                        u1 + t * (u2 - u1)
+                                                    )
+                                                else:
+                                                    got.append(u1)
+                        if not got and getattr(info, "line_points", ()):
+                            # Wire/curve: offer the authored polyline points.
+                            got.extend(
+                                float(pt[idx]) for pt in info.line_points
+                            )
+                        if not got:
+                            try:
+                                got = [
+                                    float(info.start[idx]),
+                                    float(info.stop[idx]),
+                                ]
+                            except Exception:  # noqa: BLE001
+                                got = []
+                    vals.extend(got)
             except Exception:  # noqa: BLE001
                 pass
         for p in self._ports:
             st = getattr(p, "start", None) or (p.get("start") if isinstance(p, dict) else None)
             sp = getattr(p, "stop", None) or (p.get("stop") if isinstance(p, dict) else None)
             for v in (st, sp):
-                if v:
-                    try:
-                        vals.append(float(v[idx]))
-                    except Exception:  # noqa: BLE001
-                        continue
+                if not v:
+                    continue
+                try:
+                    if other_idx is not None and other_val is not None:
+                        o = float(v[other_idx])
+                        if not (
+                            float(other_val) - other_tol
+                            <= o
+                            <= float(other_val) + other_tol
+                        ):
+                            continue
+                    vals.append(float(v[idx]))
+                except Exception:  # noqa: BLE001
+                    continue
         return sorted({round(v, 9) for v in vals})
 
-    def _snap_to_edge(self, axis_name: str, val: float, band_frac: float = 0.01) -> float:
-        """Snap ``val`` to the nearest geometry edge within a narrow band."""
-        edges = self._edge_coords(axis_name)
+    def _snap_to_edge(
+        self,
+        axis_name: str,
+        val: float,
+        band_frac: float = 0.01,
+        *,
+        min_band: float = 0.0,
+        span_override: float | None = None,
+        other_axis: str | None = None,
+        other_val: float | None = None,
+        plane_axis: str | None = None,
+        plane_val: float | None = None,
+    ) -> float:
+        """Snap ``val`` to the nearest nearby geometry edge within a band."""
+        edges = self._edge_coords(
+            axis_name,
+            other_axis=other_axis,
+            other_val=other_val,
+            plane_axis=plane_axis,
+            plane_val=plane_val,
+        )
         if not edges:
             return val
-        span = self._axis_span(axis_name)
-        band = band_frac * span if span > 0 else 0.0
+        if span_override is not None and float(span_override) > 0.0:
+            span = float(span_override)
+        else:
+            span = self._axis_span(axis_name)
+        frac = max(0.0, float(band_frac))
+        band = frac * span if span > 0 else 0.0
+        if frac > 0.0:
+            band = max(band, max(0.0, float(min_band)))
+        else:
+            band = 0.0
         e = min(edges, key=lambda c: abs(c - val))
         return e if (band > 0.0 and abs(e - val) <= band) else val
+
+    def set_snap_sensitivity(
+        self,
+        band_frac: float,
+        min_band: float = 0.0,
+        use_view: bool | None = None,
+    ) -> None:
+        """Set the Mesh-Editor edge-snap sensitivity.
+
+        ``band_frac`` is the fraction of the reference span around the click
+        that may snap; ``min_band`` is an absolute minimum in drawing units so
+        the band stays usable in domain-relative mode.  ``use_view`` selects
+        the reference span: ``True`` = currently visible axis (constant on
+        screen at any zoom), ``False`` = full simulation domain.  A
+        ``band_frac`` of 0 turns snapping off.
+        """
+        try:
+            frac = max(0.0, float(band_frac))
+        except (TypeError, ValueError):
+            frac = 0.0
+        try:
+            minimum = max(0.0, float(min_band))
+        except (TypeError, ValueError):
+            minimum = 0.0
+        if frac <= 0.0:
+            minimum = 0.0
+        view_relative = (
+            bool(self._snap_use_view) if use_view is None else bool(use_view)
+        )
+        if (
+            abs(frac - self._snap_band_frac) < 1e-12
+            and abs(minimum - self._snap_min_band) < 1e-12
+            and view_relative == self._snap_use_view
+        ):
+            return
+        self._snap_band_frac = frac
+        self._snap_min_band = minimum
+        self._snap_use_view = view_relative
+        self.snap_sensitivity_changed.emit(frac, minimum, view_relative)
+
+    def snap_sensitivity(self) -> tuple[float, float]:
+        """Current ``(band fraction, absolute minimum)`` snap sensitivity."""
+        return self._snap_band_frac, self._snap_min_band
+
+    def snap_sensitivity_mode(self) -> bool:
+        """True when the snap band follows the visible zoom (default)."""
+        return self._snap_use_view
 
     def _select_row_for(self, coord: float) -> None:
         for i in range(self.lst_edit_lines.count()):
@@ -1007,6 +1419,28 @@ class MeshGeometryViewer(QWidget):
         except Exception as e:  # noqa: BLE001
             print(f"mesh viewer refresh error: {e}")
 
+    def home_view(self) -> None:
+        """Reset zoom/pan of the current viewer (toolbar home, menu, dblclick)."""
+        # _redraw() deliberately preserves the old axes limits for the same
+        # view.  Dropping the view signature makes it build fresh, autoscaled
+        # axes instead; this is the reliable reset even after a CSX rebuild.
+        self._drawn_view = None
+        self._redraw()
+        for fig, canvas in (
+            (self.fig_slice, self.canvas_slice),
+            (self.fig_cells, self.canvas_cells),
+        ):
+            if fig is None:
+                continue
+            for ax in fig.axes:
+                try:
+                    ax.relim()
+                    ax.autoscale_view()
+                except Exception:  # noqa: BLE001
+                    pass
+            if canvas is not None:
+                canvas.draw_idle()
+
     def _axis_span(self, axis_name: str) -> float:
         area = get_sim_area(self._csx) if self._csx is not None else None
         idx = {"x": 0, "y": 1, "z": 2}[axis_name]
@@ -1019,6 +1453,10 @@ class MeshGeometryViewer(QWidget):
 
     def _handle_slice_click(self, event, shift: bool) -> None:
         """A left click on the slice: select a line in a narrow band, else add."""
+        # Mesh lines are an editor action only: with the editor off, clicks
+        # must not add / select / delete grid lines.
+        if not self.chk_editor.isChecked():
+            return
         view = _slice_key(self.cmb_view.currentText())
         if view is None:
             return
@@ -1031,14 +1469,35 @@ class MeshGeometryViewer(QWidget):
         if val is None:
             return
         val = float(val)
-        # Snap to an existing line only within a NARROW band (0.6 % of the axis
-        # span) -> selects it; anywhere else adds a new line. Shift bypasses it.
+        # Default: BOTH the existing-line selection band and the geometry-edge
+        # snap band use the VISIBLE axis span, so their screen width does not
+        # change with zoom.  Domain-relative mode remains in the right-click
+        # menu for the old behaviour.
+        span_override = None
+        if self._snap_use_view:
+            try:
+                lim = (
+                    event.inaxes.get_xlim()
+                    if axis == ax_a
+                    else event.inaxes.get_ylim()
+                )
+                span_override = abs(float(lim[1]) - float(lim[0]))
+            except Exception:  # noqa: BLE001 - fall back to the domain
+                span_override = None
+        _ref_span = (
+            float(span_override)
+            if span_override is not None and float(span_override) > 0.0
+            else self._axis_span(axis)
+        )
+        # Snap to an existing line only within a NARROW band (0.6 % of the
+        # reference span) -> selects it; anywhere else adds a new line. Shift
+        # bypasses it.
         if not shift:
             lines = self._effective_lines(axis)
             if lines:
                 arr = np.asarray(lines, float)
                 j = int(np.argmin(np.abs(arr - val)))
-                band = 0.006 * self._axis_span(axis)
+                band = 0.006 * _ref_span
                 if band > 0.0 and abs(float(arr[j]) - val) <= band:
                     coord = float(arr[j])
                     if self._is_line_selected(axis, coord):
@@ -1047,8 +1506,87 @@ class MeshGeometryViewer(QWidget):
                         self._select_row_for(coord)
                     return
         # Snap a newly added line onto a geometry edge when the click is near one.
-        val = self._snap_to_edge(axis, val)
+        other_axis = ax_b if axis == ax_a else ax_a
+        other_val = event.ydata if axis == ax_a else event.xdata
+        val = self._snap_to_edge(
+            axis,
+            val,
+            band_frac=self._snap_band_frac,
+            min_band=0.0 if self._snap_use_view else self._snap_min_band,
+            span_override=span_override,
+            other_axis=other_axis,
+            other_val=other_val,
+            plane_axis=_normal,
+            plane_val=float(self.spn_plane.value()),
+        )
         self._editor_add(val)
+
+    def _add_snap_sensitivity_menu(self, menu):
+        """Add the checkable "Snap sensitivity" presets to a context menu.
+
+        Returns ``{QAction: payload}`` so the caller can apply the selected
+        entry after ``menu.exec()``.  Presets use
+        ``(band_fraction, minimum_band)``; the zoom-mode toggle uses
+        ``("mode", None)``.
+        """
+        sub = menu.addMenu("Snap sensitivity")
+        sub.setEnabled(bool(self.chk_editor.isChecked()))
+        sub.setToolTip(
+            "Mesh-editor edge snapping: how close a click must be to a geometry\n"
+            "edge. Zoom-relative (default) uses a fraction of the VISIBLE axis\n"
+            "span, so the band stays the same width on screen at every zoom.\n"
+            "Turn it off to use the full simulation domain instead. Port mode\n"
+            "never snaps. Enable Mesh editor to change this."
+        )
+        act_view = sub.addAction("Zoom-relative (default)")
+        act_view.setCheckable(True)
+        act_view.setChecked(bool(self._snap_use_view))
+        act_view.setToolTip(
+            "Default: snap band = percentage of the currently visible slice\n"
+            "axis. Zooming in/out keeps the band at the same screen width.\n"
+            "Off: use the full simulation domain (old behaviour)."
+        )
+        sub.addSeparator()
+        presets = (
+            ("Off", 0.0, 0.0, "Do not snap new mesh lines to geometry edges."),
+            (
+                "Fine (0.5 %)",
+                0.005,
+                0.0,
+                "Precise: only clicks very close to an edge snap.",
+            ),
+            (
+                "Normal (1 %)",
+                0.01,
+                0.0,
+                "Default: 1 % of the selected span (visible view by default).",
+            ),
+            (
+                "Wide (2.5 %)",
+                0.025,
+                0.05,
+                "Easier snapping: 2.5 % of the span; domain mode also keeps\n"
+                "an absolute minimum of 0.05 mm.",
+            ),
+            (
+                "Very wide (5 %)",
+                0.05,
+                0.10,
+                "Easiest snapping: 5 % of the span; domain mode also keeps\n"
+                "an absolute minimum of 0.1 mm.",
+            ),
+        )
+        actions = {act_view: ("mode", None)}
+        for label, frac, min_band, tip in presets:
+            act = sub.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(
+                abs(self._snap_band_frac - frac) < 1e-12
+                and abs(self._snap_min_band - min_band) < 1e-12
+            )
+            act.setToolTip(tip)
+            actions[act] = (frac, min_band)
+        return actions
 
     def _show_context_menu(self, event=None) -> None:
         """Right-click menu on the plot area (editor toggle + pop-out)."""
@@ -1056,6 +1594,41 @@ class MeshGeometryViewer(QWidget):
         act_editor = menu.addAction("Mesh editor")
         act_editor.setCheckable(True)
         act_editor.setChecked(bool(self.chk_editor.isChecked()))
+        act_editor.setToolTip(
+            "Show the manual mesh-line editor (turns Port mode off)."
+        )
+        act_mesh = menu.addAction("Mesh grid")
+        act_mesh.setCheckable(True)
+        act_mesh.setChecked(bool(self.chk_mesh.isChecked()))
+        act_mesh.setToolTip(
+            "Draw the mesh grid in the slice plots.\n"
+            "Opacity / line width: Grid strength below."
+        )
+        grid_menu = menu.addMenu("Grid strength")
+        grid_menu.setToolTip(
+            "Opacity and line width of the mesh grid lines.\n"
+            "Selecting a value also enables Mesh grid."
+        )
+        grid_actions = {}
+        for pct in (0, 10, 20, 30, 35, 40, 50, 60, 70, 80, 90, 100):
+            label = f"{pct} %" + (" (default)" if pct == 35 else "")
+            act = grid_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(int(self.slider_mesh.value()) == pct)
+            grid_actions[act] = pct
+        act_geom = menu.addAction("Geometry")
+        act_geom.setCheckable(True)
+        act_geom.setChecked(bool(self.chk_geom.isChecked()))
+        act_geom.setToolTip("Draw primitives and imported CAD in the slice plots.")
+        act_ports = menu.addAction("Ports")
+        act_ports.setCheckable(True)
+        act_ports.setChecked(bool(self.chk_ports.isChecked()))
+        act_ports.setToolTip("Draw the ports in the slice plots.")
+        act_nf2ff = menu.addAction("NF2FF")
+        act_nf2ff.setCheckable(True)
+        act_nf2ff.setChecked(bool(self.chk_nf2ff.isChecked()))
+        act_nf2ff.setToolTip("Draw the NF2FF box in the slice plots.")
+        menu.addSeparator()
         act_port = menu.addAction("Port mode (click in a slice to place)")
         act_port.setCheckable(True)
         act_port.setChecked(bool(self._port_mode))
@@ -1063,13 +1636,14 @@ class MeshGeometryViewer(QWidget):
             "Left-click anywhere in a slice view (XY/XZ/YZ) to place a port at\n"
             "exactly those coordinates (no snapping): a red dot marks the spot\n"
             "and the port dialog opens with the computed box prefilled.\n"
-            "The port runs into the screen (slice normal) from the bottom face of\n"
-            "the clicked metal to the top face of the next metal surface — that\n"
-            "length is found automatically."
+            "Turns Mesh editor off. The port runs into the screen (slice normal)\n"
+            "from the bottom face of the clicked metal to the top face of the next\n"
+            "metal surface - that length is found automatically. Type, width and\n"
+            "MSL axes are set in the Port dialog after the click."
         )
-        # What the click places. MSL needs the width direction, so it is part of
-        # the entry ("width along X/Y/Z" = the in-plane axis the port is wide in).
-        self._add_port_type_menu(menu)
+        snap_actions = self._add_snap_sensitivity_menu(menu)
+        # What the click places is chosen in the Port dialog (type / width /
+        # axes); the right-click menu stays focused on mode switches.
         n_crit = self.critical_count()
         act_crit = menu.addAction(f"Mark critical cells ({n_crit})")
         act_crit.setCheckable(True)
@@ -1093,8 +1667,11 @@ class MeshGeometryViewer(QWidget):
         if n_sel:
             del_label += f" ({n_sel})"
         act_del = menu.addAction(del_label)
-        act_del.setEnabled(n_sel > 0)
-        act_del.setToolTip("Remove the selected line(s) from the mesh (like Del)")
+        act_del.setEnabled(n_sel > 0 and bool(self.chk_editor.isChecked()))
+        act_del.setToolTip(
+            "Remove the selected line(s) from the mesh (like Del).\n"
+            "Enable 'Mesh editor' to edit mesh lines."
+        )
         menu.addSeparator()
         act_refresh = menu.addAction("Refresh view (keep zoom)")
         act_refresh.setToolTip(
@@ -1106,14 +1683,41 @@ class MeshGeometryViewer(QWidget):
         chosen = menu.exec(QCursor.pos())
         if chosen is act_editor:
             self.chk_editor.setChecked(not self.chk_editor.isChecked())
+        elif chosen is act_mesh:
+            self.chk_mesh.setChecked(not self.chk_mesh.isChecked())
+        elif chosen in grid_actions:
+            self.slider_mesh.setValue(int(grid_actions[chosen]))
+            if not self.chk_mesh.isChecked():
+                self.chk_mesh.setChecked(True)
+        elif chosen is act_geom:
+            self.chk_geom.setChecked(not self.chk_geom.isChecked())
+        elif chosen is act_ports:
+            self.chk_ports.setChecked(not self.chk_ports.isChecked())
+        elif chosen is act_nf2ff:
+            self.chk_nf2ff.setChecked(not self.chk_nf2ff.isChecked())
         elif chosen is act_port:
             self.set_port_mode(not self._port_mode)
         elif chosen is act_crit:
             self.set_critical_enabled(not self._critical_on)
+        elif chosen in snap_actions:
+            payload = snap_actions[chosen]
+            if payload[0] == "mode":
+                self.set_snap_sensitivity(
+                    self._snap_band_frac,
+                    self._snap_min_band,
+                    not self._snap_use_view,
+                )
+            else:
+                self.set_snap_sensitivity(*payload)
         elif chosen in crit_actions:
-            self._on_critical_action(
-                crit_actions[chosen], self._critical_near(event)
-            )
+            action = str(crit_actions[chosen])
+            if action.startswith("penalty:"):
+                try:
+                    self.set_critical_threshold(float(action.split(":", 1)[1]))
+                except ValueError:
+                    pass
+            else:
+                self._on_critical_action(action, self._critical_near(event))
         elif chosen is act_pop:
             self._on_popout()
         elif chosen is act_del:
@@ -1121,10 +1725,7 @@ class MeshGeometryViewer(QWidget):
         elif chosen is act_refresh:
             self.refresh_view()
         elif chosen is act_home:
-            try:
-                self.toolbar_slice.home()
-            except Exception:  # noqa: BLE001
-                pass
+            self.home_view()
 
     def _on_slice_click(self, event) -> None:
         """Slice click: right = menu; left = add a line / select one on a line."""
@@ -1207,10 +1808,13 @@ class MeshGeometryViewer(QWidget):
                 pass
         self.fig_slice = Figure(figsize=(10, 7), tight_layout=True)
         self.canvas_slice = ResponsiveCanvas(self.fig_slice, self.slice_host)
-        self.toolbar_slice = NavigationToolbar(self.canvas_slice, self)
+        self.toolbar_slice = MeshNavigationToolbar(
+            self.canvas_slice, self, home_cb=self.home_view
+        )
         self.slice_layout.addWidget(self.toolbar_slice)
         self.slice_layout.addWidget(self.canvas_slice, 1)
         bind_wheel_zoom(self.canvas_slice)
+        self.canvas_slice._home_cb = self.home_view
         try:
             self.canvas_slice.mpl_connect("button_press_event", self._on_slice_click)
         except Exception:  # noqa: BLE001
@@ -1229,10 +1833,13 @@ class MeshGeometryViewer(QWidget):
                 pass
         self.fig_cells = Figure(figsize=(10, 5), tight_layout=True)
         self.canvas_cells = ResponsiveCanvas(self.fig_cells, self.cells_host)
-        self.toolbar_cells = NavigationToolbar(self.canvas_cells, self)
+        self.toolbar_cells = MeshNavigationToolbar(
+            self.canvas_cells, self, home_cb=self.home_view
+        )
         self.cells_layout.addWidget(self.toolbar_cells)
         self.cells_layout.addWidget(self.canvas_cells, 1)
         bind_wheel_zoom(self.canvas_cells)
+        self.canvas_cells._home_cb = self.home_view
 
     # ----------------------------------------------------------- data input
     def set_csx(self, csx, keep_view: bool = False) -> None:
@@ -1244,6 +1851,8 @@ class MeshGeometryViewer(QWidget):
         """
         state = self._capture_view_state() if keep_view else None
         self._csx = csx
+        # a freshly built CSX already carries the current boundary/air margin
+        self._domain_override = None
         try:
             self._recreate_canvases()
             if state is not None:
@@ -1321,6 +1930,38 @@ class MeshGeometryViewer(QWidget):
         except Exception as e:  # noqa: BLE001 — never crash the GUI on redraw
             print(f"mesh viewer nf2ff update error: {e}")
 
+    def set_domain_area(self, area) -> None:
+        """Redraw the domain outline without rebuilding mesh/CSX.
+
+        Used when Simulation Parameters change the air margin / boundary: the
+        still-loaded mesh keeps its grid, but the black dashed domain box, the
+        plane range and the domain readout follow the new values immediately.
+        Pass ``None`` to drop the override and use the CSX/cached domain again.
+        """
+        if area is None:
+            self._domain_override = None
+        else:
+            try:
+                lo = [float(v) for v in area[0]]
+                hi = [float(v) for v in area[1]]
+                if len(lo) != 3 or len(hi) != 3 or any(
+                    hi[i] <= lo[i] for i in range(3)
+                ):
+                    raise ValueError("domain box must be a non-empty 3D box")
+                new = (lo, hi)
+            except Exception as e:  # noqa: BLE001 — never break the viewer
+                print(f"mesh viewer domain update ignored: {e}")
+                return
+            if self._domain_override == new:
+                return
+            self._domain_override = new
+        try:
+            self._update_plane_range(reset=False)
+            self._update_info()
+            self._redraw()
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer domain update error: {e}")
+
     def set_ports(self, ports: list | None = None) -> None:
         """Update the port overlay in place (after Add/Edit port) and redraw.
 
@@ -1379,6 +2020,45 @@ class MeshGeometryViewer(QWidget):
         self.set_highlight()
 
     # ----------------------------------------------------------- critical cells
+    def colors(self) -> dict:
+        """Current overlay colours (hex strings), for Viewer settings."""
+        return dict(self._colors)
+
+    def set_colors(self, options: dict | None = None) -> None:
+        """Apply overlay colours (grid/domain/NF2FF/ports/critical)."""
+        if isinstance(options, dict):
+            for key, default in DEFAULT_MESH_COLORS.items():
+                value = options.get(key, default)
+                try:
+                    if isinstance(value, str) and QColor(value).isValid():
+                        self._colors[key] = value
+                except Exception:  # noqa: BLE001
+                    pass
+        try:
+            self._redraw()
+        except Exception as e:  # noqa: BLE001
+            print(f"mesh viewer colour update error: {e}")
+
+    def critical_threshold(self) -> float:
+        return float(self._critical_min_penalty)
+
+    def set_critical_threshold(self, value: float, *, redraw: bool = True) -> None:
+        """Only draw critical marks with penalty >= value (1/10/100x)."""
+        try:
+            value = max(1.0, float(value))
+        except (TypeError, ValueError):
+            return
+        if abs(value - self._critical_min_penalty) < 1e-9:
+            return
+        self._critical_min_penalty = value
+        if redraw:
+            try:
+                self._redraw()
+            except Exception as e:  # noqa: BLE001
+                print(f"mesh viewer critical threshold error: {e}")
+            self.critical_threshold_changed.emit(value)
+            self.critical_cells_changed.emit()
+
     def set_critical_cells(self, cells=None) -> None:
         """Mark the cells the mesh report (or the last run) flagged.
 
@@ -1489,8 +2169,15 @@ class MeshGeometryViewer(QWidget):
         return worst.label
 
     def _critical_marks(self) -> list:
-        """Marks to draw (empty while the toggle is off)."""
-        return list(self._critical) if self._critical_on else []
+        """Marks to draw (empty while off; filtered by runtime penalty)."""
+        if not self._critical_on:
+            return []
+        threshold = float(self._critical_min_penalty)
+        return [
+            c
+            for c in self._critical
+            if float(getattr(c, "penalty", 1.0) or 1.0) >= threshold
+        ]
 
     # --------------------------------------------- critical cell actions (V1-V3)
     def _axis_grid_lines(self, axis: str) -> list[float]:
@@ -1557,6 +2244,21 @@ class MeshGeometryViewer(QWidget):
         if cell is None:
             sub.setToolTip("No mark yet - build the mesh first.")
             return actions
+        thr_menu = sub.addMenu("Minimum time penalty")
+        thr_menu.setToolTip(
+            "Hide critical cells below this runtime penalty.\n"
+            "Fine steps from 1x to 10x, then coarser to 100x."
+        )
+        grp = QActionGroup(thr_menu)
+        grp.setExclusive(True)
+        for value in CRITICAL_PENALTY_STEPS:
+            label = "1x (show all)" if value == 1.0 else f"{value:g}x"
+            act_thr = thr_menu.addAction(label)
+            act_thr.setCheckable(True)
+            act_thr.setChecked(abs(self._critical_min_penalty - value) < 1e-9)
+            act_thr.setActionGroup(grp)
+            actions[act_thr] = f"penalty:{value:g}"
+        sub.addSeparator()
         unit = str(
             getattr(self._mesh_spec(), "drawing_unit", "mm") or "mm"
         )
@@ -2070,6 +2772,9 @@ class MeshGeometryViewer(QWidget):
     # --------------------------------------------------------------- port mode
     def set_port_mode(self, on: bool) -> None:
         """Arm / disarm "click in a slice to place a port" (right-click menu)."""
+        if on and self.chk_editor.isChecked():
+            # Mesh-line editing and port placement are mutually exclusive.
+            self.chk_editor.setChecked(False)
         self._port_mode = bool(on)
         if not self._port_mode:
             self._port_marker = None
@@ -2125,7 +2830,7 @@ class MeshGeometryViewer(QWidget):
         sub = menu.addMenu("Port type")
         sub.setToolTip(
             "Lumped (line): a line from the clicked metal to the next metal\n"
-            "surface.\n"
+            "surface or PEC simulation-box wall.\n"
             "Lumped, width along X/Y: the same length, but as wide as the clicked\n"
             "metal along the chosen in-plane axis (a zero-thickness sheet - the\n"
             "classic area lumped port).\n"
@@ -2181,6 +2886,40 @@ class MeshGeometryViewer(QWidget):
         key = _slice_key(self.cmb_view.currentText())
         return _SLICE_AXES[key] if key else _SLICE_AXES["XY"]
 
+    def _pec_boundary_layers(self, inorm: int) -> list:
+        """Synthetic PEC layers for the simulation-box walls.
+
+        A PEC domain face is a perfect metal surface even though it is not a
+        primitive.  Port placement must see it as the ground/partner layer
+        (e.g. zmin = PEC under a microstrip).
+        """
+        project = getattr(self, "_project", None)
+        boundary = getattr(project, "boundary", None)
+        area = self._grid_area()
+        if boundary is None or area is None:
+            return []
+        sides = ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
+        out: list = []
+        for side in sides:
+            if str(getattr(boundary, side, "")).upper() != "PEC":
+                continue
+            axis = "xyz".index(side[0])
+            if axis != inorm:
+                continue
+            plane = float(area[0][axis] if side.endswith("min") else area[1][axis])
+            st = [float(area[0][0]), float(area[0][1]), float(area[0][2])]
+            sp = [float(area[1][0]), float(area[1][1]), float(area[1][2])]
+            st[axis] = sp[axis] = plane
+            info = types.SimpleNamespace(
+                name=f"PEC boundary {side}",
+                start=st,
+                stop=sp,
+                kind="Metal",
+                priority=10,
+            )
+            out.append((plane, plane, info))
+        return out
+
     def _metal_layers(self, key: str, a: float, b: float) -> list:
         """Metal layers covering the clicked in-plane point, bottom first.
 
@@ -2205,6 +2944,9 @@ class MeshGeometryViewer(QWidget):
                 continue
             lo, hi = sorted((st[inorm], sp[inorm]))
             layers.append((lo, hi, info))
+        # Add PEC simulation-box faces as metal layers.  A port clicked on a
+        # trace above a PEC zmin boundary then gets that wall as its partner.
+        layers.extend(self._pec_boundary_layers(inorm))
         layers.sort(key=lambda t: t[0])
         return layers
 
@@ -2434,11 +3176,71 @@ class MeshGeometryViewer(QWidget):
         self._primitives = []
         self._ports = []
         self._nf2ff = None
+        self._domain_override = None
         self._info_text = ""
         self._auto_mesh = None
         self._selected_lines = []
         self._sel_line = None
         self._update_controls_enabled()
+
+    def reset_view(self) -> None:
+        """Clear data AND redraw empty figures (New Project / no results).
+
+        ``clear()`` deliberately keeps the matplotlib figures alive for the
+        set_csx() lifecycle.  For a new project we need the visible leftovers
+        gone too, so recreate the canvases and draw a neutral placeholder.
+        """
+        # Drop every scene cache, otherwise _redraw()/the scene info would
+        # keep showing the previous project's geometry + domain.
+        self._scene_infos = []
+        self._scene_area = None
+        self._domain_override = None
+        self._scene_display = {}
+        self._drawn_view = None
+        self._port_marker = None
+        self._critical = []
+        self._critical_on = False
+        self._highlight = {"boxes": [], "names": [], "label": ""}
+        self.clear()  # data + controls (uses the cleared scene caches above)
+        self._info_text = ""
+        try:
+            self._recreate_canvases()
+            self._draw_placeholder()
+            self._refresh_editor()
+            self._update_controls_enabled()
+            self._update_info()
+            self._info_text = ""
+            for canvas in (self.canvas_slice, self.canvas_cells):
+                if canvas is not None:
+                    canvas.draw_idle()
+        except Exception as e:  # noqa: BLE001 - a reset must never crash
+            print(f"mesh viewer reset error: {e}")
+        try:
+            self.critical_cells_changed.emit()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _draw_placeholder(self) -> None:
+        """Draw a neutral 'nothing loaded' message on both view tabs."""
+        for fig in (self.fig_slice, self.fig_cells):
+            if fig is None:
+                continue
+            try:
+                fig.clf()
+                ax = fig.add_subplot(111)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No project / mesh loaded",
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                    color="#777777",
+                    fontsize=11,
+                )
+                ax.set_axis_off()
+            except Exception as e:  # noqa: BLE001
+                print(f"mesh viewer placeholder error: {e}")
 
     def clear_mesh(self) -> None:
         """Remove the mesh GRID but keep geometry / ports / NF2FF / domain.
@@ -2857,17 +3659,23 @@ class MeshGeometryViewer(QWidget):
         """
         if self._csx is not None:
             mesh = mesh_lines_from_csx(self._csx)
-            infos = iter_primitive_infos(self._csx, coord_system=self._coord_system())
-            area = get_sim_area(self._csx)
+            infos = iter_primitive_infos(
+                self._csx,
+                coord_system=self._coord_system(),
+                include_triangles=True,
+            )
+            csx_area = get_sim_area(self._csx)
             self._scene_infos = list(infos)
-            self._scene_area = area
+            self._scene_area = csx_area
+            area = self._domain_override or csx_area
             infos = list(infos)
             self._scene_display = self._display_map(infos)
             return mesh, infos, self._ports, self._nf2ff, area
         empty = {"x": np.asarray([]), "y": np.asarray([]), "z": np.asarray([])}
         infos = list(self._scene_infos)
         self._scene_display = self._display_map(infos)
-        return empty, infos, self._ports, self._nf2ff, self._scene_area
+        area = self._domain_override or self._scene_area
+        return empty, infos, self._ports, self._nf2ff, area
 
     # Cached-scene accessors: fall back to the last build when the mesh grid has
     # been deleted (_csx is None), so geometry / ports / NF2FF / domain survive.
@@ -2880,6 +3688,8 @@ class MeshGeometryViewer(QWidget):
         return {"x": np.asarray([]), "y": np.asarray([]), "z": np.asarray([])}
 
     def _grid_area(self):
+        if self._domain_override is not None:
+            return self._domain_override
         if self._csx is not None:
             try:
                 return get_sim_area(self._csx)
@@ -2891,7 +3701,11 @@ class MeshGeometryViewer(QWidget):
         if self._csx is not None:
             try:
                 return list(
-                    iter_primitive_infos(self._csx, coord_system=self._coord_system())
+                    iter_primitive_infos(
+                        self._csx,
+                        coord_system=self._coord_system(),
+                        include_triangles=True,
+                    )
                 )
             except Exception:  # noqa: BLE001
                 return list(self._scene_infos)
@@ -2964,8 +3778,8 @@ class MeshGeometryViewer(QWidget):
             ax.add_patch(
                 Rectangle(
                     (x0, y0), x1 - x0, y1 - y0,
-                    fill=False, edgecolor="black", linewidth=1.2, linestyle="--",
-                    label="Domain",
+                    fill=False, edgecolor=self._colors.get("domain", "#000000"),
+                    linewidth=1.2, linestyle="--", label="Domain",
                 )
             )
 
@@ -2980,12 +3794,14 @@ class MeshGeometryViewer(QWidget):
                 if idx == ia:
                     ax.vlines(
                         arr, *self._axis_limits(area, ib),
-                        colors=(0.4, 0.4, 0.4), linewidths=lw, alpha=alpha,
+                        colors=self._colors.get("grid", "#707070"),
+                        linewidths=lw, alpha=alpha,
                     )
                 else:
                     ax.hlines(
                         arr, *self._axis_limits(area, ia),
-                        colors=(0.4, 0.4, 0.4), linewidths=lw, alpha=alpha,
+                        colors=self._colors.get("grid", "#707070"),
+                        linewidths=lw, alpha=alpha,
                     )
 
         # Critical cells (mesh report / last run): only the cells that set the
@@ -3006,23 +3822,34 @@ class MeshGeometryViewer(QWidget):
                 continue
             engine = cell.kind == "engine_timestep"
             accepted = bool(getattr(cell, "accepted", False))
+            penalty = float(getattr(cell, "penalty", 1.0) or 1.0)
+            base = self._colors.get("critical", "#c62828")
+            if accepted:
+                edge, face, lw, style = "#9e9e9e", (0.6, 0.6, 0.6, 0.16), 1.0, "-"
+                label = "accepted cell"
+            else:
+                # Stronger fill / line for worse runtime penalties.
+                if engine or penalty >= 100.0:
+                    alpha, lw = 0.32, 2.0
+                    label = "critical cell (>=100x)" if penalty >= 100.0 else "critical cell"
+                elif penalty >= 10.0:
+                    alpha, lw = 0.24, 1.4
+                    label = "critical region (>=10x)"
+                else:
+                    alpha, lw = 0.14, 1.0
+                    label = "critical region"
+                edge = base
+                face = to_rgba(base, alpha)
+                style = "-" if engine else (0, (4, 2))
             ax.add_patch(
                 Rectangle(
                     (x0, y0), w, h,
-                    facecolor=(
-                        (0.6, 0.6, 0.6, 0.16) if accepted
-                        else (0.85, 0.10, 0.10, 0.22) if engine
-                        else "none"
-                    ),
-                    edgecolor="#9e9e9e" if accepted else "#c62828",
-                    linewidth=1.0 if accepted else (1.4 if engine else 1.0),
-                    linestyle="-" if (engine or accepted) else (0, (4, 2)),
+                    facecolor=face,
+                    edgecolor=edge,
+                    linewidth=lw,
+                    linestyle=style,
                     zorder=6,
-                    label=(
-                        "accepted cell" if accepted
-                        else "critical cell" if engine
-                        else "critical region"
-                    ),
+                    label=label,
                 )
             )
 
@@ -3108,6 +3935,25 @@ class MeshGeometryViewer(QWidget):
                         )
                     )
                     continue
+                if getattr(info, "line_points", ()):  # wire / curve polyline
+                    _paths = _line_cut_paths(
+                        info.line_points, ia, ib, inorm, plane, tol
+                    )
+                    for _path in _paths:
+                        _xs, _ys = zip(*_path)
+                        ax.plot(
+                            _xs,
+                            _ys,
+                            color=color,
+                            linewidth=(
+                                2.0
+                                if getattr(info, "wire_radius", 0.0)
+                                else 1.2
+                            ),
+                            label=info.name,
+                        )
+                    if _paths:
+                        continue
                 if getattr(info, "poly_points", ()):  # polygon: true outline
                     _draw_polygon_paths(
                         ax,
@@ -3121,6 +3967,40 @@ class MeshGeometryViewer(QWidget):
                         label=info.name,
                     )
                     continue
+                triangles = getattr(info, "triangles", None)
+                if triangles is not None:
+                    tri_tol = 1e-6 * max(1.0, abs(float(plane)))
+                    coplanar = [
+                        tri
+                        for tri in np.asarray(triangles, dtype=float)
+                        if tri.shape == (3, 3)
+                        and all(
+                            abs(float(tri[k, inorm]) - float(plane)) <= tri_tol
+                            for k in range(3)
+                        )
+                    ]
+                    if coplanar:
+                        pc = PolyCollection(
+                            [tri[:, [ia, ib]] for tri in coplanar],
+                            facecolors=[color],
+                            edgecolors="none",
+                        )
+                        pc.set_label(info.name)
+                        ax.add_collection(pc)
+                    segments = _triangle_slice_segments(
+                        triangles, ia, ib, inorm, plane
+                    )
+                    if segments:
+                        lc = LineCollection(
+                            segments,
+                            colors=[color],
+                            linewidths=2.0 if bad else 1.4,
+                        )
+                        lc.set_label(info.name)
+                        ax.add_collection(lc)
+                        continue
+                    if coplanar:
+                        continue
                 ax.add_patch(
                     Rectangle(
                         (x0, y0), x1 - x0, y1 - y0,
@@ -3164,6 +4044,21 @@ class MeshGeometryViewer(QWidget):
                     disp,
                 )
                 edge = color[:3] + (max(0.9, color[3]),)
+                if kind in ("wire", "curve"):
+                    _paths = _line_cut_paths(
+                        pr.get("points") or [], ia, ib, inorm, plane, tol
+                    )
+                    for _path in _paths:
+                        _xs, _ys = zip(*_path)
+                        ax.plot(
+                            _xs,
+                            _ys,
+                            color=edge,
+                            linewidth=1.5,
+                            linestyle=":",
+                        )
+                    if _paths:
+                        continue
                 if kind == "polygon":
                     _draw_polygon_paths(
                         ax,
@@ -3226,15 +4121,18 @@ class MeshGeometryViewer(QWidget):
                 y0, y1 = min(st[ib], sp[ib]), max(st[ib], sp[ib])
                 active = bool(getattr(p, "active", True))
                 # inactive ports (PortDef.active=False) are greyed out
-                face = (1.0, 0.2, 0.2, 0.55) if active else (0.55, 0.55, 0.55, 0.35)
-                edge = "darkred" if active else "grey"
+                port_color = self._colors.get("port", "#e53935")
+                inactive_color = self._colors.get("port_inactive", "#8a8a8a")
+                face = to_rgba(port_color, 0.55) if active else to_rgba(inactive_color, 0.35)
+                edge = port_color if active else inactive_color
                 linestyle = "-" if active else ":"
                 label = "Ports" if active else "Ports (off)"
                 # degenerate (line/point) ports → draw marker at center
                 if abs(x1 - x0) < eps and abs(y1 - y0) < eps:
                     ax.plot(
                         [(x0 + x1) / 2], [(y0 + y1) / 2],
-                        marker="o", markersize=8, color="red" if active else "grey",
+                        marker="o", markersize=8,
+                        color=port_color if active else inactive_color,
                         markeredgecolor="white", markeredgewidth=0.8, zorder=5,
                         label=label,
                     )
@@ -3253,17 +4151,19 @@ class MeshGeometryViewer(QWidget):
         if self._port_marker is not None and self._port_marker[0] == view:
             _mk, mx, my = self._port_marker
             ax.plot(
-                [mx], [my], marker="o", markersize=11, color="red",
+                [mx], [my], marker="o", markersize=11,
+                color=self._colors.get("port", "#e53935"),
                 markeredgecolor="white", markeredgewidth=1.2, zorder=9,
                 label="New port",
             )
             ax.annotate(
                 f"({mx:.4g}, {my:.4g})", (mx, my), textcoords="offset points",
-                xytext=(8, 8), color="red", fontsize=8, zorder=9,
+                xytext=(8, 8), color=self._colors.get("port", "#e53935"),
+                fontsize=8, zorder=9,
             )
 
         # NF2FF box footprint
-        if self.chk_nf2ff.isChecked() and nf2ff is not None:
+        if self.chk_nf2ff.isChecked() and _nf2ff_is_on(nf2ff):
             st = getattr(nf2ff, "start", None)
             sp = getattr(nf2ff, "stop", None)
             if st and sp:
@@ -3273,8 +4173,8 @@ class MeshGeometryViewer(QWidget):
                     ax.add_patch(
                         Rectangle(
                             (x0, y0), x1 - x0, y1 - y0,
-                            fill=False, edgecolor="purple", linewidth=1.4,
-                            linestyle="-.", label="NF2FF",
+                            fill=False, edgecolor=self._colors.get("nf2ff", "#800080"),
+                            linewidth=1.4, linestyle="-.", label="NF2FF",
                         )
                     )
 
@@ -3326,7 +4226,8 @@ class MeshGeometryViewer(QWidget):
                         (area[0][ia], area[0][ib]),
                         area[1][ia] - area[0][ia],
                         area[1][ib] - area[0][ib],
-                        fill=False, edgecolor="black", linestyle="--", linewidth=1.0,
+                        fill=False, edgecolor=self._colors.get("domain", "#000000"),
+                        linestyle="--", linewidth=1.0,
                     )
                 )
             for info in sorted(infos, key=lambda i: int(getattr(i, "priority", 0) or 0)):
@@ -3348,6 +4249,20 @@ class MeshGeometryViewer(QWidget):
                         )
                     )
                     continue
+                if getattr(info, "line_points", ()):  # wire / curve projection
+                    _p = list(info.line_points)
+                    if len(_p) >= 2:
+                        ax.plot(
+                            [p[ia] for p in _p],
+                            [p[ib] for p in _p],
+                            color=color,
+                            linewidth=(
+                                2.0
+                                if getattr(info, "wire_radius", 0.0)
+                                else 1.2
+                            ),
+                        )
+                        continue
                 if getattr(info, "poly_points", ()):  # polygon: true outline
                     _draw_polygon_paths(
                         ax,
@@ -3360,6 +4275,22 @@ class MeshGeometryViewer(QWidget):
                         linewidth=2.0 if bad else 0.8,
                     )
                     continue
+                triangles = getattr(info, "triangles", None)
+                if triangles is not None:
+                    projections = _triangle_projections(triangles, ia, ib)
+                    if projections:
+                        pc = PolyCollection(
+                            projections,
+                            facecolors=[color],
+                            edgecolors=(
+                                (1.0, 0.0, 0.0, 1.0)
+                                if bad
+                                else self._object_edge(color, 0.5)
+                            ),
+                            linewidths=0.35,
+                        )
+                        ax.add_collection(pc)
+                        continue
                 ax.add_patch(
                     Rectangle(
                         (info.start[ia], info.start[ib]),
@@ -3381,9 +4312,14 @@ class MeshGeometryViewer(QWidget):
                     active = bool(getattr(p, "active", True))
                     ax.plot(
                         [cx], [cy], marker="o", markersize=5,
-                        color="red" if active else "grey", zorder=5,
+                        color=(
+                            self._colors.get("port", "#e53935")
+                            if active
+                            else self._colors.get("port_inactive", "#8a8a8a")
+                        ),
+                        zorder=5,
                     )
-            if self.chk_nf2ff.isChecked() and nf2ff is not None:
+            if self.chk_nf2ff.isChecked() and _nf2ff_is_on(nf2ff):
                 st = getattr(nf2ff, "start", None)
                 sp = getattr(nf2ff, "stop", None)
                 if st and sp:
@@ -3391,7 +4327,8 @@ class MeshGeometryViewer(QWidget):
                         Rectangle(
                             (min(st[ia], sp[ia]), min(st[ib], sp[ib])),
                             abs(sp[ia] - st[ia]), abs(sp[ib] - st[ib]),
-                            fill=False, edgecolor="purple", linestyle="-.", linewidth=1.2,
+                            fill=False, edgecolor=self._colors.get("nf2ff", "#800080"),
+                            linestyle="-.", linewidth=1.2,
                         )
                     )
             # object selected in the Project / Geometry list -> thick outline
@@ -3460,16 +4397,21 @@ class MeshGeometryViewer(QWidget):
             for c in marks:
                 lo, hi = float(c.lo[idx]), float(c.hi[idx])
                 size = float(c.cell_size)
-                col = "#9e9e9e" if bool(getattr(c, "accepted", False)) else "#c62828"
+                accepted = bool(getattr(c, "accepted", False))
+                penalty = float(getattr(c, "penalty", 1.0) or 1.0)
+                base = self._colors.get("critical", "#c62828")
+                col = "#9e9e9e" if accepted else base
+                fill_alpha = 0.10 if penalty < 10.0 else (0.16 if penalty < 100.0 else 0.24)
                 if c.kind == "engine_timestep":
                     ax.plot(
                         [0.5 * (lo + hi)], [size], "o", ms=7, mfc="none",
-                        mec=col, mew=1.6, zorder=6,
+                        mec=col, mew=1.8 if penalty >= 100.0 else 1.4, zorder=6,
                     )
                 else:
                     # a merged region: the span plus the size of its smallest cell
-                    ax.axvspan(lo, hi, color=col, alpha=0.10, lw=0, zorder=0)
-                    ax.hlines(size, lo, hi, colors=col, linewidth=1.4,
+                    ax.axvspan(lo, hi, color=col, alpha=fill_alpha, lw=0, zorder=0)
+                    ax.hlines(size, lo, hi, colors=col,
+                              linewidth=1.6 if penalty >= 10.0 else 1.2,
                               zorder=6)
                     # anchor marker: a one-cell region is only a hairline wide
                     ax.plot([0.5 * (lo + hi)], [size], "v", ms=5,

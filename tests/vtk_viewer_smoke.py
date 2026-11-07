@@ -95,7 +95,7 @@ def main() -> int:
     with patch("app.ui.vtk_viewer.QMessageBox.warning"):
         v.export_and_load()
     assert v._grid is not None, "export did not load a grid"
-    vtk_dir = td / "vtk"
+    vtk_dir = td / "vtk" / "Et-E"
     assert (vtk_dir / "Et-E.vtr").exists(), "static grid missing"
     assert (vtk_dir / "Et-E.series.json").exists(), "per-step series missing"
     assert not v._series, "single-step dump must not show a time slider"
@@ -157,8 +157,9 @@ def main() -> int:
 
     from app.ui.vtk_viewer import AXIS_COLORS, DEFAULT_AXES, style_axes_triad
 
-    assert v.axes_options()["corner"] is False, "in-scene triad must stay the default"
-    assert v.axes_options()["labels"] is True and v.axes_options()["font"] == 12
+    assert v.axes_options()["corner"] is True, "corner triad is the default"
+    assert v.axes_options()["labels"] is True and v.axes_options()["font"] == 24
+    assert v.axes_options()["ruler"] is True and v.axes_options()["scale"] == 2.0
 
     triad = vtk.vtkAxesActor()
     style_axes_triad(triad, show_labels=True, font_size=18)
@@ -191,13 +192,18 @@ def main() -> int:
     assert acts["size"][2.0].isChecked() is True
     assert acts["font"][18].isChecked() is True
     acts["corner"].trigger()
-    assert v.axes_options()["corner"] is True, "menu action did not change the options"
+    assert v.axes_options()["corner"] is False, "menu action did not change the options"
     acts["size"][0.5].trigger()
     assert v.axes_options()["scale"] == 0.5
     acts["size"][8.0].trigger()  # XXL / XXXL presets
     assert v.axes_options()["scale"] == 8.0
     acts["font"][14].trigger()
     assert v.axes_options()["font"] == 14
+    acts["xy_ruler_z_offset"][10.0].trigger()
+    assert v.axes_options()["xy_ruler_z_offset"] == 10.0
+    v.set_axes_option("xy_ruler_z_offset", 0.0)
+    v._sync_axes_menu(menu)
+    assert acts["xy_ruler_z_offset"][0.0].isChecked() is True
     v.set_axes_option("corner", False)
     v._sync_axes_menu(menu)
     assert acts["corner"].isChecked() is False, "menu check state out of sync"
@@ -213,10 +219,95 @@ def main() -> int:
         round(b, 9) for b in v._grid.GetBounds()
     ], (cube.GetBounds(), v._grid.GetBounds())
     assert cube.GetXAxesLabelProperty().GetFontSize() == 20
-    assert cube.GetZAxesLinesProperty().GetColor() == AXIS_COLORS[2]
-    assert cube.GetYTitle() == "y [m]", cube.GetYTitle()
+    zcube = v._z_ruler_actor
+    assert zcube is not None and zcube.GetZTitle() == "z [mm]", zcube
+    assert zcube.GetZAxesLinesProperty().GetColor() == AXIS_COLORS[2]
+    assert cube.GetYTitle() == "y [mm]", cube.GetYTitle()
+    # unused axes must be fully hidden (they used to reappear as a second ruler)
+    assert not zcube.GetXAxisVisibility() and not zcube.GetYAxisVisibility(), zcube
+    assert not cube.GetZAxisVisibility(), cube
+    # the x/y rulers can be shifted along z (% of the z range)
+    gb = v._grid.GetBounds()
+    v._axes["xy_ruler_z_offset"] = 10.0
+    v._add_coordinate_ruler(vtk)
+    xy = v._ruler_actor.GetBounds()
+    zc = v._z_ruler_actor.GetBounds()
+    dz = gb[5] - gb[4]
+    assert abs(xy[4] - (gb[4] + 0.10 * dz)) < 1e-9, (xy, gb)
+    assert abs(xy[5] - (gb[5] + 0.10 * dz)) < 1e-9, (xy, gb)
+    assert abs(zc[4] - gb[4]) < 1e-9 and abs(zc[5] - gb[5]) < 1e-9, (zc, gb)
+    v._axes["xy_ruler_z_offset"] = 0.0
+    v._add_coordinate_ruler(vtk)
+    # a planar dump (dz = 0) must not draw a z ruler / "(x10^-6)" noise
+    flat = vtk.vtkImageData()
+    flat.SetDimensions(4, 4, 1)
+    flat.SetOrigin(0.0, 0.0, 0.5)
+    flat.SetSpacing(0.01, 0.01, 0.0)
+    flat.AllocateScalars(vtk.VTK_FLOAT, 1)
+    old_grid = v._grid
+    v._grid = flat
+    v._add_coordinate_ruler(vtk)
+    assert v._z_ruler_actor is None, "flat z must not draw a z ruler"
+    assert v._ruler_actor is not None
+    v._grid = old_grid
+    v._add_coordinate_ruler(vtk)
     v._renderer = None
-    print("  coordinate ruler OK")
+    print("  coordinate ruler + XY-z offset + flat-z handling OK")
+
+    # Geometry-only scene (imported CAD, no field dump yet): the configured
+    # axes/ruler must be drawn too. They used to require a loaded grid, so a
+    # geometry import showed no triad/ruler although the options were set.
+    v2 = VtkFieldViewer(work_dir=None)
+    v2._vtk = vtk
+    v2._renderer = vtk.vtkRenderer()
+    v2.set_geometry(
+        [{"kind": "box", "name": "b", "start": [0, 0, 0], "stop": [30, 20, 1.6]}],
+        unit_m=1e-3,
+    )
+    assert getattr(v2, "_ruler_actor", None) is not None, "no ruler without a field grid"
+    rb = v2._ruler_actor.GetBounds()
+    assert abs(rb[1] - 0.03) < 1e-9 and abs(rb[3] - 0.02) < 1e-9, rb
+    v2.set_axes_options({"corner": False})
+    assert getattr(v2, "_triad_actor", None) is not None, "no in-scene triad"
+    v2.set_axes_options({"ruler": False, "show": False})
+    assert v2._renderer.GetActors().GetNumberOfItems() == 1, "axes not removed"
+    print("  axes/ruler on a geometry-only scene OK")
+
+    # "keep" has no direction to keep in a fresh geometry preview -> isometric
+    v2.set_view_default("keep")
+    v2.set_geometry(
+        [{"kind": "box", "name": "b", "start": [0, 0, 0], "stop": [30, 20, 1.6]}],
+        unit_m=1e-3,
+    )
+    cam = v2._renderer.GetActiveCamera()
+    d = [cam.GetPosition()[i] - cam.GetFocalPoint()[i] for i in range(3)]
+    n = sum(x * x for x in d) ** 0.5
+    assert n > 0 and all(abs(x / n - 0.5774) < 2e-3 for x in d), d
+    print("  geometry-only 'keep' falls back to isometric OK")
+
+    # Deferred path: the import happens while the Field Viewer tab is hidden,
+    # so the render window is only created when the tab is shown - the axes and
+    # the view must be applied then (user report: import showed nothing).
+    v3 = VtkFieldViewer(work_dir=None)
+    v3.set_geometry(
+        [{"kind": "box", "name": "b", "start": [0, 0, 0], "stop": [30, 20, 1.6]}],
+        unit_m=1e-3,
+    )
+    assert v3._renderer is None, "a hidden viewer must not force GL creation"
+    assert v3._geom_prims, "the primitives must be kept for the later draw"
+
+    def _fake_ensure() -> bool:
+        v3._vtk = vtk
+        v3._renderer = vtk.vtkRenderer()
+        return True
+
+    v3._ensure_render_window = _fake_ensure
+    from PySide6.QtGui import QShowEvent
+
+    v3.showEvent(QShowEvent())
+    assert getattr(v3, "_ruler_actor", None) is not None, "no ruler after showEvent"
+    assert getattr(v3, "_geom_actors", []), "ghosts not drawn after showEvent"
+    print("  geometry import before the tab was shown OK")
 
     # --- vector glyphs (ParaView "Glyph"): small arrows along the field -----
     import numpy as np
@@ -244,6 +335,26 @@ def main() -> int:
         assert actor is not None, f"no arrows for {rep}"
         assert actor.GetMapper().GetInput().GetNumberOfCells() > 0, rep
     print("  vector glyphs for all representations OK")
+
+    # "Hide below" must really hide arrows (regression: the log-space cut with
+    # a max*1e-9 floor for zero points left the slider dead below ~70 %)
+    v.cmb_rep.setCurrentText("Surface")
+    mapper, data = v._make_mapper(vtk, lut, *v._array())
+
+    def _arrow_count() -> int:
+        actor = v._make_vector_actor(vtk, data, "Surface", lut)
+        if actor is None:
+            return 0
+        actor.GetMapper().Update()
+        return actor.GetMapper().GetInput().GetNumberOfPoints()
+
+    v.spn_vec_min.setValue(0)
+    n_all = _arrow_count()
+    v.spn_vec_min.setValue(50)
+    n_half = _arrow_count()
+    assert n_all > 0 and n_half < n_all, (n_all, n_half)
+    v.spn_vec_min.setValue(0)
+    print(f"  hide-below threshold OK ({n_all} -> {n_half} arrows)")
 
     # arrows are oriented along the field: synthetic grid, every E points +X
     g = vtk.vtkImageData()
@@ -273,6 +384,58 @@ def main() -> int:
     )
     assert grow[0] > 3.0 * max(grow[1:]), (grow, b, gb)  # +X only, no +Y/+Z
     v._grid, v._scalar_name = saved_grid, saved_scalar
+
+    # --- streamlines: appearance options, presets, actor modes --------------
+    from app.ui.vtk_viewer import DEFAULT_STREAMLINES
+
+    defaults = v.streamline_options()
+    for key, value in DEFAULT_STREAMLINES.items():
+        assert defaults[key] == value, (key, defaults)
+    seen_stream: list[dict] = []
+    v.on_streamlines_changed = seen_stream.append
+    v.set_streamline_options(
+        {
+            "enabled": True,
+            "preset": "Publication",
+            "representation": "tube",
+            "radius_pct": 0.5,
+            "sides": 12,
+            "line_width": 3.0,
+            "opacity": 70,
+            "color_mode": "solid",
+            "color": [1.0, 0.0, 0.0],
+            "seeds": 4,
+        }
+    )
+    stream = v.streamline_options()
+    assert stream["enabled"] is True and stream["preset"] == "Publication"
+    assert stream["radius_pct"] == 0.5 and stream["sides"] == 12
+    assert stream["opacity"] == 70 and stream["color"] == [1.0, 0.0, 0.0]
+    assert v.spn_stream_radius.isEnabled() and not v.spn_stream_width.isEnabled()
+    tube = v._streamline_actor(vtk, "magnitude", v._lookup_table())
+    assert tube is not None, "tube streamlines failed"
+    tube.GetMapper().Update()
+    assert tube.GetMapper().GetInput().GetNumberOfCells() > 0
+    assert abs(tube.GetProperty().GetOpacity() - 0.7) < 1e-9
+    v.cmb_stream_preset.setCurrentText("Draft")
+    assert v.streamline_options()["representation"] == "line"
+    assert v.streamline_options()["preset"] == "Draft"
+    assert not v.spn_stream_radius.isEnabled() and v.spn_stream_width.isEnabled()
+    line = v._streamline_actor(vtk, "magnitude", v._lookup_table())
+    assert line is not None, "line streamlines failed"
+    line.GetMapper().Update()
+    assert line.GetMapper().GetInput().GetNumberOfCells() > 0
+    assert line.GetProperty().GetLineWidth() == 1.0
+    v.cmb_stream_color.setCurrentIndex(v.cmb_stream_color.findData("speed"))
+    assert v.streamline_options()["color_mode"] == "speed"
+    assert v.streamline_options()["preset"] == "Custom"
+    speed = v._streamline_actor(vtk, "magnitude", v._lookup_table())
+    assert speed is not None and speed.GetMapper().GetScalarVisibility()
+    assert seen_stream and seen_stream[-1]["color_mode"] == "speed"
+    v.set_streamline_options(dict(DEFAULT_STREAMLINES))
+    v.on_streamlines_changed = None
+    print("  streamline appearance / presets / tube-line-speed OK")
+
     # option round-trip (clamping + widget state)
     v.set_vector_options({"enabled": True, "size": 2.5, "max_arrows": 500,
                           "normalize": False})
@@ -396,6 +559,44 @@ def main() -> int:
     assert v._effective_range() == (mag[0], mag[1]), v._effective_range()
     print("  series loaded:", len(v._series), "steps, auto-playing")
 
+    # Flicker regression: a refresh (and every time/frequency step) must
+    # present exactly ONE frame. _draw_geometry used to Render() the scene
+    # without the field actor, so every step flashed "geometry only" first.
+    class _Win:
+        def __init__(self, box):
+            self.box = box
+
+        def Render(self):  # noqa: N802 - VTK API name
+            self.box[0] += 1
+
+    class _Iren:
+        def __init__(self, box):
+            self.box = box
+
+        def GetRenderWindow(self):  # noqa: N802 - VTK API name
+            return _Win(self.box)
+
+    box = [0]
+    old_iren, old_marker, old_renderer = v._iren, v._marker, v._renderer
+    corner = v._axes["corner"]
+    v._axes["corner"] = False  # no orientation-marker widget on a fake interactor
+    if v._renderer is None:  # offscreen: no GL renderer yet, make a plain one
+        import vtk as _vtkmod
+
+        v._vtk = v._vtk or _vtkmod
+        v._renderer = _vtkmod.vtkRenderer()
+    v._iren = _Iren(box)
+    box[0] = 0
+    v._refresh_display()
+    assert box[0] == 1, f"refresh rendered {box[0]}x (geometry frame + field frame)"
+    box[0] = 0
+    v.slider_time.setValue(1)
+    assert box[0] == 1, f"frame step rendered {box[0]}x"
+    v.slider_time.setValue(0)  # back to the first frame for the checks below
+    v._iren, v._marker, v._renderer = old_iren, old_marker, old_renderer
+    v._axes["corner"] = corner
+    print("  one render per refresh / frame step (no flicker) OK")
+
     # physical simulation time of the frame (auto ps/ns unit)
     assert v.lbl_sim_time.text() == "t = 0.3399 ps", v.lbl_sim_time.text()
     assert v.lbl_time_info.text() == "1/3  (step 0)", v.lbl_time_info.text()
@@ -430,6 +631,12 @@ def main() -> int:
     # the colour bar title shows the physical unit of the dump
     bar_u = v._make_scalar_bar(_vtk, v._lookup_table(), "magnitude", v._field_unit)
     assert bar_u.GetTitle() == "E-Field magnitude [V/m]", bar_u.GetTitle()
+    # switching to an H dump must replace the cached E title, not keep it
+    bar_h = v._make_scalar_bar(_vtk, v._lookup_table(), "magnitude", "A/m")
+    assert bar_h.GetTitle() == "H-Field magnitude [A/m]", bar_h.GetTitle()
+    v._bar_title = "E-Field magnitude [V/m]"
+    v._apply_bar_title(bar_h)
+    assert v._bar_title == "H-Field magnitude [A/m]", v._bar_title
 
     # geometry and font are configurable from Viewer settings
     v.set_color_bar_options(
@@ -585,10 +792,15 @@ def main() -> int:
     assert win.viewer.cmb_rep.currentText() == v.cmb_rep.currentText()
     assert win.viewer.axes_options() == v.axes_options(), "axes options not mirrored"
     assert win.viewer.vector_options() == v.vector_options(), "vectors not mirrored"
+    assert win.viewer.streamline_options() == v.streamline_options(), (
+        "streamlines not mirrored"
+    )
     win.viewer.set_axes_option("labels", True)  # pop-out changes mirror back
     assert v.axes_options()["labels"] is True
     win.viewer.spn_vec_size.setValue(2.5)  # ... vector settings as well
     assert v.vector_options()["size"] == 2.5, v.vector_options()
+    win.viewer.spn_stream_radius.setValue(0.7)  # ... streamline settings too
+    assert abs(v.streamline_options()["radius_pct"] - 0.7) < 1e-9
     win.viewer.chk_vectors.setChecked(True)
     assert v.vector_options()["enabled"] is True
     win.viewer.chk_vectors.setChecked(False)
@@ -606,7 +818,7 @@ def main() -> int:
     assert v._root_layout.count() == before
     print("  pop-out / close (no duplicate) OK")
 
-    # right-click menu: only outside the 3D pane (VTK uses it inside)
+    # right-click menu: available on the controls AND inside the 3D pane
     from PySide6.QtCore import QPoint
 
     v.btn_play.setChecked(False)
@@ -615,18 +827,86 @@ def main() -> int:
     app.processEvents()
     host = v._host.geometry()
     assert host.height() > 50, host
-    assert not v._context_menu_allowed(host.center()), "menu would open inside the 3D pane"
+    assert v._context_menu_allowed(host.center()), "menu blocked inside the 3D pane"
     assert v._context_menu_allowed(QPoint(5, 5)), "menu blocked on the controls"
-    print("  right-click gating (pane excluded) OK")
+    print("  right-click menu available on controls and inside the 3D pane OK")
 
     # --- video export (offscreen has no GL window -> test the pure parts) ---
     from unittest.mock import patch
 
     assert v.btn_video.isEnabled(), "Video… must be enabled for a series"
     assert v._default_video_path().name == "Et-E.mp4", v._default_video_path()
+    assert v._default_video_path(".gif").name == "Et-E.gif", v._default_video_path(".gif")
     with patch("app.ui.vtk_viewer.QMessageBox.information"):
         assert v.export_video(td / "no_gl.mp4") is None, "export without GL must refuse"
+        assert v.export_video(td / "no_gl.gif") is None, "GIF export without GL must refuse"
     assert not (td / "no_gl.mp4").exists()
+    assert not (td / "no_gl.gif").exists()
+
+    # --- animated GIF export (same render loop, Pillow writer) -------------
+    import numpy as np
+    from PIL import Image
+
+    old_iren, old_renderer = v._iren, v._renderer
+    old_grab, old_refresh = v._grab_frame_rgb, v._refresh_display
+    v._iren = object()
+    v._renderer = object()
+    _frame_no = {"i": 0}
+    _grab_sizes = []
+
+    def _grab_distinct(target_size=None):
+        _frame_no["i"] += 1
+        _grab_sizes.append(target_size)
+        frame = np.zeros((24, 32, 3), dtype=np.uint8)
+        frame[:, :, 0] = (_frame_no["i"] * 40) % 256
+        return frame
+
+    v._grab_frame_rgb = _grab_distinct
+    v._refresh_display = lambda: None
+    v.spn_fps.setValue(10)
+    try:
+        with patch("app.ui.vtk_viewer.QMessageBox.information"), \
+                patch("app.ui.vtk_viewer.QMessageBox.warning"):
+            gif = v.export_video(td / "smoke.gif", fmt="gif")
+    finally:
+        v._iren, v._renderer = old_iren, old_renderer
+        v._grab_frame_rgb, v._refresh_display = old_grab, old_refresh
+    assert gif is not None and gif.exists(), "animated GIF was not written"
+    with Image.open(gif) as im:
+        assert getattr(im, "n_frames", 1) == 3, getattr(im, "n_frames", 1)
+        # 10 fps -> 100 ms per GIF frame (Pillow duration is in milliseconds).
+        assert int(im.info.get("duration", 0)) == 100, im.info
+    print("  animated GIF export OK:", gif.name)
+
+    # Export dialog options: frame range + output resolution.
+    from app.ui.video_export_dialog import VideoExportOptions
+
+    v._iren, v._renderer = object(), object()
+    v._grab_frame_rgb = _grab_distinct
+    v._refresh_display = lambda: None
+    try:
+        with patch("app.ui.vtk_viewer.QMessageBox.information"), \
+                patch("app.ui.vtk_viewer.QMessageBox.warning"):
+            ranged = v.export_video(
+                options=VideoExportOptions(
+                    path=td / "range.gif",
+                    fmt="gif",
+                    width=40,
+                    height=30,
+                    fps=8,
+                    start=2,
+                    end=3,
+                    step=1,
+                )
+            )
+    finally:
+        v._iren, v._renderer = old_iren, old_renderer
+        v._grab_frame_rgb, v._refresh_display = old_grab, old_refresh
+    assert ranged is not None and ranged.exists(), "ranged GIF was not written"
+    with Image.open(ranged) as im:
+        assert getattr(im, "n_frames", 1) == 2, getattr(im, "n_frames", 1)
+    assert _grab_sizes[-1] == (40, 30), _grab_sizes[-1]
+    print("  export dialog frame range + resolution OK")
 
     img = vtk.vtkImageData()
     img.SetDimensions(5, 3, 1)  # odd width/height

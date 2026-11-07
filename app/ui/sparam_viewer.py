@@ -7,8 +7,9 @@ import math
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -133,6 +134,15 @@ class SParamGraphWindow(QMainWindow):
         self.lbl_info.setWordWrap(True)
         layout.addWidget(self.lbl_info)
 
+        self.lbl_trust = QLabel("")
+        self.lbl_trust.setWordWrap(True)
+        self.lbl_trust.setStyleSheet(
+            "color: #c62828; font-weight: 600; background: #fff3f3; "
+            "border: 1px solid #e57373; padding: 3px;"
+        )
+        self.lbl_trust.setVisible(False)
+        layout.addWidget(self.lbl_trust)
+
         # Move plot panel into this window
         if viewer is not None:
             right = viewer.right_panel
@@ -148,6 +158,10 @@ class SParamGraphWindow(QMainWindow):
                 self.cmb_port.setCurrentText(viewer.cmb_port.currentText())
             self.cmb_port.blockSignals(False)
             self.lbl_info.setText(viewer.lbl_info.text())
+            trust = getattr(viewer, "lbl_trust", None)
+            if trust is not None:
+                self.lbl_trust.setText(trust.text())
+                self.lbl_trust.setVisible(trust.isVisible())
             viewer.btn_popout.setText("Graph popped out")
 
         layout.setContentsMargins(6, 6, 6, 6)
@@ -173,6 +187,9 @@ class SParamGraphWindow(QMainWindow):
             v.cmb_port.blockSignals(True)
             v.cmb_port.setCurrentText(text)
             v.cmb_port.blockSignals(False)
+        # The pop-out's single Trace box means "show exactly this trace".
+        if text and hasattr(v, "_select_only_trace"):
+            v._select_only_trace(text, redraw=False)
         v._redraw()
         self.lbl_info.setText(v.lbl_info.text())
 
@@ -187,15 +204,26 @@ class SParamGraphWindow(QMainWindow):
 class SParamViewer(QWidget):
     """Browse S-parameters with Smith chart, Cartesian plots, markers, cursor."""
 
+    markers_changed = Signal()
+
     PLOT_TYPES = [
         "Smith",
         "|S| dB",
+        "Return loss [dB]",
         "|S| mag",
         "Phase deg",
         "VSWR",
         "Complex Re/Im",
         "Re/Im + Phase",
         "Z Re/Im",
+    ]
+
+    TRACE_PRESETS = [
+        "Single trace",
+        "Return loss (Sii)",
+        "Transmission (Sij)",
+        "All traces",
+        "Custom",
     ]
 
     # Marker-list row styles (combo order; drives _marker_list_text).
@@ -221,11 +249,15 @@ class SParamViewer(QWidget):
         self.network = None
         self.network_path: Path | None = None
         self.markers: list[float] = []  # frequencies (Hz)
+        self._marker_tags: dict[float, str] = {}  # optional "S21 max" labels
+        self._delta_refs: dict[float, float] = {}  # delta marker -> reference marker
+        self._selected_marker: float | None = None  # highlighted in list + plot
         self._cursor_line = None
         self._cursor_text = None
         self._marker_artists: list = []
         self._marker_z0 = 50.0
         self._graph_win: SParamGraphWindow | None = None
+        self._syncing_traces = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -249,6 +281,18 @@ class SParamViewer(QWidget):
         self.cmb_plot = QComboBox()
         self.cmb_plot.addItems(self.PLOT_TYPES)
         self.cmb_port = QComboBox()
+        self.cmb_port.setToolTip(
+            "Primary trace for markers / cursor / analysis.\n"
+            "Use the Trace list on the left or the preset to overlay more."
+        )
+        self.cmb_trace_set = QComboBox()
+        self.cmb_trace_set.addItems(self.TRACE_PRESETS)
+        self.cmb_trace_set.setToolTip(
+            "Quick selection for the overlay:\n"
+            "• Return loss (Sii): S11, S22, …\n"
+            "• Transmission (Sij): S12, S13, … (i≠j)\n"
+            "• All traces: the complete S-matrix"
+        )
         self.lbl_info = QLabel("No data loaded")
         for w in (
             self.btn_open,
@@ -258,10 +302,21 @@ class SParamViewer(QWidget):
             bar.addWidget(w)
         bar.addWidget(QLabel("Plot"))
         bar.addWidget(self.cmb_plot)
-        bar.addWidget(QLabel("Trace"))
+        bar.addWidget(QLabel("Preset"))
+        bar.addWidget(self.cmb_trace_set)
+        bar.addWidget(QLabel("Primary"))
         bar.addWidget(self.cmb_port)
         bar.addStretch(1)
         root.addLayout(bar)
+
+        self.lbl_trust = QLabel("")
+        self.lbl_trust.setWordWrap(True)
+        self.lbl_trust.setStyleSheet(
+            "color: #c62828; font-weight: 600; background: #fff3f3; "
+            "border: 1px solid #e57373; padding: 3px;"
+        )
+        self.lbl_trust.setVisible(False)
+        root.addWidget(self.lbl_trust)
 
         self._plot_split = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(self._plot_split, 1)
@@ -271,6 +326,14 @@ class SParamViewer(QWidget):
         lv.addWidget(QLabel("Loaded files"))
         self.file_list = QListWidget()
         lv.addWidget(self.file_list)
+        lv.addWidget(QLabel("Traces (check to overlay)"))
+        self.trace_list = QListWidget()
+        self.trace_list.setMaximumHeight(155)
+        self.trace_list.setToolTip(
+            "Tick several S-parameters to draw them in one plot.\n"
+            "The bold/current entry (Primary) drives markers and cursor."
+        )
+        lv.addWidget(self.trace_list)
         lv.addWidget(QLabel("Markers (click plot to add)"))
         self.marker_list = QListWidget()
         lv.addWidget(self.marker_list)
@@ -283,6 +346,7 @@ class SParamViewer(QWidget):
         lv.addLayout(fmt_row)
         self.marker_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.marker_list.customContextMenuRequested.connect(self._on_marker_context_menu)
+        self.marker_list.currentItemChanged.connect(self._on_marker_list_selected)
         self.left_panel = left
         self._plot_split.addWidget(left)
 
@@ -308,11 +372,15 @@ class SParamViewer(QWidget):
         self.cmb_marker_style.currentTextChanged.connect(self._on_marker_style_changed)
         self.cmb_plot.currentTextChanged.connect(lambda *_: self._redraw())
         self.cmb_plot.currentIndexChanged.connect(self._redraw)
-        self.cmb_port.currentIndexChanged.connect(self._redraw)
+        self.cmb_port.currentIndexChanged.connect(self._on_primary_trace_changed)
+        self.cmb_trace_set.currentTextChanged.connect(self._on_trace_preset_changed)
+        self.trace_list.itemChanged.connect(self._on_trace_item_changed)
         self.file_list.currentItemChanged.connect(self._on_file_selected)
         self.canvas.setToolTip(
-            "Right-click to open the analysis menu\n"
-            "(Go to S-min / Clear markers / Pop out graph)."
+            "Left-click: add a marker at the nearest data point.\n"
+            "Right-click: smart markers (min/max, nearest peak/valley,\n"
+            "-3 dB points, band center), clear markers, analysis dialog,\n"
+            "and pop-out graph."
         )
 
         if self.work_dir:
@@ -362,14 +430,29 @@ class SParamViewer(QWidget):
         """
         self.work_dir = Path(work_dir)
 
+    def set_untrusted(self, note: str | None) -> None:
+        """Show/hide the red result-trust banner (failed/partial run)."""
+        text = str(note or "").strip()
+        if hasattr(self, "lbl_trust"):
+            self.lbl_trust.setText(text)
+            self.lbl_trust.setVisible(bool(text))
+        gw = getattr(self, "_graph_win", None)
+        if gw is not None and hasattr(gw, "lbl_trust"):
+            gw.lbl_trust.setText(text)
+            gw.lbl_trust.setVisible(bool(text))
+
     def clear(self) -> None:
         """Drop the loaded network (empty diagram) — e.g. project without results."""
         self.network = None
         self.network_path = None
         self.markers = []
+        self._marker_tags.clear()
+        self._delta_refs.clear()
+        self._selected_marker = None
         self._populate_ports()
         self._refresh_markers()
         self.lbl_info.setText("")
+        self.set_untrusted(None)
         self._redraw()
         gw = getattr(self, "_graph_win", None)
         if gw is not None and hasattr(gw, "lbl_info"):
@@ -385,6 +468,10 @@ class SParamViewer(QWidget):
         self.network = ntwk
         self.network_path = path
         self.markers = []
+        self._marker_tags.clear()
+        self._delta_refs.clear()
+        self._selected_marker = None
+        self.set_untrusted(None)
         self._populate_ports()
         self._refresh_markers()
         info = (
@@ -427,21 +514,139 @@ class SParamViewer(QWidget):
         return missing
 
     def _populate_ports(self) -> None:
+        self._syncing_traces = True
         self.cmb_port.blockSignals(True)
         self.cmb_port.clear()
-        if self.network is None:
-            self.cmb_port.blockSignals(False)
-            return
-        n = self.network.nports
-        names = []
-        if n == 1:
-            names = ["S11"]
-        else:
-            for i in range(1, n + 1):
-                for j in range(1, n + 1):
-                    names.append(f"S{i}{j}")
-        self.cmb_port.addItems(names)
+        names: list[str] = []
+        if self.network is not None:
+            n = self.network.nports
+            if n == 1:
+                names = ["S11"]
+            else:
+                for i in range(1, n + 1):
+                    for j in range(1, n + 1):
+                        names.append(f"S{i}{j}")
+            self.cmb_port.addItems(names)
         self.cmb_port.blockSignals(False)
+        self._syncing_traces = False
+        self._populate_traces(names)
+
+    def _populate_traces(self, names: list[str] | None = None) -> None:
+        """Fill the checkable trace list and start with one primary trace."""
+        if names is None:
+            names = [self.cmb_port.itemText(i) for i in range(self.cmb_port.count())]
+        self._syncing_traces = True
+        self.trace_list.blockSignals(True)
+        self.trace_list.clear()
+        primary = self.cmb_port.currentText() or (names[0] if names else "")
+        for name in names:
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if name == primary else Qt.CheckState.Unchecked
+            )
+            self.trace_list.addItem(item)
+        self.trace_list.blockSignals(False)
+        self.cmb_trace_set.blockSignals(True)
+        self.cmb_trace_set.setCurrentText("Single trace")
+        self.cmb_trace_set.blockSignals(False)
+        self._syncing_traces = False
+
+    def _checked_traces(self) -> list[str]:
+        """Currently ticked S-parameter names (in matrix order)."""
+        keys: list[str] = []
+        for i in range(self.trace_list.count()):
+            item = self.trace_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                keys.append(item.text())
+        if not keys:
+            primary = self.cmb_port.currentText()
+            if primary:
+                keys = [primary]
+        return keys
+
+    def _set_checked_traces(self, keys: list[str], preset: str | None = None) -> None:
+        """Check exactly ``keys`` and make the first one the primary trace."""
+        wanted = set(keys)
+        self._syncing_traces = True
+        self.trace_list.blockSignals(True)
+        first = ""
+        for i in range(self.trace_list.count()):
+            item = self.trace_list.item(i)
+            checked = item.text() in wanted
+            item.setCheckState(
+                Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+            )
+            if checked and not first:
+                first = item.text()
+        self.trace_list.blockSignals(False)
+        if first:
+            self.cmb_port.blockSignals(True)
+            self.cmb_port.setCurrentText(first)
+            self.cmb_port.blockSignals(False)
+        if preset is not None:
+            self.cmb_trace_set.blockSignals(True)
+            self.cmb_trace_set.setCurrentText(preset)
+            self.cmb_trace_set.blockSignals(False)
+        self._syncing_traces = False
+
+    def _select_only_trace(self, key: str, *, redraw: bool = True) -> None:
+        self._set_checked_traces([key], "Single trace")
+        if redraw:
+            self._redraw()
+
+    def _on_primary_trace_changed(self, _index: int = 0) -> None:
+        if self._syncing_traces:
+            return
+        key = self.cmb_port.currentText()
+        if key:
+            self._set_checked_traces([key], "Single trace")
+        self._redraw()
+
+    def _on_trace_item_changed(self, _item: QListWidgetItem) -> None:
+        if self._syncing_traces:
+            return
+        keys = self._checked_traces()
+        if keys and self.cmb_port.currentText() not in keys:
+            self.cmb_port.blockSignals(True)
+            self.cmb_port.setCurrentText(keys[0])
+            self.cmb_port.blockSignals(False)
+        self.cmb_trace_set.blockSignals(True)
+        self.cmb_trace_set.setCurrentText("Custom")
+        self.cmb_trace_set.blockSignals(False)
+        self._redraw()
+
+    def _on_trace_preset_changed(self, text: str) -> None:
+        if self._syncing_traces:
+            return
+        if text == "Single trace":
+            key = self.cmb_port.currentText()
+            self._set_checked_traces([key] if key else [], "Single trace")
+        elif text == "Return loss (Sii)":
+            keys = [
+                f"S{i}{i}"
+                for i in range(1, (self.network.nports if self.network else 0) + 1)
+            ]
+            self._set_checked_traces(keys, text)
+        elif text == "Transmission (Sij)":
+            n = self.network.nports if self.network else 0
+            keys = [f"S{i}{j}" for i in range(1, n + 1) for j in range(1, n + 1) if i != j]
+            self._set_checked_traces(keys, text)
+        elif text == "All traces":
+            keys = [self.trace_list.item(i).text() for i in range(self.trace_list.count())]
+            self._set_checked_traces(keys, text)
+        else:  # Custom — user ticks the list manually
+            return
+        # Pick the matching quantity: return loss is positive (−20log|Sii|),
+        # transmission stays the usual signed |Sij| in dB.
+        if text == "Return loss (Sii)":
+            self.cmb_plot.setCurrentText("Return loss [dB]")
+        elif text in ("Transmission (Sij)", "All traces") and self.cmb_plot.currentText() in (
+            "Smith",
+            "Return loss [dB]",
+        ):
+            self.cmb_plot.setCurrentText("|S| dB")
+        self._redraw()
 
     def _on_open(self) -> None:
         start = str(self.network_path.parent if self.network_path else (self.work_dir or Path.cwd()))
@@ -621,11 +826,154 @@ class SParamViewer(QWidget):
             detail = f"{db:.2f} dB"
         return f"{head}  {detail}"
 
-    def _clear_markers(self) -> None:
+    def marker_state(self) -> list[dict]:
+        """JSON-serialisable marker list for the project file."""
+        return [
+            {
+                "f": float(f),
+                "tag": str(self._marker_tags.get(float(f), "")),
+                "delta_ref": (
+                    float(self._delta_refs[float(f)])
+                    if float(f) in self._delta_refs
+                    else None
+                ),
+            }
+            for f in self.markers
+        ]
+
+    def set_marker_state(self, state) -> None:
+        """Restore markers from a project JSON; snap to loaded data points."""
         self.markers = []
-        self.marker_list.clear()
+        self._marker_tags.clear()
+        self._delta_refs.clear()
+        self._selected_marker = None
+        for entry in state or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                f = float(entry.get("f"))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(f):
+                continue
+            if self.network is not None and len(self.network.f):
+                f = float(self.network.f[int(np.argmin(np.abs(self.network.f - f)))])
+            if f not in self.markers:
+                self.markers.append(f)
+            tag = str(entry.get("tag") or "")
+            if tag:
+                self._marker_tags[f] = tag
+            ref = entry.get("delta_ref")
+            if ref is not None:
+                try:
+                    rf = float(ref)
+                except (TypeError, ValueError):
+                    rf = None
+                if rf is not None and math.isfinite(rf):
+                    if self.network is not None and len(self.network.f):
+                        rf = float(
+                            self.network.f[
+                                int(np.argmin(np.abs(self.network.f - rf)))
+                            ]
+                        )
+                    self._delta_refs[f] = rf
+        self.markers.sort()
         self._refresh_markers()
         self._redraw()
+        self.markers_changed.emit()
+
+    def _clear_markers(self) -> None:
+        self.markers = []
+        self._marker_tags.clear()
+        self._delta_refs.clear()
+        self._selected_marker = None
+        # _refresh_markers() clears the list with signals blocked; clearing the
+        # QListWidget first would emit currentItemChanged and re-enter _redraw.
+        self._refresh_markers()
+        self._redraw()
+        self.markers_changed.emit()
+
+    def _add_marker_at_freq(self, f: float, tag: str = "") -> float:
+        """Add/snap a marker to the nearest data point and optionally tag it."""
+        if self.network is None:
+            return float(f)
+        idx = int(np.argmin(np.abs(self.network.f - float(f))))
+        snapped = float(self.network.f[idx])
+        if snapped not in self.markers:
+            self.markers.append(snapped)
+            self.markers.sort()
+        if tag:
+            self._marker_tags[snapped] = tag
+        self._selected_marker = snapped
+        self._refresh_markers()
+        self._redraw()
+        self.markers_changed.emit()
+        return snapped
+
+    def _add_delta_marker(self, f_target: float) -> None:
+        """Add a delta marker relative to the currently selected marker."""
+        if self.network is None:
+            return
+        if self._selected_marker is None:
+            QMessageBox.information(
+                self,
+                "Delta marker",
+                "Select a marker row first; it becomes the delta reference.",
+            )
+            return
+        ref = float(self._selected_marker)
+        idx_ref = int(np.argmin(np.abs(self.network.f - ref)))
+        ref = float(self.network.f[idx_ref])
+        idx_t = int(np.argmin(np.abs(self.network.f - float(f_target))))
+        target = float(self.network.f[idx_t])
+        if abs(target - ref) < 1.0:
+            QMessageBox.information(
+                self,
+                "Delta marker",
+                "The delta marker needs a different frequency than the reference.",
+            )
+            return
+        if target not in self.markers:
+            self.markers.append(target)
+            self.markers.sort()
+        ref_tag = self._marker_tags.get(ref)
+        ref_label = ref_tag or f"{ref / 1e9:.4f} GHz"
+        self._marker_tags[target] = f"Δ from {ref_label}"
+        self._delta_refs[target] = ref
+        self._selected_marker = target
+        self._refresh_markers()
+        self._redraw()
+        self.markers_changed.emit()
+
+    def _delta_marker_text(
+        self,
+        key: str,
+        s: np.ndarray,
+        f_target: float,
+        f_ref: float,
+        z0: float,
+    ) -> str:
+        """One list row with frequencies and the dB difference only."""
+        idx_t = int(np.argmin(np.abs(self.network.f - f_target)))
+        idx_r = int(np.argmin(np.abs(self.network.f - f_ref)))
+        val = complex(s[idx_t])
+        ref = complex(s[idx_r])
+        if not (
+            math.isfinite(val.real)
+            and math.isfinite(val.imag)
+            and math.isfinite(ref.real)
+            and math.isfinite(ref.imag)
+        ):
+            return f"Δ marker {self.network.f[idx_t]/1e9:.4f} GHz  no data"
+        df = (float(self.network.f[idx_t]) - float(self.network.f[idx_r])) / 1e9
+        mag_t, mag_r = abs(val), abs(ref)
+        d_db = 20.0 * math.log10(max(mag_t, 1e-15) / max(mag_r, 1e-15))
+        head = (
+            f"Δ {self.network.f[idx_t]/1e9:.4f} GHz "
+            f"(ref {self.network.f[idx_r]/1e9:.4f})"
+        )
+        parts = [head, f"Δf {df * 1000.0:+.3g} MHz", f"Δ|S| {d_db:+.3f} dB"]
+        return "  ".join(parts)
 
     def _goto_min(self) -> None:
         if self.network is None or self.cmb_port.count() == 0:
@@ -638,19 +986,187 @@ class SParamViewer(QWidget):
         if not np.any(np.isfinite(db)):
             return
         i = int(np.nanargmin(db))
-        f = float(self.network.f[i])
-        if f not in self.markers:
-            self.markers.append(f)
-            self.markers.sort()
-        self._refresh_markers()
-        self._redraw()
-        self._scroll_marker_to(f)
+        self._add_marker_at_freq(float(self.network.f[i]), f"{key} min")
+
+    def _goto_max(self) -> None:
+        if self.network is None or self.cmb_port.count() == 0:
+            return
+        key = self.cmb_port.currentText()
+        s = self._trace(key)
+        if s is None or not self._trace_has_data(s):
+            return
+        db = 20 * np.log10(np.maximum(np.abs(s), 1e-15))
+        if not np.any(np.isfinite(db)):
+            return
+        i = int(np.nanargmax(db))
+        self._add_marker_at_freq(float(self.network.f[i]), f"{key} max")
+
+    def _goto_nearest_extremum(self, f_click: float | None) -> None:
+        if self.network is None or self.cmb_port.count() == 0:
+            return
+        key = self.cmb_port.currentText()
+        s = self._trace(key)
+        if s is None or not self._trace_has_data(s):
+            return
+        db = 20 * np.log10(np.maximum(np.abs(s), 1e-15))
+        if db.size < 3 or not np.any(np.isfinite(db)):
+            return
+        freqs = np.asarray(self.network.f, dtype=float)
+        peaks = [
+            i
+            for i in range(1, len(db) - 1)
+            if np.isfinite(db[i - 1])
+            and np.isfinite(db[i])
+            and np.isfinite(db[i + 1])
+            and db[i] >= db[i - 1]
+            and db[i] >= db[i + 1]
+        ]
+        valleys = [
+            i
+            for i in range(1, len(db) - 1)
+            if np.isfinite(db[i - 1])
+            and np.isfinite(db[i])
+            and np.isfinite(db[i + 1])
+            and db[i] <= db[i - 1]
+            and db[i] <= db[i + 1]
+        ]
+        candidates = peaks + valleys
+        if not candidates:
+            return
+        target = float(f_click) if f_click is not None else float(np.mean(freqs))
+        best = min(candidates, key=lambda i: abs(freqs[i] - target))
+        tag = f"{key} peak" if best in peaks else f"{key} valley"
+        self._add_marker_at_freq(float(freqs[best]), tag)
+
+    def _mark_bandwidth(self) -> None:
+        """Add markers at the -3 dB points around the primary trace peak/null."""
+        if self.network is None or self.cmb_port.count() == 0:
+            return
+        key = self.cmb_port.currentText()
+        s = self._trace(key)
+        if s is None or not self._trace_has_data(s):
+            return
+        db = 20 * np.log10(np.maximum(np.abs(s), 1e-15))
+        if db.size < 3 or not np.any(np.isfinite(db)):
+            return
+        freqs = np.asarray(self.network.f, dtype=float)
+        reflection = self._is_reflection_key(key)
+        if reflection:
+            center = int(np.nanargmin(db))
+            level = float(db[center] + 3.0)
+            inside = lambda value: value < level
+        else:
+            center = int(np.nanargmax(db))
+            level = float(db[center] - 3.0)
+            inside = lambda value: value > level
+
+        def _interp(i_a: int, i_b: int) -> float:
+            d1, d2 = float(db[i_a]), float(db[i_b])
+            if not (math.isfinite(d1) and math.isfinite(d2)) or abs(d2 - d1) < 1e-15:
+                return float(freqs[i_b])
+            t = (level - d1) / (d2 - d1)
+            t = max(0.0, min(1.0, t))
+            return float(freqs[i_a] + t * (freqs[i_b] - freqs[i_a]))
+
+        left_i = None
+        for i in range(center - 1, -1, -1):
+            if not math.isfinite(float(db[i])):
+                continue
+            if not inside(float(db[i])):
+                left_i = i
+                break
+        right_i = None
+        for i in range(center + 1, len(db)):
+            if not math.isfinite(float(db[i])):
+                continue
+            if not inside(float(db[i])):
+                right_i = i
+                break
+
+        added: list[float] = []
+        if left_i is not None:
+            f_left = _interp(left_i, left_i + 1)
+            added.append(self._add_marker_at_freq(f_left, f"{key} -3dB low"))
+        if right_i is not None:
+            f_right = _interp(right_i, right_i - 1)
+            added.append(self._add_marker_at_freq(f_right, f"{key} -3dB high"))
+        if not added:
+            QMessageBox.information(
+                self,
+                "Markers",
+                "No -3 dB crossings were found inside the current frequency band.",
+            )
+        elif len(added) == 1:
+            QMessageBox.information(
+                self,
+                "Markers",
+                "Only one -3 dB crossing was found inside the current frequency band.",
+            )
+
+    def _goto_band_center(self) -> None:
+        if self.network is None or len(self.network.f) == 0:
+            return
+        center = float(np.mean([self.network.f[0], self.network.f[-1]]))
+        self._add_marker_at_freq(center, "band center")
+
+    def _open_analysis_at(self, event) -> None:
+        pos = self.canvas.mapToGlobal(
+            QPoint(int(event.x), int(event.y))
+        )
+        self._analysis_dlg.move(pos - self._analysis_dlg.rect().center())
+        self._analysis_dlg.show()
+
+    def _show_plot_context_menu(self, event) -> None:
+        """Right-click marker helpers for the primary S-parameter trace."""
+        f_click = self._freq_from_event(event) if self.network is not None else None
+        menu = QMenu(self)
+        act_here = menu.addAction("Add marker here")
+        act_here.setEnabled(f_click is not None)
+        act_delta = menu.addAction("Delta marker here (from selected)")
+        act_delta.setEnabled(
+            f_click is not None and self._selected_marker is not None
+        )
+        menu.addSeparator()
+        act_min = menu.addAction("Marker at trace minimum")
+        act_max = menu.addAction("Marker at trace maximum")
+        act_ext = menu.addAction("Marker at nearest peak/valley")
+        act_ext.setEnabled(f_click is not None)
+        act_bw = menu.addAction("Mark -3 dB points")
+        act_center = menu.addAction("Marker at band center")
+        menu.addSeparator()
+        act_clear = menu.addAction("Clear markers")
+        act_analysis = menu.addAction("Analysis dialog…")
+        act_popout = menu.addAction("Pop out graph")
+        enabled = bool(self.network is not None and self.cmb_port.count())
+        for act in (act_min, act_max, act_ext, act_bw, act_center, act_clear):
+            act.setEnabled(enabled)
+        chosen = menu.exec(
+            self.canvas.mapToGlobal(QPoint(int(event.x), int(event.y)))
+        )
+        if chosen is act_here and f_click is not None:
+            self._add_marker_at_freq(f_click)
+        elif chosen is act_delta and f_click is not None:
+            self._add_delta_marker(f_click)
+        elif chosen is act_min:
+            self._goto_min()
+        elif chosen is act_max:
+            self._goto_max()
+        elif chosen is act_ext:
+            self._goto_nearest_extremum(f_click)
+        elif chosen is act_bw:
+            self._mark_bandwidth()
+        elif chosen is act_center:
+            self._goto_band_center()
+        elif chosen is act_clear:
+            self._clear_markers()
+        elif chosen is act_analysis:
+            self._open_analysis_at(event)
+        elif chosen is act_popout:
+            self.popout_graph()
 
     def _on_click(self, event) -> None:
         if event.button == 3 and event.inaxes is not None:
-            pos = self.canvas.mapToGlobal(self.canvas.rect().center())
-            self._analysis_dlg.move(pos - self._analysis_dlg.rect().center())
-            self._analysis_dlg.show()
+            self._show_plot_context_menu(event)
             return
         if event.inaxes is None or event.button != 1 or self.network is None:
             return
@@ -660,12 +1176,7 @@ class SParamViewer(QWidget):
         f = self._freq_from_event(event)
         if f is None:
             return
-        if f not in self.markers:
-            self.markers.append(f)
-            self.markers.sort()
-        self._refresh_markers()
-        self._redraw()
-        self._scroll_marker_to(f)
+        self._add_marker_at_freq(f)
 
     def _on_motion(self, event) -> None:
         if event.inaxes is None or self.network is None:
@@ -756,6 +1267,15 @@ class SParamViewer(QWidget):
                 self.marker_list.setCurrentRow(i)
                 return
 
+    def _on_marker_list_selected(self, current, _previous=None) -> None:
+        """Selecting a marker row highlights the same marker in the plot."""
+        if current is None:
+            self._selected_marker = None
+        else:
+            raw = current.data(Qt.ItemDataRole.UserRole)
+            self._selected_marker = float(raw) if raw is not None else None
+        self._redraw()
+
     def _trace(self, key: str) -> np.ndarray | None:
         if self.network is None:
             return None
@@ -789,25 +1309,48 @@ class SParamViewer(QWidget):
         self._refresh_markers()  # list rows follow the selected style
 
     def _refresh_markers(self) -> None:
-        self.marker_list.clear()
-        if self.network is None:
-            return
-        key = self.cmb_port.currentText() if self.cmb_port.count() else "S11"
-        s = self._trace(key)
-        if s is None:
-            return
-        z0 = self._z0_from_network()
-        self._marker_z0 = z0
-        for f in self.markers:
-            idx = int(np.argmin(np.abs(self.network.f - f)))
-            val = complex(s[idx]) if idx < len(s) else complex("nan")
-            f_ghz = float(self.network.f[idx]) / 1e9
-            self.marker_list.addItem(
-                QListWidgetItem(self._marker_list_text(key, val, f_ghz, z0))
-            )
-            self.marker_list.item(self.marker_list.count() - 1).setData(
-                Qt.ItemDataRole.UserRole, float(self.network.f[idx])
-            )
+        self.marker_list.blockSignals(True)
+        try:
+            self.marker_list.clear()
+            if self.network is None:
+                self._selected_marker = None
+                return
+            key = self.cmb_port.currentText() if self.cmb_port.count() else "S11"
+            s = self._trace(key)
+            if s is None:
+                return
+            z0 = self._z0_from_network()
+            self._marker_z0 = z0
+            for f in self.markers:
+                idx = int(np.argmin(np.abs(self.network.f - f)))
+                val = complex(s[idx]) if idx < len(s) else complex("nan")
+                f_ghz = float(self.network.f[idx]) / 1e9
+                ref_f = self._delta_refs.get(float(f))
+                if ref_f is not None:
+                    text = self._delta_marker_text(
+                        key, s, float(f), float(ref_f), z0
+                    )
+                else:
+                    text = self._marker_list_text(key, val, f_ghz, z0)
+                tag = self._marker_tags.get(float(f))
+                if tag:
+                    text = f"{tag}  |  {text}"
+                self.marker_list.addItem(QListWidgetItem(text))
+                self.marker_list.item(self.marker_list.count() - 1).setData(
+                    Qt.ItemDataRole.UserRole, float(self.network.f[idx])
+                )
+            # Keep the selected marker row visible after a rebuild.
+            if self._selected_marker is not None and self.markers:
+                nearest = min(
+                    range(len(self.markers)),
+                    key=lambda i: abs(self.markers[i] - self._selected_marker),
+                )
+                if abs(self.markers[nearest] - self._selected_marker) < 1.0:
+                    self.marker_list.setCurrentRow(nearest)
+                else:
+                    self._selected_marker = None
+        finally:
+            self.marker_list.blockSignals(False)
 
     def _on_marker_context_menu(self, pos) -> None:
         """Right-click a marker row to delete it."""
@@ -816,17 +1359,55 @@ class SParamViewer(QWidget):
             return
         self.marker_list.setCurrentItem(item)
         menu = QMenu(self.marker_list)
+        act_copy = menu.addAction("Copy marker value")
+        act_freq = menu.addAction("Copy frequency")
+        menu.addSeparator()
         act_del = menu.addAction("Delete marker")
         chosen = menu.exec(self.marker_list.viewport().mapToGlobal(pos))
-        if chosen is act_del:
-            self._delete_marker_at(self.marker_list.row(item))
+        row = self.marker_list.row(item)
+        if chosen is act_copy:
+            self._copy_marker_value(row)
+        elif chosen is act_freq:
+            self._copy_marker_frequency(row)
+        elif chosen is act_del:
+            self._delete_marker_at(row)
+
+    def _copy_marker_value(self, row: int) -> None:
+        item = self.marker_list.item(row)
+        if item is not None:
+            QApplication.clipboard().setText(item.text())
+
+    def _copy_marker_frequency(self, row: int) -> None:
+        item = self.marker_list.item(row)
+        if item is None:
+            return
+        raw = item.data(Qt.ItemDataRole.UserRole)
+        if raw is None:
+            return
+        QApplication.clipboard().setText(f"{float(raw) / 1e9:.9g} GHz")
 
     def _delete_marker_at(self, row: int) -> None:
         """Remove marker `row` (index in markers == row in marker_list)."""
         if 0 <= row < len(self.markers):
-            del self.markers[row]
+            f = self.markers[row]
+            # Remove delta markers that referenced this marker, and the delta
+            # link when the deleted marker itself was a delta.
+            dependents = [
+                mf for mf, rf in self._delta_refs.items() if abs(rf - f) < 1.0
+            ]
+            for mf in dependents + [f]:
+                self._marker_tags.pop(float(mf), None)
+                self._delta_refs.pop(float(mf), None)
+                if mf in self.markers:
+                    self.markers.remove(mf)
+            if self._selected_marker is not None and (
+                self._selected_marker in dependents
+                or abs(f - self._selected_marker) < 1.0
+            ):
+                self._selected_marker = None
             self._refresh_markers()
             self._redraw()
+            self.markers_changed.emit()
 
     # ----- pop-out graph window ------------------------------------------
     @property
@@ -892,15 +1473,16 @@ class SParamViewer(QWidget):
             return
 
         plot = self.cmb_plot.currentText()
-        key = self.cmb_port.currentText() if self.cmb_port.count() else "S11"
-        s = self._trace(key)
-        if s is None:
-            ax.text(0.5, 0.5, f"No data for {key}", ha="center", va="center")
-            self.canvas.draw_idle()
-            return
-        if not self._trace_has_data(s):
+        keys = self._checked_traces()
+        traces: list[tuple[str, np.ndarray]] = []
+        for name in keys:
+            data = self._trace(name)
+            if data is not None and self._trace_has_data(data):
+                traces.append((name, data))
+        if not traces:
             # untouched S-matrix cell (NaN/0): do not autoscale to it, which
             # leaves a meaningless axis and looks like a broken scale
+            key = keys[0] if keys else "S11"
             ports = "port" if self.network.nports == 1 else "ports"
             ax.text(
                 0.5,
@@ -920,6 +1502,7 @@ class SParamViewer(QWidget):
             self.canvas.draw_idle()
             self._refresh_markers()
             return
+        key, s = traces[0]
 
         f_ghz = self.network.f / 1e9
         z0 = self._z0_from_network()
@@ -930,6 +1513,12 @@ class SParamViewer(QWidget):
             db = 20 * np.log10(np.maximum(np.abs(s), 1e-15))
             ax.plot(f_ghz, db, lw=1.4, label=key)
             ax.set_ylabel("|S| [dB]")
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="best")
+        elif plot == "Return loss [dB]":
+            rl = -20 * np.log10(np.maximum(np.abs(s), 1e-15))
+            ax.plot(f_ghz, rl, lw=1.4, label=key)
+            ax.set_ylabel("Return loss [dB]")
             ax.grid(True, alpha=0.3)
             ax.legend(loc="best")
         elif plot == "|S| mag":
@@ -990,12 +1579,104 @@ class SParamViewer(QWidget):
             ax.grid(True, alpha=0.3)
             ax.legend(loc="best")
 
+        # --- overlay the other checked traces -----------------------------
+        if len(traces) > 1 and plot == "Smith":
+            for idx, (extra_key, extra_s) in enumerate(traces[1:], start=1):
+                self._draw_smith_extra(ax, extra_s, extra_key, f"C{idx % 10}")
+            ax.set_title(
+                f"Smith chart — {len(traces)} traces  "
+                f"[Z0={z0:g} Ω]"
+            )
+            ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
+        elif len(traces) > 1 and plot in (
+            "|S| dB",
+            "Return loss [dB]",
+            "|S| mag",
+            "Phase deg",
+            "VSWR",
+            "Complex Re/Im",
+            "Z Re/Im",
+        ):
+            for idx, (extra_key, extra_s) in enumerate(traces[1:], start=1):
+                color = f"C{idx % 10}"
+                if plot == "|S| dB":
+                    extra_db = 20 * np.log10(np.maximum(np.abs(extra_s), 1e-15))
+                    ax.plot(f_ghz, extra_db, lw=1.3, color=color, label=extra_key)
+                elif plot == "Return loss [dB]":
+                    extra_rl = -20 * np.log10(np.maximum(np.abs(extra_s), 1e-15))
+                    ax.plot(f_ghz, extra_rl, lw=1.3, color=color, label=extra_key)
+                elif plot == "|S| mag":
+                    ax.plot(f_ghz, np.abs(extra_s), lw=1.3, color=color, label=extra_key)
+                elif plot == "Phase deg":
+                    ax.plot(
+                        f_ghz,
+                        np.degrees(np.angle(extra_s)),
+                        lw=1.3,
+                        color=color,
+                        label=extra_key,
+                    )
+                elif plot == "VSWR":
+                    mag = np.abs(extra_s)
+                    vswr = (1 + mag) / np.maximum(1 - mag, 1e-12)
+                    ax.plot(f_ghz, vswr, lw=1.3, color=color, label=extra_key)
+                elif plot == "Complex Re/Im":
+                    ax.plot(
+                        f_ghz, np.real(extra_s), lw=1.2, color=color,
+                        label=f"{extra_key} Re",
+                    )
+                    ax.plot(
+                        f_ghz, np.imag(extra_s), lw=1.0, ls="--", color=color,
+                        label=f"{extra_key} Im",
+                    )
+                elif plot == "Z Re/Im":
+                    if self._is_reflection_key(extra_key):
+                        z = np.array(
+                            [self._s_to_z(complex(v), z0) for v in extra_s],
+                            dtype=complex,
+                        )
+                        ax.plot(
+                            f_ghz, np.real(z), lw=1.2, color=color,
+                            label=f"{extra_key} R",
+                        )
+                        ax.plot(
+                            f_ghz, np.imag(z), lw=1.0, ls="--", color=color,
+                            label=f"{extra_key} X",
+                        )
+                    else:
+                        ax.plot(
+                            f_ghz, np.real(extra_s), lw=1.2, color=color,
+                            label=f"{extra_key} Re",
+                        )
+                        ax.plot(
+                            f_ghz, np.imag(extra_s), lw=1.0, ls="--", color=color,
+                            label=f"{extra_key} Im",
+                        )
+            ax.legend(loc="best", fontsize=8)
+
         if plot != "Smith":
             ax.set_xlabel("Frequency [GHz]")
-            # markers as vertical cursors
+            # markers as vertical cursors; the selected row gets a bold line
             for f in self.markers:
                 x = f / 1e9
-                artist = ax.axvline(x, color="crimson", ls="--", lw=1.0, alpha=0.85)
+                selected = (
+                    self._selected_marker is not None
+                    and abs(f - self._selected_marker) < 1.0
+                )
+                is_delta = float(f) in self._delta_refs
+                if selected:
+                    color, ls, lw, alpha, zorder = "black", "-", 2.2, 0.95, 8
+                elif is_delta:
+                    color, ls, lw, alpha, zorder = "darkviolet", "-.", 1.6, 0.95, 5
+                else:
+                    color, ls, lw, alpha, zorder = "crimson", "--", 1.0, 0.85, 2
+                artist = ax.axvline(
+                    x,
+                    color=color,
+                    ls=ls,
+                    lw=lw,
+                    alpha=alpha,
+                    zorder=zorder,
+                )
                 self._marker_artists.append(artist)
         else:
             self._draw_smith_markers(ax, s, key, z0)
@@ -1014,16 +1695,37 @@ class SParamViewer(QWidget):
             if not (math.isfinite(val.real) and math.isfinite(val.imag)):
                 continue
             re, im = float(np.real(val)), float(np.imag(val))
+            selected = (
+                self._selected_marker is not None
+                and abs(f - self._selected_marker) < 1.0
+            )
+            is_delta = float(f) in self._delta_refs
+            if selected:
+                color, marker, ms, edge, edge_w, zorder = (
+                    "black", "o", 10, "gold", 1.5, 9
+                )
+            elif is_delta:
+                color, marker, ms, edge, edge_w, zorder = (
+                    "darkviolet", "D", 7, "black", 0.6, 7
+                )
+            else:
+                color, marker, ms, edge, edge_w, zorder = (
+                    "crimson", "o", 6, "black", 0.5, 6
+                )
             artist = ax.plot(
                 re,
                 im,
-                "o",
-                color="crimson",
-                ms=6,
-                zorder=6,
+                marker,
+                color=color,
+                ms=ms,
+                markeredgecolor=edge,
+                markeredgewidth=edge_w,
+                zorder=zorder,
             )[0]
             self._marker_artists.append(artist)
             label = f"{self.network.f[idx]/1e9:.3f}"
+            if is_delta:
+                label = "Δ " + label
             if refl:
                 z = self._s_to_z(val, z0)
                 if math.isfinite(z.real) and math.isfinite(z.imag):
@@ -1034,7 +1736,12 @@ class SParamViewer(QWidget):
                 label += f"\n{abs(val):.3g}"
             # Keep labels readable: only annotate first few + last
             n_markers = len(self.markers)
-            if idx == int(np.argmin(np.abs(self.network.f - self.markers[0]))) or n_markers <= 4:
+            if (
+                selected
+                or is_delta
+                or idx == int(np.argmin(np.abs(self.network.f - self.markers[0])))
+                or n_markers <= 4
+            ):
                 txt = ax.text(
                     re + 0.04,
                     im + 0.04,
@@ -1101,6 +1808,23 @@ class SParamViewer(QWidget):
         ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
         ax.grid(False)
 
+    def _draw_smith_extra(
+        self, ax, s: np.ndarray, key: str, color: str
+    ) -> None:
+        """Overlay one more reflection trace on an existing Smith chart."""
+        ok = np.isfinite(s)
+        if not ok.any():
+            return
+        ax.plot(
+            np.real(s),
+            np.imag(s),
+            "-",
+            color=color,
+            lw=1.3,
+            zorder=4,
+            label=key,
+        )
+
     def _draw_cursor(self, idx: int) -> None:
         if self.network is None:
             return
@@ -1143,6 +1867,8 @@ class SParamViewer(QWidget):
             x = self.network.f[idx] / 1e9
             if plot == "|S| dB":
                 y = db
+            elif plot == "Return loss [dB]":
+                y = -db
             elif plot == "|S| mag":
                 y = mag
             elif plot == "Phase deg":

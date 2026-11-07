@@ -536,6 +536,39 @@ def dump_series_to_vtr(
     return paths, labels
 
 
+def _migrate_flat_vtk(out_dir: Path) -> int:
+    """Move legacy flat ``<stem>.vtr`` exports into ``<stem>/`` folders.
+
+    The exporter used to put every dump directly into ``vtk/``.  On the first
+    new export, migrate those leftovers so the folder is clean and the viewer
+    keeps finding them (it searches recursively).
+    """
+    moved = 0
+    for path in sorted(out_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in (".vtr", ".pvd", ".json"):
+            continue
+        if path.suffix.lower() == ".json" and not path.name.endswith(".series.json"):
+            continue
+        stem = path.stem
+        if path.suffix.lower() == ".vtr":
+            m = re.match(r"(?P<base>.+)_[0-9]{4}$", stem)
+            base = m.group("base") if m else stem
+        elif path.suffix.lower() == ".pvd":
+            base = stem
+        else:  # <stem>.series.json
+            base = stem[: -len(".series")] if stem.endswith(".series") else stem
+        dest = out_dir / base
+        if dest == path.parent:
+            continue
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            path.replace(dest / path.name)
+            moved += 1
+        except OSError:
+            continue
+    return moved
+
+
 def export_dumps_to_vtk(
     sim_dir: Path | str,
     out_dir: Path | str | None = None,
@@ -546,10 +579,12 @@ def export_dumps_to_vtk(
 ) -> list[Path]:
     """Convert every field dump (``*.h5`` without ``nf2ff``) in ``sim_dir``.
 
-    Returns the ``.vtr`` paths (one static grid per dump, plus the per-step
-    series when ``per_step`` is set). With ``per_step`` each dump also gets one
-    ``<stem>_NNNN.vtr`` file per stored step (+ ``<stem>.series.json``) so the
-    viewer can animate. ``step_stride`` exports only every N-th step (1 = all).
+    Each dump is written into its own folder ``out_dir/<dump stem>/`` so the
+    static grid, per-step files and sidecar stay together. Returns the ``.vtr``
+    paths (one static grid per dump, plus the per-step series when ``per_step``
+    is set). With ``per_step`` each dump also gets one ``<stem>_NNNN.vtr`` file
+    per stored step (+ ``<stem>.series.json``) so the viewer can animate.
+    ``step_stride`` exports only every N-th step (1 = all).
 
     Incremental: outputs that are newer than their dump are reused, so a second
     click only converts changed dumps. ``progress(done, total, text)`` is called
@@ -562,15 +597,23 @@ def export_dumps_to_vtk(
         out_dir = sim_dir.parent / "vtk"
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    migrated = _migrate_flat_vtk(out_dir)
+    if migrated:
+        print(f"VTK: moved {migrated} legacy flat file(s) into per-dump folders")
     dumps = [h5 for h5 in sorted(sim_dir.glob("*.h5")) if "nf2ff" not in h5.name.lower()]
 
     # exact work count: one static grid per dump + one file per stored step
     plan: list[tuple[Path, list[Path] | None, list[str], int, bool]] = []
     total = 0
     for h5 in dumps:
-        single = out_dir / (h5.stem + ".vtr")
+        # One subfolder per dump: keeps static grid, per-step series and the
+        # sidecar together and prevents same-named dumps from overwriting each
+        # other (e.g. E_z1p2 from different runs).
+        dump_dir = out_dir / h5.stem
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        single = dump_dir / (h5.stem + ".vtr")
         fresh_single = _is_fresh(single, h5)
-        series, labels = _load_series_state(h5, out_dir, stride) if per_step else (None, [])
+        series, labels = _load_series_state(h5, dump_dir, stride) if per_step else (None, [])
         if labels:
             steps = len(labels)
         elif per_step:
@@ -594,11 +637,12 @@ def export_dumps_to_vtk(
     for h5, series, labels, steps, fresh_single in plan:
         if _stop():
             break
-        single = out_dir / (h5.stem + ".vtr")
+        dump_dir = out_dir / h5.stem
+        single = dump_dir / (h5.stem + ".vtr")
         try:
             if not fresh_single:
                 dump_to_vtr(h5, single)
-                _advance(1, f"{h5.name}: grid → {single.name}")
+                _advance(1, f"{h5.name}: grid → {h5.stem}/{single.name}")
             else:
                 _advance(1, f"{h5.name}: grid up to date")
             written.append(single)
@@ -607,12 +651,12 @@ def export_dumps_to_vtk(
             if series is not None:
                 written.extend(series)
                 # the .pvd collection may come from an older export (or be missing)
-                write_series_pvd(out_dir, h5)
+                write_series_pvd(dump_dir, h5)
                 _advance(len(series), f"{h5.name}: {len(series)} step files up to date")
                 continue
             series, labels = dump_series_to_vtr(
                 h5,
-                out_dir,
+                dump_dir,
                 on_step=lambda label, h5=h5: _advance(1, f"{h5.name}: step {label} written"),
                 should_stop=should_stop,
                 step_stride=stride,

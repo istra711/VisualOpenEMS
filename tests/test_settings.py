@@ -19,17 +19,18 @@ def test_field_viewer_autoplay_roundtrip(tmp_path):
 
 
 def test_field_viewer_view_default_and_roundtrip(tmp_path):
-    # "keep" = only fit the camera (the historic Reset view behaviour)
-    assert AppSettings().field_viewer_view == "keep"
+    # "iso" = isometric view when a field is opened (the historic default was
+    # "keep", which only fitted the camera and kept whatever direction was set)
+    assert AppSettings().field_viewer_view == "iso"
     path = tmp_path / "gui_settings.json"
     s = AppSettings()
-    s.field_viewer_view = "iso"
+    s.field_viewer_view = "z+"
     s.save(path)
-    assert AppSettings.load(path).field_viewer_view == "iso"
+    assert AppSettings.load(path).field_viewer_view == "z+"
     # old settings files without the key load with the default
     legacy = tmp_path / "legacy.json"
     legacy.write_text('{"work_dir": "x"}', encoding="utf-8")
-    assert AppSettings.load(legacy).field_viewer_view == "keep"
+    assert AppSettings.load(legacy).field_viewer_view == "iso"
 
 
 def test_field_viewer_vectors_default_and_roundtrip(tmp_path):
@@ -41,6 +42,30 @@ def test_field_viewer_vectors_default_and_roundtrip(tmp_path):
     s.field_viewer_vectors = dict(opts)
     s.save(path)
     assert AppSettings.load(path).field_viewer_vectors == opts
+
+
+def test_field_viewer_streamlines_default_and_roundtrip(tmp_path):
+    # appearance options are optional; the viewer fills in DEFAULT_STREAMLINES
+    assert AppSettings().field_viewer_streamlines == {}
+    path = tmp_path / "gui_settings.json"
+    opts = {
+        "enabled": True,
+        "representation": "tube",
+        "radius_pct": 0.35,
+        "sides": 12,
+        "line_width": 2.0,
+        "opacity": 70,
+        "color_mode": "speed",
+        "color": [1.0, 0.5, 0.0],
+        "seeds": 5,
+    }
+    s = AppSettings()
+    s.field_viewer_streamlines = dict(opts)
+    s.save(path)
+    assert AppSettings.load(path).field_viewer_streamlines == opts
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text('{"work_dir": "x"}', encoding="utf-8")
+    assert AppSettings.load(legacy).field_viewer_streamlines == {}
 
 
 def test_field_viewer_color_scale_default_and_roundtrip(tmp_path):
