@@ -41,6 +41,18 @@ def main() -> int:
             "center": [2.0, 2.0, 0.0],
             "radius": 0.5,
         },
+        {
+            "kind": "polygon",
+            "name": "trace_sheet",
+            "material": "copper",
+            "points": [[-5.0, -1.0], [5.0, -1.0], [5.0, 1.0], [-5.0, 1.0]],
+            "axis": "z",
+            "coord": 0.035,
+            "length": 0.0,
+            # deliberately stale CAD box (0…0.035) like the reported trace
+            "start": [-5.0, -1.0, 0.0],
+            "stop": [5.0, 1.0, 0.035],
+        },
     ]
     ports = [
         PortDef(name="P1", type="msl", start=[-4.0, -1.0, 0.0], stop=[-4.0, 1.0, 0.035]),
@@ -64,11 +76,11 @@ def main() -> int:
         domain=([-20, -20, -10], [20, 20, 10]),
         fit=True,
     )
-    assert len(viewer._design_prims) == 3
+    assert len(viewer._design_prims) == 4
     assert len(viewer._design_ports) == 2
     assert viewer._side_panel.maximumWidth() <= 165
     assert viewer._design_domain == ([-20, -20, -10], [20, 20, 10])
-    assert "Primitives: 3" in viewer.lbl_design_info.text()
+    assert "Primitives: 4" in viewer.lbl_design_info.text()
     assert "Ports: 1/2 active" in viewer.lbl_design_info.text()
     assert "NF2FF: on" in viewer.lbl_design_info.text()
 
@@ -267,6 +279,33 @@ def main() -> int:
     assert viewer._high_contrast is False
     assert viewer._geom_actors[0].GetProperty().GetOpacity() < 0.999
     print("  high-contrast object mode OK")
+
+    # Project/Geometry selection still draws the yellow outline in 3D.
+    viewer.set_highlight(names=["trace"], label="Prim: trace")
+    assert viewer._highlighted_boxes(), "selection box missing"
+    yellow = [
+        a
+        for a in viewer._design_actors
+        if tuple(round(float(c), 3) for c in a.GetProperty().GetColor())
+        == (1.0, 0.82, 0.0)
+    ]
+    assert yellow, "selection highlight actor missing"
+    viewer.set_highlight()
+
+    # A flat polygon selected by box only (name mismatch) must use the real
+    # plane box; the stale 0…0.035 CAD box would silently match nothing.
+    viewer.set_highlight(
+        boxes=[([-5.0, -1.0, 0.035], [5.0, 1.0, 0.035])],
+        label="Prim: trace_sheet",
+    )
+    flat = [
+        b
+        for b in viewer._highlighted_boxes()
+        if abs(b[0][2] - 0.035) < 1e-9 and abs(b[1][2] - 0.035) < 1e-9
+    ]
+    assert flat, viewer._highlighted_boxes()
+    viewer.set_highlight()
+    print("  3D Design selection highlight OK")
 
     viewer._renderer = None  # the remaining checks run without a VTK renderer
 

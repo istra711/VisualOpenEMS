@@ -63,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   polygon/line depth offset, so zero-thickness traces lying exactly on the
   substrate surface are no longer partly hidden by z-fighting. The trace
   reliably wins the depth test without changing its coordinates.
+- **3D Design selection highlight for flat polygons**: the yellow selection
+  outline now uses the real polygon plane box (the same box as the tree and
+  Mesh Viewer). The stale 0…z CAD box could make a selected trace appear to
+  highlight nothing.
 
 ## [0.10.0] - 2026-11-07
 

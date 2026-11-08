@@ -2079,12 +2079,17 @@ class Design3DViewer(VtkFieldViewer):
             return False
 
         try:
-            from app.meshing.bounds import cartesian_primitive_bbox
+            # Use the same real polygon box as the Mesh Viewer / tree selection.
+            # The plain cartesian box falls back to start/stop, which can span
+            # 0…z for a flat sheet and no longer matches the tree's box after
+            # the polygon-focus fix — selection then silently highlighted
+            # nothing.
+            from app.meshing.bounds import primitive_view_bbox
         except Exception:  # noqa: BLE001
-            cartesian_primitive_bbox = None
+            primitive_view_bbox = None
         for pr in getattr(self, "_design_prims", []):
             name = str(pr.get("name") or "")
-            bb = cartesian_primitive_bbox(pr) if cartesian_primitive_bbox else None
+            bb = primitive_view_bbox(pr) if primitive_view_bbox else None
             if bb is None:
                 st, sp = pr.get("start"), pr.get("stop")
                 if st is not None and sp is not None:
