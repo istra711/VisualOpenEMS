@@ -183,27 +183,40 @@ def main() -> int:
     assert viewer.slider_mesh_plane.maximum() == 8, viewer.slider_mesh_plane.maximum()
     viewer.slider_mesh_plane.setValue(4)  # z = 0
     viewer._draw_mesh_plane()
-    mesh_actors = [
-        a for cat, _name, a in viewer._overlay_actors if cat == "mesh_plane"
-    ]
-    assert len(mesh_actors) == 1, viewer._overlay_actors
-    b = mesh_actors[0].GetBounds()
+    actor = viewer._mesh_plane_actor
+    assert actor is not None, viewer._overlay_actors
+    b = actor.GetBounds()
     for got, want in zip(b, (-20e-3, 20e-3, -10e-3, 10e-3, 0.0, 0.0)):
         assert abs(got - want) < 1e-9, (b,)
     viewer.cmb_mesh_axis.setCurrentText("YZ")
     viewer.slider_mesh_plane.setValue(0)  # x = -20 mm
-    mesh_actors = [
-        a for cat, _name, a in viewer._overlay_actors if cat == "mesh_plane"
-    ]
-    assert len(mesh_actors) == 1, viewer._overlay_actors
-    b = mesh_actors[0].GetBounds()
+    actor = viewer._mesh_plane_actor
+    assert actor is not None, viewer._overlay_actors
+    b = actor.GetBounds()
     assert abs(b[0] + 20e-3) < 1e-9 and abs(b[1] + 20e-3) < 1e-9, b
     viewer.chk_mesh_plane.setChecked(False)
-    assert not any(cat == "mesh_plane" for cat, _n, _a in viewer._overlay_actors)
+    assert viewer._mesh_plane_actor is None
     viewer.chk_mesh_plane.setChecked(True)
-    assert any(cat == "mesh_plane" for cat, _n, _a in viewer._overlay_actors)
+    assert viewer._mesh_plane_actor is not None
     viewer.chk_mesh_plane.setChecked(False)  # leave the generic tool API test clean
-    print("  mesh-plane XY/XZ/YZ slider overlay OK")
+
+    # Transparent layer-1 renderer keeps the grid above the opaque geometry.
+    from types import SimpleNamespace
+
+    overlay_win = _vtkmod.vtkRenderWindow()
+    viewer._iren = SimpleNamespace(GetRenderWindow=lambda: overlay_win)
+    assert viewer._ensure_mesh_overlay_renderer()
+    assert overlay_win.GetNumberOfLayers() == 2
+    assert viewer._mesh_overlay_renderer.GetLayer() == 1
+    assert viewer._mesh_overlay_renderer.GetPreserveDepthBuffer() == 0
+    viewer._iren = None
+    try:
+        overlay_win.RemoveRenderer(viewer._mesh_overlay_renderer)
+    except Exception:
+        pass
+    viewer._mesh_overlay_renderer = None
+    viewer._mesh_overlay_window = None
+    print("  mesh-plane XY/XZ/YZ slider + transparent overlay OK")
 
     viewer._renderer = None  # the remaining checks run without a VTK renderer
 

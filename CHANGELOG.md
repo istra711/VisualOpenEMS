@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the middle of a stale CAD bounding box. A flat trace at z=1.651 mm was
   previously focused at 0.8255 mm ("not in this plane"); it is now visible
   immediately. Polygon highlights also use the true plane for the in-slice test.
+- **3D Design mesh-plane visibility**: the mesh section grid is drawn in a
+  transparent layer-1 renderer above the design scene, so opaque geometry no
+  longer hides it. It shares the main camera and remains visible while rotating,
+  panning and zooming.
 
 ## [0.10.0] - 2026-11-07
 

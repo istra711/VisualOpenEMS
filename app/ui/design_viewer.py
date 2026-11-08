@@ -103,6 +103,11 @@ class Design3DViewer(VtkFieldViewer):
         self._mesh_lines: dict[str, Any] = {
             axis: np.empty(0, dtype=float) for axis in "xyz"
         }
+        #: transparent layer-1 renderer so the mesh grid is never hidden by
+        #: the opaque design geometry (depth buffer is cleared per layer).
+        self._mesh_overlay_renderer = None
+        self._mesh_overlay_window = None
+        self._mesh_plane_actor = None
         self._highlight_names: list[str] = []
         self._highlight_boxes: list[tuple[tuple, tuple]] = []
         self._highlight_label = ""
@@ -337,11 +342,20 @@ class Design3DViewer(VtkFieldViewer):
         # The VTK GL window is created only once the tab is really visible.
         self._render_design()
 
+    def _configure_render_window(self, render_window) -> None:
+        """Enable the transparent layer used by the mesh-plane overlay."""
+        try:
+            render_window.SetAlphaBitPlanes(1)
+            render_window.SetNumberOfLayers(2)
+        except Exception:  # noqa: BLE001 — no alpha framebuffer
+            pass
+
     def _ensure_render_window(self) -> bool:
         ok = super()._ensure_render_window()
         if ok:
             self._install_vtk_context_menu()
             self._install_ruler_view_observer()
+            self._ensure_mesh_overlay_renderer()
         return ok
 
     def _install_ruler_view_observer(self) -> None:
@@ -845,6 +859,7 @@ class Design3DViewer(VtkFieldViewer):
         self._design_actors = []
         self._remove_actors([a for _cat, _name, a in self._overlay_actors])
         self._overlay_actors = []
+        self._clear_mesh_plane_actor()
         self._set_mesh_lines(None)
         self._update_mesh_plane_controls()
         self._update_design_info()
@@ -1071,21 +1086,109 @@ class Design3DViewer(VtkFieldViewer):
         except Exception:  # noqa: BLE001 — never block the design view
             return None
 
+    def _ensure_mesh_overlay_renderer(self) -> bool:
+        """Create a transparent layer-1 renderer for the mesh grid.
+
+        A separate renderer clears the depth buffer for its layer, so the mesh
+        section grid stays visible even when it lies inside the opaque design
+        geometry.  It shares the main camera, so it follows every rotation /
+        zoom / fit without extra synchronization.
+        """
+        if self._iren is None or self._renderer is None:
+            return False
+        try:
+            win = self._iren.GetRenderWindow()
+        except Exception:  # noqa: BLE001
+            return False
+        if win is None:
+            return False
+        if (
+            self._mesh_overlay_renderer is not None
+            and self._mesh_overlay_window is win
+        ):
+            try:
+                self._mesh_overlay_renderer.SetActiveCamera(
+                    self._renderer.GetActiveCamera()
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return True
+        if (
+            self._mesh_overlay_renderer is not None
+            and self._mesh_overlay_window is not None
+        ):
+            try:
+                self._mesh_overlay_window.RemoveRenderer(self._mesh_overlay_renderer)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            vtk = self._vtk or _vtk()
+            self._vtk = vtk
+            overlay = vtk.vtkRenderer()
+            overlay.SetLayer(1)
+            overlay.SetBackground(0.15, 0.15, 0.18)
+            try:
+                overlay.SetBackgroundAlpha(0.0)
+            except Exception:  # noqa: BLE001 — older VTK
+                pass
+            overlay.SetPreserveDepthBuffer(False)
+            try:
+                overlay.SetInteractive(0)
+            except Exception:  # noqa: BLE001
+                pass
+            overlay.SetActiveCamera(self._renderer.GetActiveCamera())
+            win.SetNumberOfLayers(2)
+            try:
+                win.SetAlphaBitPlanes(1)
+            except Exception:  # noqa: BLE001 — no alpha framebuffer
+                pass
+            win.AddRenderer(overlay)
+            self._mesh_overlay_renderer = overlay
+            self._mesh_overlay_window = win
+            return True
+        except Exception:  # noqa: BLE001 — fall back to the main renderer
+            self._mesh_overlay_renderer = None
+            self._mesh_overlay_window = None
+            return False
+
+    def _clear_mesh_plane_actor(self) -> None:
+        """Remove the mesh grid from whichever renderer currently holds it."""
+        actor = self._mesh_plane_actor
+        if actor is None:
+            return
+        for renderer in (self._mesh_overlay_renderer, self._renderer):
+            if renderer is None:
+                continue
+            try:
+                renderer.RemoveActor(actor)
+            except Exception:  # noqa: BLE001
+                pass
+        self._mesh_plane_actor = None
+
     def _draw_mesh_plane(self, *_args) -> None:
         """Rebuild the mesh-plane overlay (kept separate from scene actors)."""
         self._update_mesh_plane_controls()
         if self._renderer is None:
             return
-        if any(cat == "mesh_plane" for cat, _n, _a in self._overlay_actors):
-            self.remove_overlay_actors(category="mesh_plane")
+        self._clear_mesh_plane_actor()
         if not self.chk_mesh_plane.isChecked():
             self._render()
             return
         actor = self._make_mesh_plane_actor()
-        if actor is not None:
-            self.add_overlay_actor(actor, category="mesh_plane", name="mesh_grid")
-        else:
+        if actor is None:
             self._render()
+            return
+        target = (
+            self._mesh_overlay_renderer
+            if self._ensure_mesh_overlay_renderer()
+            else self._renderer
+        )
+        try:
+            target.AddActor(actor)
+            self._mesh_plane_actor = actor
+        except Exception:  # noqa: BLE001 — keep the viewer usable
+            self._mesh_plane_actor = None
+        self._render()
 
     def pick_at(self, x: int, y: int):
         """Return ``(actor, world_position)`` under a viewport pixel, or None.

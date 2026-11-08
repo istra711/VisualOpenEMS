@@ -1466,6 +1466,15 @@ class VtkFieldViewer(QWidget):
         self.panel_scroll.setMaximumWidth(200)
         self.panel_scroll.setVisible(self._layout_mode == "panel")
 
+    def _configure_render_window(self, render_window) -> None:
+        """Hook: configure GL window attributes before ``Initialize()``.
+
+        Subclasses (e.g. the 3D Design mesh overlay) need alpha bit planes
+        before the OpenGL context is created; setting them afterwards has no
+        effect on the pixel format.
+        """
+        return None
+
     def _ensure_render_window(self) -> bool:
         """Create the VTK Qt interactor once; False if unavailable/cannot init."""
         if self._iren is not None:
@@ -1494,7 +1503,11 @@ class VtkFieldViewer(QWidget):
             self._host_layout.addWidget(self._iren, 1)
             self._renderer = vtk.vtkRenderer()
             self._renderer.SetBackground(0.15, 0.15, 0.18)
-            self._iren.GetRenderWindow().AddRenderer(self._renderer)
+            render_window = self._iren.GetRenderWindow()
+            # GL pixel-format attributes (e.g. alpha bit planes for a
+            # transparent overlay layer) must be set before Initialize().
+            self._configure_render_window(render_window)
+            render_window.AddRenderer(self._renderer)
             self._iren.Initialize()
             # VTK's default MotionFactor is 10: a few pixels of mouse travel
             # already swing the camera, which makes precise positioning
