@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Settings → Antenna 3D viewer**: quality/speed preset "fast", "balanced"
   (default) or "high" (`AppSettings.antenna_3d_quality`); applies immediately
   to an open 3D pattern and persists across restarts.
+- **Marker visibility**: a "show" checkbox above the marker lists in the
+  Antenna and S-Parameter viewers hides/shows the marker dots/cursors without
+  deleting them; S-parameter markers remain in the project data.
 
 ## [0.10.0] - 2026-11-07
 

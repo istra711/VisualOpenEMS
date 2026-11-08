@@ -506,6 +506,21 @@ def main() -> int:
         print("FAIL: marker plot name", viewer.markers[0]["plot"])
         return 17
     print("marker xy OK:", viewer.marker_list.item(0).text().encode("ascii", "replace").decode())
+    # visibility toggle: hide/show the dots but keep the marker and list row
+    viewer.chk_markers_visible.setChecked(False)
+    viewer._redraw()
+    if any(ln.get_label() == "_marker" for ln in viewer.figure.axes[0].lines):
+        print("FAIL: markers drawn while hidden")
+        return 30
+    if len(viewer.markers) != 1 or viewer.marker_list.count() != 1:
+        print("FAIL: hiding markers deleted them")
+        return 30
+    viewer.chk_markers_visible.setChecked(True)
+    viewer._redraw()
+    if not any(ln.get_label() == "_marker" for ln in viewer.figure.axes[0].lines):
+        print("FAIL: markers not restored after showing")
+        return 30
+    print("marker visibility OK")
     viewer.btn_clear_markers.click()
     if viewer.markers or viewer.marker_list.count():
         print("FAIL: Clear markers button")

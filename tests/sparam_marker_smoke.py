@@ -60,6 +60,16 @@ def main() -> int:
     assert viewer._marker_artists[0].get_color() == "black"
     print("  marker-list selection highlights the plot marker OK")
 
+    # Visibility toggle: hide the plot cursors but keep the marker/list row.
+    viewer.chk_markers_visible.setChecked(False)
+    viewer._redraw()
+    assert viewer._marker_artists == []
+    assert len(viewer.markers) == 1
+    viewer.chk_markers_visible.setChecked(True)
+    viewer._redraw()
+    assert viewer._marker_artists
+    print("  marker visibility toggle OK")
+
     # Delta marker from the selected reference.
     viewer._add_delta_marker(2.1e9)
     assert len(viewer.markers) == 2, viewer.markers

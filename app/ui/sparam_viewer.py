@@ -10,6 +10,7 @@ import numpy as np
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -249,6 +250,7 @@ class SParamViewer(QWidget):
         self.network = None
         self.network_path: Path | None = None
         self.markers: list[float] = []  # frequencies (Hz)
+        self._markers_visible = True
         self._marker_tags: dict[float, str] = {}  # optional "S21 max" labels
         self._delta_refs: dict[float, float] = {}  # delta marker -> reference marker
         self._selected_marker: float | None = None  # highlighted in list + plot
@@ -334,7 +336,17 @@ class SParamViewer(QWidget):
             "The bold/current entry (Primary) drives markers and cursor."
         )
         lv.addWidget(self.trace_list)
-        lv.addWidget(QLabel("Markers (click plot to add)"))
+        marker_bar = QHBoxLayout()
+        marker_bar.addWidget(QLabel("Markers (click plot to add)"))
+        self.chk_markers_visible = QCheckBox("show")
+        self.chk_markers_visible.setChecked(True)
+        self.chk_markers_visible.setToolTip(
+            "Show/hide the marker cursors on the plot.\n"
+            "Markers stay in the list (and in the project for S-parameters)."
+        )
+        marker_bar.addWidget(self.chk_markers_visible)
+        marker_bar.addStretch(1)
+        lv.addLayout(marker_bar)
         self.marker_list = QListWidget()
         lv.addWidget(self.marker_list)
         fmt_row = QHBoxLayout()
@@ -369,6 +381,7 @@ class SParamViewer(QWidget):
         self.btn_open.clicked.connect(self._on_open)
         self.btn_reload.clicked.connect(self._reload_current)
         self.btn_scan.clicked.connect(self._on_scan_workdir)
+        self.chk_markers_visible.toggled.connect(self._on_markers_visible_toggled)
         self.cmb_marker_style.currentTextChanged.connect(self._on_marker_style_changed)
         self.cmb_plot.currentTextChanged.connect(lambda *_: self._redraw())
         self.cmb_plot.currentIndexChanged.connect(self._redraw)
@@ -881,6 +894,11 @@ class SParamViewer(QWidget):
         self._refresh_markers()
         self._redraw()
         self.markers_changed.emit()
+
+    def _on_markers_visible_toggled(self, checked: bool) -> None:
+        """Hide/show marker cursors; the marker list/project state is kept."""
+        self._markers_visible = bool(checked)
+        self._redraw()
 
     def _clear_markers(self) -> None:
         self.markers = []
@@ -1656,7 +1674,7 @@ class SParamViewer(QWidget):
         if plot != "Smith":
             ax.set_xlabel("Frequency [GHz]")
             # markers as vertical cursors; the selected row gets a bold line
-            for f in self.markers:
+            for f in (self.markers if self._markers_visible else []):
                 x = f / 1e9
                 selected = (
                     self._selected_marker is not None
@@ -1686,7 +1704,7 @@ class SParamViewer(QWidget):
 
     def _draw_smith_markers(self, ax, s: np.ndarray, key: str, z0: float) -> None:
         """Marker dots + optional Z labels on the Smith chart."""
-        if not self.markers or self.network is None:
+        if not self._markers_visible or not self.markers or self.network is None:
             return
         refl = self._is_reflection_key(key)
         for f in self.markers:

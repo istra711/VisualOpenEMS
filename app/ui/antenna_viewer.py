@@ -410,6 +410,7 @@ class AntennaPatternViewer(QWidget):
         self._dbi_redraw_timer.timeout.connect(self._redraw)
         # click markers: {"plot","kind","x","y","label","xunit","yunit"}
         self.markers: list[dict] = []
+        self._markers_visible = True
         self._marker_cfg: dict | None = None
         self._graph_win: AntennaGraphWindow | None = None
         # last HPBW / VRV results (per cut name), drawn on polar plots
@@ -480,7 +481,17 @@ class AntennaPatternViewer(QWidget):
         self.lbl_detail_title = QLabel("Details")
         lv.addWidget(self.lbl_detail_title)
         lv.addWidget(self.lbl_detail)
-        lv.addWidget(QLabel("Markers (click plot to add)"))
+        marker_bar = QHBoxLayout()
+        marker_bar.addWidget(QLabel("Markers (click plot to add)"))
+        self.chk_markers_visible = QCheckBox("show")
+        self.chk_markers_visible.setChecked(True)
+        self.chk_markers_visible.setToolTip(
+            "Show/hide the marker dots on the plots.\n"
+            "Markers stay in the list and are not deleted."
+        )
+        marker_bar.addWidget(self.chk_markers_visible)
+        marker_bar.addStretch(1)
+        lv.addLayout(marker_bar)
         self.marker_list = QListWidget()
         self.marker_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.marker_list.customContextMenuRequested.connect(self._on_marker_context_menu)
@@ -631,6 +642,7 @@ class AntennaPatternViewer(QWidget):
         self.btn_help.clicked.connect(self._on_help)
         self.btn_popout.clicked.connect(self.popout_graph)
         self.btn_clear_markers.clicked.connect(self._clear_markers)
+        self.chk_markers_visible.toggled.connect(self._on_markers_visible_toggled)
         self.btn_hpbw.clicked.connect(self._on_hpbw)
         self.btn_vrv.clicked.connect(self._on_vrv)
         self.cmb_plot.currentTextChanged.connect(lambda *_: self._redraw())
@@ -1576,7 +1588,7 @@ class AntennaPatternViewer(QWidget):
 
     def _draw_markers(self, plot: str) -> None:
         """Draw the crimson dots of every marker belonging to `plot`."""
-        if not self.markers or not self.figure.axes:
+        if not self._markers_visible or not self.markers or not self.figure.axes:
             return
         ax = self.figure.axes[0]
         if ax.name == "3d":
@@ -1610,6 +1622,12 @@ class AntennaPatternViewer(QWidget):
                     f"{m['plot']}: {m['x']:.4g}{m['xunit']}  {m['y']:.3g}{m['yunit']}{label}"
                 )
             )
+
+    def _on_markers_visible_toggled(self, checked: bool) -> None:
+        """Hide/show marker dots without deleting the markers themselves."""
+        self._markers_visible = bool(checked)
+        if self.cmb_plot.currentText():
+            self._redraw()
 
     def _clear_markers(self) -> None:
         self.markers = []
