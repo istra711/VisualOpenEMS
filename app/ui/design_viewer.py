@@ -29,6 +29,7 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -108,6 +109,8 @@ class Design3DViewer(VtkFieldViewer):
         self._mesh_overlay_renderer = None
         self._mesh_overlay_window = None
         self._mesh_plane_actor = None
+        #: mesh-plane grid colour; white by default (Viewer settings)
+        self._mesh_color = (1.0, 1.0, 1.0)
         self._highlight_names: list[str] = []
         self._highlight_boxes: list[tuple[tuple, tuple]] = []
         self._highlight_label = ""
@@ -962,6 +965,29 @@ class Design3DViewer(VtkFieldViewer):
             out[axis] = arr
         self._mesh_lines = out
 
+    def set_mesh_color(self, color: str = "#ffffff") -> None:
+        """Set the mesh-plane grid colour (live update, no rebuild)."""
+        c = QColor(str(color or "#ffffff"))
+        if not c.isValid():
+            c = QColor("#ffffff")
+        self._mesh_color = (c.redF(), c.greenF(), c.blueF())
+        actor = self._mesh_plane_actor
+        if actor is not None:
+            try:
+                actor.GetProperty().SetColor(*self._mesh_color)
+            except Exception:  # noqa: BLE001
+                pass
+            self._render()
+
+    def mesh_color(self) -> str:
+        """Current mesh-plane grid colour as ``#rrggbb``."""
+        r, g, b = self._mesh_color
+        return (
+            f"#{int(round(r * 255)):02x}"
+            f"{int(round(g * 255)):02x}"
+            f"{int(round(b * 255)):02x}"
+        )
+
     def _mesh_axis_key(self) -> str:
         """Normal axis of the selected section plane (XY->z, XZ->y, YZ->x)."""
         return {"XY": "z", "XZ": "y", "YZ": "x"}.get(
@@ -1078,7 +1104,7 @@ class Design3DViewer(VtkFieldViewer):
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
             prop = actor.GetProperty()
-            prop.SetColor(0.10, 0.55, 0.90)
+            prop.SetColor(*self._mesh_color)
             prop.SetLineWidth(1.0)
             prop.SetOpacity(0.9)
             prop.SetLighting(False)
@@ -2208,6 +2234,7 @@ class DesignViewerWindow(QMainWindow):
             mesh_lines=source._mesh_lines,
             fit=True,
         )
+        self.viewer.set_mesh_color(source.mesh_color())
         self.viewer.chk_mesh_plane.setChecked(source.chk_mesh_plane.isChecked())
         idx = self.viewer.cmb_mesh_axis.findText(source.cmb_mesh_axis.currentText())
         if idx >= 0:

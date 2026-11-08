@@ -53,6 +53,8 @@ class AppSettings:
     project_panel_visible: bool = True
     #: Mesh Viewer overlay colours: grid/domain/nf2ff/port/port_inactive/critical
     mesh_viewer_colors: dict = field(default_factory=dict)
+    #: 3D Design mesh section-plane colour (Viewer settings → Mesh colours)
+    design_mesh_color: str = "#ffffff"
     #: critical-cell visibility threshold (runtime penalty 1/10/100x)
     mesh_critical_min_penalty: float = 1.0
 

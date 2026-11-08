@@ -194,6 +194,15 @@ def main() -> int:
     assert actor is not None, viewer._overlay_actors
     b = actor.GetBounds()
     assert abs(b[0] + 20e-3) < 1e-9 and abs(b[1] + 20e-3) < 1e-9, b
+    # white is the default; a colour change updates the live actor
+    assert viewer.mesh_color() == "#ffffff"
+    viewer.set_mesh_color("#ff0000")
+    assert viewer.mesh_color() == "#ff0000"
+    r, g, blue = actor.GetProperty().GetColor()
+    assert abs(r - 1.0) < 1e-9 and abs(g) < 1e-9 and abs(blue) < 1e-9
+    viewer.set_mesh_color("#ffffff")
+    r, g, blue = actor.GetProperty().GetColor()
+    assert abs(r - 1.0) < 1e-9 and abs(g - 1.0) < 1e-9 and abs(blue - 1.0) < 1e-9
     viewer.chk_mesh_plane.setChecked(False)
     assert viewer._mesh_plane_actor is None
     viewer.chk_mesh_plane.setChecked(True)

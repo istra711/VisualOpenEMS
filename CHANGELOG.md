@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section grid in the 3D Design viewer. The plane is selectable as XY / XZ /
   YZ and moved with a slider (one step per mesh line, snapped to the built
   grid); it follows a mesh rebuild.
+- **3D Design mesh-plane colour**: Viewer settings → Mesh colours now exposes
+  "3D Design mesh plane"; the default is white (`#ffffff`) and the colour is
+  applied live to the docked viewer and its pop-out.
 
 ### Fixed
 

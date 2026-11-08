@@ -750,6 +750,9 @@ class MainWindow(QMainWindow):
         self.design_viewer.open_appcsxcad_requested.connect(
             self._on_design_open_appcsxcad
         )
+        self.design_viewer.set_mesh_color(
+            str(getattr(self.settings, "design_mesh_color", "#ffffff"))
+        )
         tabs.addTab(self.design_viewer, "3D Design")
         self.design_tab_index = tabs.indexOf(self.design_viewer)
 
@@ -8373,6 +8376,43 @@ class MainWindow(QMainWindow):
         )
         mform.addRow("Critical threshold", cmb_penalty)
         mesh_color_layout.addWidget(grp_mesh)
+
+        # --- 3D Design mesh section-plane colour (default white) -----------
+        grp_design = QGroupBox("3D Design mesh plane")
+        dform = QFormLayout(grp_design)
+        design_color = {
+            "value": QColor(
+                str(getattr(self.settings, "design_mesh_color", "#ffffff"))
+            )
+        }
+        if not design_color["value"].isValid():
+            design_color["value"] = QColor("#ffffff")
+        btn_design_color = QPushButton()
+
+        def _paint_design_color() -> None:
+            color = design_color["value"]
+            btn_design_color.setText(color.name())
+            btn_design_color.setStyleSheet(
+                f"background-color:{color.name()}; "
+                f"color:{'white' if color.lightness() < 128 else 'black'};"
+            )
+
+        def _choose_design_color() -> None:
+            color = QColorDialog.getColor(
+                design_color["value"], dlg, "3D mesh plane"
+            )
+            if color.isValid():
+                design_color["value"] = color
+                _paint_design_color()
+
+        btn_design_color.setToolTip(
+            "Colour of the mesh grid on the 3D Design section plane.\n"
+            "Default: white."
+        )
+        btn_design_color.clicked.connect(_choose_design_color)
+        _paint_design_color()
+        dform.addRow("Mesh grid colour", btn_design_color)
+        mesh_color_layout.addWidget(grp_design)
         mesh_color_layout.addStretch(1)
 
         viewer_layout.addStretch(1)
@@ -8399,6 +8439,7 @@ class MainWindow(QMainWindow):
             "color_bar": self.vtk_viewer.color_bar_options(),
             "layout": self.vtk_viewer.layout_mode(),
             "mesh_colors": self.mesh_viewer.colors(),
+            "design_mesh_color": self.design_viewer.mesh_color(),
             "critical_threshold": self.mesh_viewer.critical_threshold(),
         }
 
@@ -8435,6 +8476,7 @@ class MainWindow(QMainWindow):
                 },
                 "layout": str(cmb_layout.currentData() or DEFAULT_VIEWER_LAYOUT),
                 "mesh_colors": dict(mesh_colors),
+                "design_mesh_color": design_color["value"].name(),
                 "critical_threshold": float(
                     cmb_penalty.currentData() or 1.0
                 ),
@@ -8487,6 +8529,14 @@ class MainWindow(QMainWindow):
             self.mesh_viewer.set_critical_threshold(
                 float(opts["critical_threshold"])
             )
+            design_viewer = getattr(self, "design_viewer", None)
+            design_targets = [design_viewer]
+            pop = getattr(design_viewer, "_popout_win", None)
+            if pop is not None and getattr(pop, "viewer", None) is not None:
+                design_targets.append(pop.viewer)
+            for target in design_targets:
+                if target is not None:
+                    target.set_mesh_color(str(opts["design_mesh_color"]))
             if not persist:
                 return
             self.settings.field_viewer_autoplay = bool(opts["autoplay"])
@@ -8499,6 +8549,7 @@ class MainWindow(QMainWindow):
             self.settings.field_viewer_color_bar = dict(opts["color_bar"])
             self.settings.field_viewer_layout = str(opts["layout"])
             self.settings.mesh_viewer_colors = dict(opts["mesh_colors"])
+            self.settings.design_mesh_color = str(opts["design_mesh_color"])
             self.settings.mesh_critical_min_penalty = float(
                 opts["critical_threshold"]
             )
@@ -8549,7 +8600,8 @@ class MainWindow(QMainWindow):
             f", {color_scale['steps']} step(s); title="
             f"{'left' if title_options['left'] else 'top'}"
             f", {title_options['size']} pt; bar={bar_options['font']}"
-            f" {bar_options['font_size']} pt; layout={options['layout']})"
+            f" {bar_options['font_size']} pt; layout={options['layout']}; "
+            f"3D mesh={options['design_mesh_color']})"
         )
 
     def _on_settings(self) -> None:

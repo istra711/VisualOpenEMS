@@ -144,6 +144,19 @@ def test_field_viewer_playback_defaults_and_roundtrip(tmp_path):
     assert loaded.field_viewer_loop is False
 
 
+def test_design_mesh_color_default_and_roundtrip(tmp_path):
+    # the 3D Design mesh plane is white by default (Viewer settings)
+    assert AppSettings().design_mesh_color == "#ffffff"
+    path = tmp_path / "gui_settings.json"
+    s = AppSettings()
+    s.design_mesh_color = "#ffcc00"
+    s.save(path)
+    assert AppSettings.load(path).design_mesh_color == "#ffcc00"
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text('{"work_dir": "x"}', encoding="utf-8")
+    assert AppSettings.load(legacy).design_mesh_color == "#ffffff"
+
+
 def test_antenna_3d_quality_default_and_roundtrip(tmp_path):
     # balanced = shaded surface without the heavy high-resolution grid
     assert AppSettings().antenna_3d_quality == "balanced"
