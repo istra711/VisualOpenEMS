@@ -158,6 +158,53 @@ def main() -> int:
         assert abs(got - want) < 1e-9, (rb,)
     viewer.chk_domain.setChecked(True)
     print("  ruler snaps to geometry when domain box is off OK")
+
+    # Mesh-plane overlay: built mesh lines -> movables XY/XZ/YZ grid actor.
+    import numpy as np
+
+    mesh_lines = {
+        "x": np.linspace(-20.0, 20.0, 21),
+        "y": np.linspace(-10.0, 10.0, 11),
+        "z": np.linspace(-5.0, 5.0, 9),
+    }
+    viewer.set_design(
+        project=project,
+        primitives=prims,
+        ports=ports,
+        nf2ff=nf,
+        unit_m=1e-3,
+        domain=([-20, -20, -10], [20, 20, 10]),
+        mesh_lines=mesh_lines,
+        fit=False,
+    )
+    assert viewer.chk_mesh_plane.isEnabled()
+    viewer.chk_mesh_plane.setChecked(True)
+    viewer.cmb_mesh_axis.setCurrentText("XY")
+    assert viewer.slider_mesh_plane.maximum() == 8, viewer.slider_mesh_plane.maximum()
+    viewer.slider_mesh_plane.setValue(4)  # z = 0
+    viewer._draw_mesh_plane()
+    mesh_actors = [
+        a for cat, _name, a in viewer._overlay_actors if cat == "mesh_plane"
+    ]
+    assert len(mesh_actors) == 1, viewer._overlay_actors
+    b = mesh_actors[0].GetBounds()
+    for got, want in zip(b, (-20e-3, 20e-3, -10e-3, 10e-3, 0.0, 0.0)):
+        assert abs(got - want) < 1e-9, (b,)
+    viewer.cmb_mesh_axis.setCurrentText("YZ")
+    viewer.slider_mesh_plane.setValue(0)  # x = -20 mm
+    mesh_actors = [
+        a for cat, _name, a in viewer._overlay_actors if cat == "mesh_plane"
+    ]
+    assert len(mesh_actors) == 1, viewer._overlay_actors
+    b = mesh_actors[0].GetBounds()
+    assert abs(b[0] + 20e-3) < 1e-9 and abs(b[1] + 20e-3) < 1e-9, b
+    viewer.chk_mesh_plane.setChecked(False)
+    assert not any(cat == "mesh_plane" for cat, _n, _a in viewer._overlay_actors)
+    viewer.chk_mesh_plane.setChecked(True)
+    assert any(cat == "mesh_plane" for cat, _n, _a in viewer._overlay_actors)
+    viewer.chk_mesh_plane.setChecked(False)  # leave the generic tool API test clean
+    print("  mesh-plane XY/XZ/YZ slider overlay OK")
+
     viewer._renderer = None  # the remaining checks run without a VTK renderer
 
     # Toggles and the tool API must be safe even without a GL context.

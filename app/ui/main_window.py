@@ -2758,6 +2758,21 @@ class MainWindow(QMainWindow):
             pass
         return None
 
+    def _design_mesh_lines(self):
+        """Built-mesh line coordinates for the 3D Design mesh-plane overlay."""
+        viewer = getattr(self, "mesh_viewer", None)
+        if viewer is None or getattr(viewer, "_project", None) is not self.project:
+            return None
+        csx = getattr(viewer, "_csx", None)
+        if csx is None:
+            return None
+        try:
+            from app.meshing.preview import mesh_lines_from_csx
+
+            return mesh_lines_from_csx(csx)
+        except Exception:  # noqa: BLE001 — the mesh plane is optional
+            return None
+
     def _refresh_design_viewer(self, *, fit: bool = False) -> None:
         """Push the current project snapshot into the embedded 3D Design view."""
         viewer = getattr(self, "design_viewer", None)
@@ -2777,6 +2792,7 @@ class MainWindow(QMainWindow):
                 nf2ff=getattr(self.project, "nf2ff", None),
                 unit_m=unit_m,
                 domain=self._design_domain_box(),
+                mesh_lines=self._design_mesh_lines(),
                 fit=fit,
             )
         except Exception as e:  # noqa: BLE001 — the 3D view must not block editing
@@ -7277,6 +7293,8 @@ class MainWindow(QMainWindow):
             self._mesh_sig = self._mesh_signature()
             self._viewer_geometry_sig = self._mesh_sig
             self._sync_scene_info()
+            # the 3D Design mesh-plane overlay follows the newly built grid
+            self._refresh_design_viewer(fit=False)
             if not auto:
                 # Switch to the viewer tab so the user sees the new mesh
                 idx = getattr(self, "mesh_viewer_tab_index", None)

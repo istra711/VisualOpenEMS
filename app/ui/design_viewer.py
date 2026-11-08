@@ -15,6 +15,8 @@ touching the scene construction:
   ruler or a section-plane outline add temporary actors.
 * :meth:`set_clip_plane` applies (or removes) one VTK clipping plane on every
   scene actor.  A future section-plane widget only has to call this method.
+* :meth:`set_design` also accepts the built CSX mesh lines; the side panel can
+  overlay them as a movable XY/XZ/YZ section grid.
 * :meth:`pick_at` is a small cell-picking hook for object selection and
   measurement start/end points.
 """
@@ -25,6 +27,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -38,6 +41,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -94,6 +98,11 @@ class Design3DViewer(VtkFieldViewer):
         self._overlay_actors: list[tuple[str, str, Any]] = []  # (category, name, actor)
         self._design_needs_fit = True
         self._design_clip_plane = None
+        #: built-mesh line coordinates in drawing units ({x,y,z} -> ndarray);
+        #: the 3D mesh-plane overlay converts them with ``_geom_unit``.
+        self._mesh_lines: dict[str, Any] = {
+            axis: np.empty(0, dtype=float) for axis in "xyz"
+        }
         self._highlight_names: list[str] = []
         self._highlight_boxes: list[tuple[tuple, tuple]] = []
         self._highlight_label = ""
@@ -216,6 +225,44 @@ class Design3DViewer(VtkFieldViewer):
         self.chk_nf2ff.toggled.connect(self._draw_design_overlays)
         scene_form.addRow(self.chk_nf2ff)
 
+        # Built-mesh section plane: XY / XZ / YZ + one slider step per mesh line.
+        mesh_box = QGroupBox("Mesh grid")
+        mesh_layout = QVBoxLayout(mesh_box)
+        mesh_layout.setContentsMargins(3, 3, 3, 3)
+        mesh_layout.setSpacing(2)
+        self.chk_mesh_plane = QCheckBox("Show plane")
+        self.chk_mesh_plane.setChecked(False)
+        self.chk_mesh_plane.setToolTip(
+            "Overlay the built simulation mesh as a grid on a section plane.\n"
+            "Build the mesh first; the plane snaps to a mesh line."
+        )
+        self.chk_mesh_plane.toggled.connect(self._draw_mesh_plane)
+        mesh_layout.addWidget(self.chk_mesh_plane)
+        mesh_axis_row = QHBoxLayout()
+        mesh_axis_row.addWidget(QLabel("Plane"))
+        self.cmb_mesh_axis = QComboBox()
+        self.cmb_mesh_axis.addItems(["XY", "XZ", "YZ"])
+        self.cmb_mesh_axis.setToolTip(
+            "Section plane: XY (normal z), XZ (normal y), YZ (normal x)."
+        )
+        self.cmb_mesh_axis.currentIndexChanged.connect(self._on_mesh_axis_changed)
+        mesh_axis_row.addWidget(self.cmb_mesh_axis, 1)
+        mesh_layout.addLayout(mesh_axis_row)
+        self.slider_mesh_plane = QSlider(Qt.Orientation.Horizontal)
+        self.slider_mesh_plane.setRange(0, 1000)
+        self.slider_mesh_plane.setValue(500)
+        self.slider_mesh_plane.setToolTip(
+            "Mesh line of the selected plane.\n"
+            "Every slider step is one line of the built mesh."
+        )
+        self.slider_mesh_plane.valueChanged.connect(self._on_mesh_plane_slider)
+        mesh_layout.addWidget(self.slider_mesh_plane)
+        self.lbl_mesh_plane = QLabel("")
+        self.lbl_mesh_plane.setStyleSheet("color:#555;")
+        self.lbl_mesh_plane.setWordWrap(True)
+        mesh_layout.addWidget(self.lbl_mesh_plane)
+        panel_layout.addWidget(mesh_box)
+
         info_box = QGroupBox("Information")
         info_layout = QVBoxLayout(info_box)
         info_layout.setContentsMargins(3, 3, 3, 3)
@@ -276,6 +323,7 @@ class Design3DViewer(VtkFieldViewer):
         self._root_layout.addWidget(self._status)
 
         self._update_design_info()
+        self._update_mesh_plane_controls()
 
     @staticmethod
     def _hline() -> QFrame:
@@ -751,6 +799,7 @@ class Design3DViewer(VtkFieldViewer):
         nf2ff=None,
         unit_m: float = 1e-3,
         domain=None,
+        mesh_lines=None,
         *,
         fit: bool = False,
     ) -> None:
@@ -773,8 +822,10 @@ class Design3DViewer(VtkFieldViewer):
             project, self._design_prims
         )
         self._design_needs_fit = bool(fit)
+        self._set_mesh_lines(mesh_lines)
         self._draw_geometry()
         self._draw_design_overlays()
+        self._draw_mesh_plane()
         self._update_design_info()
         if self.isVisible():
             self._render_design()
@@ -794,6 +845,8 @@ class Design3DViewer(VtkFieldViewer):
         self._design_actors = []
         self._remove_actors([a for _cat, _name, a in self._overlay_actors])
         self._overlay_actors = []
+        self._set_mesh_lines(None)
+        self._update_mesh_plane_controls()
         self._update_design_info()
         if message:
             self.lbl_hint.setText(message)
@@ -879,6 +932,161 @@ class Design3DViewer(VtkFieldViewer):
         self._apply_clipping_to_all()
         self._render()
 
+    # ---------------------------------------------------------- mesh plane
+    def _set_mesh_lines(self, mesh_lines) -> None:
+        """Normalise built-mesh line coordinates (drawing units)."""
+        out: dict[str, np.ndarray] = {}
+        for axis in "xyz":
+            try:
+                arr = np.asarray(
+                    (mesh_lines or {}).get(axis, []), dtype=float
+                ).reshape(-1)
+                arr = np.unique(arr[np.isfinite(arr)])
+            except Exception:  # noqa: BLE001 — malformed/old caller
+                arr = np.empty(0, dtype=float)
+            out[axis] = arr
+        self._mesh_lines = out
+
+    def _mesh_axis_key(self) -> str:
+        """Normal axis of the selected section plane (XY->z, XZ->y, YZ->x)."""
+        return {"XY": "z", "XZ": "y", "YZ": "x"}.get(
+            self.cmb_mesh_axis.currentText(), "z"
+        )
+
+    def _mesh_axis_values_m(self) -> np.ndarray:
+        """Mesh line coordinates along the current plane normal, in metres."""
+        scale = float(getattr(self, "_geom_unit", 1e-3) or 1e-3)
+        return np.asarray(
+            self._mesh_lines.get(self._mesh_axis_key(), []), dtype=float
+        ).reshape(-1) * scale
+
+    def _mesh_plane_pos(self) -> float | None:
+        """Selected mesh line of the plane normal, in metres."""
+        vals = self._mesh_axis_values_m()
+        if vals.size == 0:
+            return None
+        idx = max(0, min(vals.size - 1, int(self.slider_mesh_plane.value())))
+        return float(vals[idx])
+
+    def _update_mesh_plane_controls(self) -> None:
+        """Enable the plane controls only when a built mesh is available."""
+        n = int(self._mesh_axis_values_m().size)
+        has = n > 0
+        for w in (self.chk_mesh_plane, self.cmb_mesh_axis, self.slider_mesh_plane):
+            w.setEnabled(has)
+        self.slider_mesh_plane.blockSignals(True)
+        if not has:
+            self.slider_mesh_plane.setRange(0, 1000)
+            self.slider_mesh_plane.setValue(500)
+            self.lbl_mesh_plane.setText("build mesh first")
+            self.slider_mesh_plane.blockSignals(False)
+            return
+        self.slider_mesh_plane.setRange(0, max(0, n - 1))
+        if not (0 <= self.slider_mesh_plane.value() < n):
+            self.slider_mesh_plane.setValue(n // 2)
+        self.slider_mesh_plane.blockSignals(False)
+        scale = float(getattr(self, "_geom_unit", 1e-3) or 1e-3)
+        pos = self._mesh_plane_pos()
+        unit = self._unit_label_for_m(scale)
+        self.lbl_mesh_plane.setText(
+            f"{self._mesh_axis_key().upper()} = {pos / scale:.3f} {unit}"
+            if pos is not None
+            else ""
+        )
+
+    def _on_mesh_axis_changed(self, *_args) -> None:
+        n = int(self._mesh_axis_values_m().size)
+        self.slider_mesh_plane.blockSignals(True)
+        self.slider_mesh_plane.setRange(0, max(0, n - 1))
+        self.slider_mesh_plane.setValue(n // 2)
+        self.slider_mesh_plane.blockSignals(False)
+        self._draw_mesh_plane()
+
+    def _on_mesh_plane_slider(self, _value: int) -> None:
+        self._draw_mesh_plane()
+
+    def _make_mesh_plane_actor(self):
+        """Grid actor of the built mesh at the current section plane."""
+        if self._renderer is None:
+            return None
+        try:
+            vtk = self._vtk or _vtk()
+            self._vtk = vtk
+            scale = float(getattr(self, "_geom_unit", 1e-3) or 1e-3)
+            lines_m = {
+                axis: np.asarray(self._mesh_lines.get(axis, []), dtype=float)
+                * scale
+                for axis in "xyz"
+            }
+            axis = self._mesh_axis_key()
+            normal = {"x": 0, "y": 1, "z": 2}[axis]
+            in_plane = [i for i in range(3) if i != normal]
+            a_vals = lines_m["xyz"[in_plane[0]]]
+            b_vals = lines_m["xyz"[in_plane[1]]]
+            pos = self._mesh_plane_pos()
+            if pos is None or a_vals.size < 2 or b_vals.size < 2:
+                return None
+            a0, a1 = float(a_vals.min()), float(a_vals.max())
+            b0, b1 = float(b_vals.min()), float(b_vals.max())
+            points = vtk.vtkPoints()
+            cells = vtk.vtkCellArray()
+
+            def add_line(p0, p1) -> None:
+                i0 = points.InsertNextPoint(*p0)
+                i1 = points.InsertNextPoint(*p1)
+                cells.InsertNextCell(2)
+                cells.InsertCellPoint(i0)
+                cells.InsertCellPoint(i1)
+
+            for a in a_vals:
+                p0 = [0.0, 0.0, 0.0]
+                p1 = [0.0, 0.0, 0.0]
+                p0[in_plane[0]] = p1[in_plane[0]] = float(a)
+                p0[in_plane[1]] = b0
+                p1[in_plane[1]] = b1
+                p0[normal] = p1[normal] = pos
+                add_line(p0, p1)
+            for b in b_vals:
+                p0 = [0.0, 0.0, 0.0]
+                p1 = [0.0, 0.0, 0.0]
+                p0[in_plane[1]] = p1[in_plane[1]] = float(b)
+                p0[in_plane[0]] = a0
+                p1[in_plane[0]] = a1
+                p0[normal] = p1[normal] = pos
+                add_line(p0, p1)
+
+            poly = vtk.vtkPolyData()
+            poly.SetPoints(points)
+            poly.SetLines(cells)
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputData(poly)
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            prop = actor.GetProperty()
+            prop.SetColor(0.10, 0.55, 0.90)
+            prop.SetLineWidth(1.0)
+            prop.SetOpacity(0.9)
+            prop.SetLighting(False)
+            return actor
+        except Exception:  # noqa: BLE001 — never block the design view
+            return None
+
+    def _draw_mesh_plane(self, *_args) -> None:
+        """Rebuild the mesh-plane overlay (kept separate from scene actors)."""
+        self._update_mesh_plane_controls()
+        if self._renderer is None:
+            return
+        if any(cat == "mesh_plane" for cat, _n, _a in self._overlay_actors):
+            self.remove_overlay_actors(category="mesh_plane")
+        if not self.chk_mesh_plane.isChecked():
+            self._render()
+            return
+        actor = self._make_mesh_plane_actor()
+        if actor is not None:
+            self.add_overlay_actor(actor, category="mesh_plane", name="mesh_grid")
+        else:
+            self._render()
+
     def pick_at(self, x: int, y: int):
         """Return ``(actor, world_position)`` under a viewport pixel, or None.
 
@@ -948,6 +1156,7 @@ class Design3DViewer(VtkFieldViewer):
             return
         self._draw_geometry()
         self._draw_design_overlays()
+        self._draw_mesh_plane()
         self._update_corner_marker()
         # A scene built while the tab was hidden has no camera yet, so fit on
         # the first real render even if set_design(fit=False) was used. The
@@ -1893,8 +2102,15 @@ class DesignViewerWindow(QMainWindow):
             nf2ff=source._design_nf2ff,
             unit_m=source._geom_unit,
             domain=source._design_domain,
+            mesh_lines=source._mesh_lines,
             fit=True,
         )
+        self.viewer.chk_mesh_plane.setChecked(source.chk_mesh_plane.isChecked())
+        idx = self.viewer.cmb_mesh_axis.findText(source.cmb_mesh_axis.currentText())
+        if idx >= 0:
+            self.viewer.cmb_mesh_axis.setCurrentIndex(idx)
+        self.viewer.slider_mesh_plane.setValue(source.slider_mesh_plane.value())
+        self.viewer._draw_mesh_plane()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         src = self.source

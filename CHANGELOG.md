@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Marker visibility**: a "show" checkbox above the marker lists in the
   Antenna and S-Parameter viewers hides/shows the marker dots/cursors without
   deleting them; S-parameter markers remain in the project data.
+- **3D Design mesh plane**: the built simulation mesh can be overlaid as a
+  section grid in the 3D Design viewer. The plane is selectable as XY / XZ /
+  YZ and moved with a slider (one step per mesh line, snapped to the built
+  grid); it follows a mesh rebuild.
 
 ## [0.10.0] - 2026-11-07
 
