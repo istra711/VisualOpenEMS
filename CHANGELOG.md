@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transparent layer-1 renderer above the design scene, so opaque geometry no
   longer hides it. It shares the main camera and remains visible while rotating,
   panning and zooming.
+- **3D Design mesh-plane availability**: opening the 3D Design tab now loads
+  the project's recorded mesh (without starting a new build), so the mesh-grid
+  controls are enabled immediately; if nothing exists the hint now points to
+  the Mesh Viewer ("build mesh first (Mesh Viewer)").
 
 ## [0.10.0] - 2026-11-07
 

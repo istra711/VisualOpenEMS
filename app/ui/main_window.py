@@ -2032,6 +2032,7 @@ class MainWindow(QMainWindow):
             self._refresh_antenna_viewer()
         # opening the 3D Design tab refreshes the current project's scene
         if _index == getattr(self, "design_tab_index", -1):
+            self._ensure_design_mesh()
             self._refresh_design_viewer(fit=True)
         # opening the Field Viewer tab points it at the current project's work dir
         if _index == getattr(self, "vtk_tab_index", -1):
@@ -2773,6 +2774,27 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001 — the mesh plane is optional
             return None
 
+    def _ensure_design_mesh(self) -> None:
+        """Make a recorded/current mesh available for the 3D Design overlay.
+
+        The recorded CSX is loaded lazily when the Mesh Viewer tab is opened.
+        Opening the 3D Design tab directly used to leave the mesh-plane controls
+        at "build mesh first" even though the project already had a mesh. Load
+        the recorded mesh here too — but never start a new build from this tab.
+        """
+        viewer = getattr(self, "mesh_viewer", None)
+        if viewer is None or getattr(self, "_mesh_deleted", False):
+            return
+        try:
+            have_current = (
+                getattr(viewer, "_csx", None) is not None
+                and getattr(viewer, "_project", None) is self.project
+            )
+            if not have_current:
+                self._load_recorded_csx()
+        except Exception as e:  # noqa: BLE001 — the 3D view must not block editing
+            print("3D Design mesh load failed:", e)
+
     def _refresh_design_viewer(self, *, fit: bool = False) -> None:
         """Push the current project snapshot into the embedded 3D Design view."""
         viewer = getattr(self, "design_viewer", None)
@@ -2800,6 +2822,7 @@ class MainWindow(QMainWindow):
 
     def _on_show_design3d(self) -> None:
         """Switch to the embedded 3D Design tab and fit the current scene."""
+        self._ensure_design_mesh()
         self._refresh_design_viewer(fit=True)
         if getattr(self, "design_tab_index", -1) >= 0:
             self.tabs.setCurrentIndex(self.design_tab_index)

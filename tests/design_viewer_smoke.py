@@ -296,6 +296,33 @@ def main() -> int:
     assert viewer._design_ports == []
     assert viewer._design_nf2ff is None
 
+    # Opening 3D Design must load a recorded mesh instead of "build first".
+    from app.ui.main_window import MainWindow as _MainWindow
+
+    class _MeshViewerStub:
+        _csx = None
+        _project = None
+
+    stub = _MeshViewerStub()
+    calls: list[str] = []
+    dummy = SimpleNamespace(
+        mesh_viewer=stub,
+        project=object(),
+        _mesh_deleted=False,
+        _load_recorded_csx=lambda: calls.append("load") or True,
+    )
+    _MainWindow._ensure_design_mesh(dummy)
+    assert calls == ["load"]
+    stub._csx = object()
+    stub._project = dummy.project
+    _MainWindow._ensure_design_mesh(dummy)
+    assert calls == ["load"]  # already current -> no reload
+    dummy._mesh_deleted = True
+    stub._project = None
+    _MainWindow._ensure_design_mesh(dummy)
+    assert calls == ["load"]  # a deleted mesh is not resurrected
+    print("  3D Design loads a recorded mesh for the mesh plane OK")
+
     # Keep the QApplication alive for the widget destructors.
     app.processEvents()
     print("DESIGN 3D VIEWER SMOKE PASS")

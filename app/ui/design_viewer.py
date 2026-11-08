@@ -239,7 +239,7 @@ class Design3DViewer(VtkFieldViewer):
         self.chk_mesh_plane.setChecked(False)
         self.chk_mesh_plane.setToolTip(
             "Overlay the built simulation mesh as a grid on a section plane.\n"
-            "Build the mesh first; the plane snaps to a mesh line."
+            "Build the mesh in the Mesh Viewer first; the plane snaps to a mesh line."
         )
         self.chk_mesh_plane.toggled.connect(self._draw_mesh_plane)
         mesh_layout.addWidget(self.chk_mesh_plane)
@@ -993,7 +993,7 @@ class Design3DViewer(VtkFieldViewer):
         if not has:
             self.slider_mesh_plane.setRange(0, 1000)
             self.slider_mesh_plane.setValue(500)
-            self.lbl_mesh_plane.setText("build mesh first")
+            self.lbl_mesh_plane.setText("build mesh first (Mesh Viewer)")
             self.slider_mesh_plane.blockSignals(False)
             return
         self.slider_mesh_plane.setRange(0, max(0, n - 1))
