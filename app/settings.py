@@ -87,6 +87,11 @@ class AppSettings:
     #: remembered geometry (base64 QByteArray) of the Display popup
     field_viewer_display_geometry: str = ""
 
+    # --- Antenna pattern viewer (matplotlib 3D) ---
+    #: 3D surface/rotation preset: "fast" (few polygons, no AA),
+    #: "balanced" (default, smooth shaded) or "high" (fine grid, slower)
+    antenna_3d_quality: str = "balanced"
+
     # --- Port defaults (Settings dialog + FreeCAD import fallbacks) ---
     default_port_type: str = "lumped"  # lumped | msl | rect_waveguide
     default_port_resistance: float = 50.0  # Ohm

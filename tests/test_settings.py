@@ -144,6 +144,20 @@ def test_field_viewer_playback_defaults_and_roundtrip(tmp_path):
     assert loaded.field_viewer_loop is False
 
 
+def test_antenna_3d_quality_default_and_roundtrip(tmp_path):
+    # balanced = shaded surface without the heavy high-resolution grid
+    assert AppSettings().antenna_3d_quality == "balanced"
+    path = tmp_path / "gui_settings.json"
+    s = AppSettings()
+    s.antenna_3d_quality = "high"
+    s.save(path)
+    assert AppSettings.load(path).antenna_3d_quality == "high"
+    # old settings files without the key load with the balanced default
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text('{"work_dir": "x"}', encoding="utf-8")
+    assert AppSettings.load(legacy).antenna_3d_quality == "balanced"
+
+
 def test_window_layout_state_roundtrip(tmp_path):
     s = AppSettings()
     assert s.main_splitter_sizes == [] and s.log_splitter_sizes == []

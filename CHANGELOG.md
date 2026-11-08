@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Antenna pattern 3D overhaul** (`app/ui/antenna_viewer.py`): default dBi
+  window max−30 dB with "−30 dB" / "Full" buttons, pre-shaded smooth surface
+  (no per-frame re-lighting), orthographic projection, faint θ/φ reference
+  graticule, Gmax marker/label, radius modes dB / linear / √G, view presets
+  (iso/front/top/side) with rotation-preserving redraws, optional wireframe,
+  fixed colorbar and 300 dpi PNG/PDF/SVG export. The dBi-slider rebuild is
+  debounced so dragging stays responsive.
+- **Settings → Antenna 3D viewer**: quality/speed preset "fast", "balanced"
+  (default) or "high" (`AppSettings.antenna_3d_quality`); applies immediately
+  to an open 3D pattern and persists across restarts.
+
 ## [0.10.0] - 2026-11-07
 
 ### Added

@@ -944,7 +944,10 @@ class MainWindow(QMainWindow):
         # Antenna pattern tab (NF2FF far-field: directivity + gain)
         from app.ui.antenna_viewer import AntennaPatternViewer
 
-        self.antenna_viewer = AntennaPatternViewer(work_dir=self.settings.work_path())
+        self.antenna_viewer = AntennaPatternViewer(
+            work_dir=self.settings.work_path(),
+            quality=str(getattr(self.settings, "antenna_3d_quality", "balanced")),
+        )
         tabs.addTab(self.antenna_viewer, "Antenna")
         self.antenna_tab_index = tabs.indexOf(self.antenna_viewer)
 
@@ -8516,7 +8519,7 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.resize(480, 500)
+        dlg.resize(480, 560)
         geo = self._dialog_geometry("settings_main")
         if geo is not None:
             dlg.restoreGeometry(geo)
@@ -8583,6 +8586,25 @@ class MainWindow(QMainWindow):
         hint.setWordWrap(True)
         root.addWidget(hint)
 
+        # --- Antenna pattern viewer: 3D quality vs. rotation speed ---
+        grp_ant = QGroupBox("Antenna 3D viewer")
+        aform = QFL(grp_ant)
+        cmb_3dq = QComboBox()
+        cmb_3dq.addItem("Fast (fewer polygons)", "fast")
+        cmb_3dq.addItem("Balanced (default)", "balanced")
+        cmb_3dq.addItem("High (fine grid, slower rotation)", "high")
+        cur_q = str(
+            getattr(self.settings, "antenna_3d_quality", "balanced") or "balanced"
+        )
+        idx_q = cmb_3dq.findData(cur_q)
+        cmb_3dq.setCurrentIndex(idx_q if idx_q >= 0 else 1)
+        cmb_3dq.setToolTip(
+            "Resolution / anti-aliasing of the 3D antenna pattern.\n"
+            "Fast rotates smoothest; High looks finest but needs more CPU."
+        )
+        aform.addRow("Quality / speed", cmb_3dq)
+        root.addWidget(grp_ant)
+
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -8604,10 +8626,12 @@ class MainWindow(QMainWindow):
         self.settings.default_port_excite = bool(chk_excite.isChecked())
         self.settings.default_port_mesh_dirs = cmb_mesh.currentText()
         self.settings.default_port_direction = cmb_dir.currentText()
+        self.settings.antenna_3d_quality = str(cmb_3dq.currentData() or "balanced")
         self.settings.save()
         try:
             self.sparam_viewer.scan_root = self.settings.work_path()
             self.antenna_viewer.set_work_dir(self.settings.work_path())
+            self.antenna_viewer.set_quality(self.settings.antenna_3d_quality)
         except Exception:  # noqa: BLE001 — viewers may not exist in early tests
             pass
         self.runner = SimulationRunner(self.settings, app_root=APP_ROOT)
@@ -8615,7 +8639,8 @@ class MainWindow(QMainWindow):
         self._log(
             f"Settings saved (port defaults: type={pd['type']} "
             f"R={pd['resistance']} excite={pd['excite_port']} "
-            f"mesh={pd['mesh_dirs']} dir={pd['direction'] or 'auto'})"
+            f"mesh={pd['mesh_dirs']} dir={pd['direction'] or 'auto'}; "
+            f"antenna 3D: {self.settings.antenna_3d_quality})"
         )
 
 

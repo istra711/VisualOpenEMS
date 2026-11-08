@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -347,11 +348,60 @@ class AntennaPatternViewer(QWidget):
 
     CMAP_CHOICES = ("viridis", "plasma", "inferno", "turbo", "jet", "coolwarm", "gray")
 
-    def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
+    #: 3D radius mapping (combo labels); the item data carries the mode key
+    RADIUS_MODES = ("dB", "linear", "√G")
+    #: (elev, azim) presets offered by the 3D "View" menu
+    DEFAULT_VIEW = (24.0, -58.0)
+    VIEW_PRESETS = {
+        "Iso": DEFAULT_VIEW,
+        "Front": (0.0, -90.0),
+        "Top": (89.0, -90.0),
+        "Side": (0.0, 0.0),
+    }
+    #: quality/speed presets for the 3D surface.  ``grid`` is the number of
+    #: interpolated theta/phi samples: rotation cost grows ~quadratically.
+    QUALITY_PRESETS = {
+        "fast": {
+            "grid": 42,
+            "antialias": False,
+            "graticule": 30.0,
+            "annotate": False,
+        },
+        "balanced": {
+            "grid": 72,
+            "antialias": False,
+            "graticule": 30.0,
+            "annotate": True,
+        },
+        "high": {
+            "grid": 110,
+            "antialias": False,
+            "graticule": 15.0,
+            "annotate": True,
+        },
+    }
+
+    def __init__(
+        self,
+        work_dir: Path | None = None,
+        parent: QWidget | None = None,
+        quality: str = "balanced",
+    ) -> None:
         super().__init__(parent)
         self.work_dir = Path(work_dir) if work_dir else None
         self.data: dict | None = None
         self.data_path: Path | None = None
+        # 3D presentation state (quality is normally set from AppSettings)
+        self._quality = self._normalise_quality(quality)
+        self._view3d = tuple(self.DEFAULT_VIEW)
+        self._show_graticule = True
+        self._show_wireframe = False
+        # throttle 3D rebuilds while the dBi slider is dragged (the surface is
+        # rebuilt from scratch; rebuilding on every slider tick would lag)
+        self._dbi_redraw_timer = QTimer(self)
+        self._dbi_redraw_timer.setSingleShot(True)
+        self._dbi_redraw_timer.setInterval(120)
+        self._dbi_redraw_timer.timeout.connect(self._redraw)
         # click markers: {"plot","kind","x","y","label","xunit","yunit"}
         self.markers: list[dict] = []
         self._marker_cfg: dict | None = None
@@ -454,33 +504,89 @@ class AntennaPatternViewer(QWidget):
         # icon) so the pop-out window — which reparents this panel — shows
         # them without any sync code. They sit in a single container widget
         # with layout spacing, otherwise the row is far too tight.
-        self.lbl_3d_field = QLabel("3D field")
+        # compact controls: the plot toolbar shares its row with the matplotlib
+        # navigation buttons, so the 3D group has to stay narrow.  Tooltips
+        # carry the labels instead of extra QLabel widgets.
         self.cmb_3d_field = QComboBox()
         self.cmb_3d_field.addItems(list(self.THREE_D_FIELDS))
         # widest item ("Dmax") must fit incl. the drop-down arrow
         self.cmb_3d_field.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToContents
         )
-        self.cmb_3d_field.setMinimumWidth(80)
-        self.lbl_dbi_win = QLabel("dBi min")
+        self.cmb_3d_field.setMinimumWidth(72)
+        self.cmb_3d_field.setToolTip(
+            "3D pattern field: Gain (incl. efficiency) or Dmax (directivity)"
+        )
         self.slider_dbi_min = QSlider(Qt.Orientation.Horizontal)
-        self.slider_dbi_min.setMinimumWidth(110)
+        self.slider_dbi_min.setMinimumWidth(70)
         self.slider_dbi_min.setToolTip(
-            "Lower dBi bound of the 3D radius/color window (max = pattern max)"
+            "Lower dB bound for the 3D radius (dB mode) and color scale\n"
+            "(max = pattern max)"
         )
         self.lbl_dbi_min = QLabel("-")
-        self.lbl_dbi_min.setMinimumWidth(42)
+        self.lbl_dbi_min.setMinimumWidth(34)
+        # quick dBi-window presets: max-30 dB (clean default) / full range
+        self.btn_db30 = QToolButton()
+        self.btn_db30.setText("−30 dB")
+        self.btn_db30.setFixedWidth(48)
+        self.btn_db30.setToolTip("Set the 3D radius/color window to max − 30 dB")
+        self.btn_dbfull = QToolButton()
+        self.btn_dbfull.setText("Full")
+        self.btn_dbfull.setFixedWidth(38)
+        self.btn_dbfull.setToolTip(
+            "Use the full pattern dynamic range (data min … max)"
+        )
+        # radius mapping of the 3D pattern
+        self.cmb_radius = QComboBox()
+        for label, key in (("dB", "db"), ("linear", "linear"), ("√G", "power")):
+            self.cmb_radius.addItem(label, key)
+        self.cmb_radius.setMinimumWidth(64)
+        self.cmb_radius.setToolTip(
+            "3D radius mapping:\n"
+            "dB = lower bound from the slider (dB window)\n"
+            "linear = normalized gain G/Gmax\n"
+            "√G = normalized field amplitude"
+        )
+        # view presets / wireframe / graticule / export in one compact menu
+        self.btn_view3d = QToolButton()
+        self.btn_view3d.setText("View ▾")
+        self.btn_view3d.setFixedWidth(56)
+        self.btn_view3d.setToolTip(
+            "Standard 3D views, wireframe, graticule and 300 dpi export"
+        )
+        self.btn_view3d.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu3d = QMenu(self.btn_view3d)
+        for name in ("Iso", "Front", "Top", "Side"):
+            elev, azim = self.VIEW_PRESETS[name]
+            menu3d.addAction(name).triggered.connect(
+                lambda _checked=False, e=elev, a=azim: self._set_view3d(e, a)
+            )
+        menu3d.addSeparator()
+        self.act_graticule = menu3d.addAction("Reference graticule")
+        self.act_graticule.setCheckable(True)
+        self.act_graticule.setChecked(True)
+        self.act_graticule.toggled.connect(self._on_graticule_toggled)
+        self.act_wireframe = menu3d.addAction("Wireframe")
+        self.act_wireframe.setCheckable(True)
+        self.act_wireframe.setChecked(False)
+        self.act_wireframe.toggled.connect(self._on_wireframe_toggled)
+        menu3d.addSeparator()
+        act_export = menu3d.addAction("Export 300 dpi PNG…")
+        act_export.triggered.connect(lambda _checked=False: self._export_3d_png())
+        self.btn_view3d.setMenu(menu3d)
         self.toolbar.addSeparator()
         self.dbi_controls = QWidget()
         dv = QHBoxLayout(self.dbi_controls)
-        dv.setContentsMargins(6, 0, 6, 0)
-        dv.setSpacing(10)
+        dv.setContentsMargins(4, 0, 4, 0)
+        dv.setSpacing(6)
         for w in (
-            self.lbl_3d_field,
             self.cmb_3d_field,
-            self.lbl_dbi_win,
             self.slider_dbi_min,
             self.lbl_dbi_min,
+            self.btn_db30,
+            self.btn_dbfull,
+            self.cmb_radius,
+            self.btn_view3d,
         ):
             dv.addWidget(w)
         self.toolbar.addWidget(self.dbi_controls)
@@ -531,6 +637,9 @@ class AntennaPatternViewer(QWidget):
         self.spn_lblpos.valueChanged.connect(self._redraw)
         self._radial_dlg.accepted.connect(self._redraw)
         self.slider_dbi_min.valueChanged.connect(self._on_dbi_slider)
+        self.btn_db30.clicked.connect(lambda _checked=False: self._set_dbi_auto(30.0))
+        self.btn_dbfull.clicked.connect(lambda _checked=False: self._set_dbi_auto(None))
+        self.cmb_radius.currentIndexChanged.connect(self._on_radius_changed)
         self.cmb_3d_field.currentTextChanged.connect(self._on_3d_field_changed)
         self.cmb_ar_phi.currentTextChanged.connect(lambda *_: self._redraw())
         self.cmb_cmap.currentTextChanged.connect(self._on_cmap_changed)
@@ -660,11 +769,13 @@ class AntennaPatternViewer(QWidget):
     def _set_dbi_controls_visible(self, visible: bool) -> None:
         self.dbi_controls.setVisible(visible)
         for w in (
-            self.lbl_3d_field,
             self.cmb_3d_field,
-            self.lbl_dbi_win,
             self.slider_dbi_min,
             self.lbl_dbi_min,
+            self.btn_db30,
+            self.btn_dbfull,
+            self.cmb_radius,
+            self.btn_view3d,
             self.lbl_cmap,
             self.cmb_cmap,
         ):
@@ -687,8 +798,8 @@ class AntennaPatternViewer(QWidget):
     def _on_dbi_slider(self, _val: int) -> None:
         self._update_dbi_labels()
         plot = self.cmb_plot.currentText()
-        if plot == "3D Pattern":
-            self._redraw()
+        if plot == "3D Pattern" and not self._dbi_redraw_timer.isActive():
+            self._dbi_redraw_timer.start()
 
     def _on_3d_field_changed(self, *_args: object) -> None:
         self._init_dbi_sliders()
@@ -750,9 +861,97 @@ class AntennaPatternViewer(QWidget):
         for s in (self.slider_dbi_min,):
             s.blockSignals(True)
         self.slider_dbi_min.setRange(lo_i, hi_i)
-        self.slider_dbi_min.setValue(lo_i)
+        # Default: max − 30 dB.  Deep nulls no longer squash the main lobes
+        # into the sphere centre (the old default was the data minimum).
+        default_i = int(round((self._dbi_data_max - 30.0) * 10.0))
+        self.slider_dbi_min.setValue(max(lo_i, min(hi_i, default_i)))
         self.slider_dbi_min.blockSignals(False)
         self._update_dbi_labels()
+
+    def _set_dbi_auto(self, span_db: float | None) -> None:
+        """Set the 3D dB window to max−``span_db`` (None = full data range)."""
+        if span_db is None:
+            target = self.slider_dbi_min.minimum()
+        else:
+            target = int(round((self._dbi_data_max - float(span_db)) * 10.0))
+            target = max(
+                self.slider_dbi_min.minimum(),
+                min(self.slider_dbi_min.maximum(), target),
+            )
+        if self.slider_dbi_min.value() == target:
+            self._on_dbi_slider(target)
+        else:
+            self.slider_dbi_min.setValue(target)
+
+    def _on_radius_changed(self, *_args: object) -> None:
+        if self.cmb_plot.currentText() == "3D Pattern":
+            self._redraw()
+
+    @staticmethod
+    def _normalise_quality(quality: str) -> str:
+        q = str(quality or "").strip().lower()
+        return q if q in AntennaPatternViewer.QUALITY_PRESETS else "balanced"
+
+    def quality(self) -> str:
+        """Active 3D quality preset ("fast" / "balanced" / "high")."""
+        return self._quality
+
+    def set_quality(self, quality: str) -> None:
+        """Apply an AppSettings 3D quality preset; redraws an open 3D plot."""
+        q = self._normalise_quality(quality)
+        if q == self._quality:
+            return
+        self._quality = q
+        if self.cmb_plot.currentText() == "3D Pattern":
+            self._redraw()
+
+    def _capture_3d_view(self) -> None:
+        """Remember the current (elev, azim) before ``figure.clear()``."""
+        if self.cmb_plot.currentText() != "3D Pattern":
+            return
+        for ax in self.figure.axes:
+            if getattr(ax, "name", "") == "3d":
+                try:
+                    self._view3d = (float(ax.elev), float(ax.azim))
+                except Exception:  # noqa: BLE001 — view attributes vary by mpl
+                    pass
+                return
+
+    def _set_view3d(self, elev: float, azim: float) -> None:
+        """Apply a standard view to the live 3D axes (no full redraw)."""
+        self._view3d = (float(elev), float(azim))
+        for ax in self.figure.axes:
+            if getattr(ax, "name", "") == "3d":
+                ax.view_init(elev=self._view3d[0], azim=self._view3d[1])
+                self.canvas.draw_idle()
+                return
+
+    def _on_graticule_toggled(self, checked: bool) -> None:
+        self._show_graticule = bool(checked)
+        if self.cmb_plot.currentText() == "3D Pattern":
+            self._redraw()
+
+    def _on_wireframe_toggled(self, checked: bool) -> None:
+        self._show_wireframe = bool(checked)
+        if self.cmb_plot.currentText() == "3D Pattern":
+            self._redraw()
+
+    def _export_3d_png(self) -> None:
+        """Save the current figure at 300 dpi (PNG/PDF/SVG)."""
+        if self.data is None:
+            return
+        path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Export 3D pattern",
+            "antenna_pattern_3d.png",
+            "PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)",
+        )
+        if not path:
+            return
+        try:
+            self.figure.savefig(path, dpi=300, bbox_inches="tight", facecolor="white")
+        except Exception as exc:  # noqa: BLE001 — show the actual writer error
+            QMessageBox.warning(self, "Export failed", str(exc))
 
     # ----- data loading -------------------------------------------------
     def set_work_dir(self, work_dir: Path) -> None:
@@ -1099,7 +1298,64 @@ class AntennaPatternViewer(QWidget):
         step_p = max(1, n_p // max_pts)
         return arr2d[::step_t, ::step_p], th[::step_t], ph[::step_p]
 
+    def _resample_pattern(
+        self,
+        arr2d: np.ndarray,
+        th: np.ndarray,
+        ph: np.ndarray,
+        target: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Interpolate a theta/phi pattern to a smooth ``target`` grid.
+
+        The NF2FF grid is often coarse (e.g. 2° steps); interpolating before
+        building the surface removes the faceted silhouette.  Falls back to
+        plain sub-sampling when scipy is unavailable or the grid is degenerate.
+        """
+        arr = np.asarray(arr2d, dtype=float)
+        th = np.asarray(th, dtype=float).reshape(-1)
+        ph = np.asarray(ph, dtype=float).reshape(-1)
+        if arr.ndim != 2 or arr.shape[0] != th.size or arr.shape[1] != ph.size:
+            return arr, th, ph
+        # unique + sorted axes (NF2FF grids are regular, but guards odd files)
+        thu, it = np.unique(th, return_index=True)
+        phu, ip = np.unique(ph, return_index=True)
+        arr = arr[np.ix_(it, ip)]
+        if arr.size == 0:
+            return arr, thu, phu
+        n = max(12, int(target))
+        if thu.size < 2 or phu.size < 2:
+            return arr, thu, phu
+        fill = float(np.nanmin(arr)) if np.any(np.isfinite(arr)) else 0.0
+        arr = np.nan_to_num(arr, nan=fill, posinf=fill, neginf=fill)
+        thn = np.linspace(thu[0], thu[-1], n)
+        phn = np.linspace(phu[0], phu[-1], n)
+        try:
+            from scipy.interpolate import RegularGridInterpolator
+
+            interp = RegularGridInterpolator(
+                (thu, phu), arr, method="linear", bounds_error=False, fill_value=None
+            )
+            TH, PH = np.meshgrid(thn, phn, indexing="ij")
+            pts = np.column_stack([TH.ravel(), PH.ravel()])
+            out = np.asarray(interp(pts), dtype=float).reshape(TH.shape)
+            return out, thn, phn
+        except Exception:  # noqa: BLE001 — scipy missing / unusual grid
+            n_t, n_p = arr.shape
+            step_t = max(1, n_t // n)
+            step_p = max(1, n_p // n)
+            return (
+                arr[::step_t, ::step_p],
+                thu[::step_t],
+                phu[::step_p],
+            )
+
     def _redraw(self) -> None:
+        timer = getattr(self, "_dbi_redraw_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+        # figure.clear() destroys the 3D axes; keep the user's rotation so
+        # cmap/field/quality changes do not snap back to the default view.
+        self._capture_3d_view()
         self.figure.clear()
         self._marker_cfg = None
         if self.data is None:
@@ -1109,6 +1365,12 @@ class AntennaPatternViewer(QWidget):
             return
 
         plot = self.cmb_plot.currentText()
+        # The 3D plot positions its axes/colorbar explicitly; a tight-layout
+        # engine would try to re-layout them (and warns for add_axes).
+        try:
+            self.figure.set_layout_engine("none" if plot == "3D Pattern" else "tight")
+        except Exception:  # noqa: BLE001 — very old matplotlib
+            pass
         polar = plot in (
             "E-Plane (phi=90)",
             "H-Plane (phi=0)",
@@ -1839,14 +2101,14 @@ class AntennaPatternViewer(QWidget):
         if got is None:
             self.figure.text(0.5, 0.5, f"{field} not available", ha="center", va="center")
             return
-        cut2d, th, ph = self._downsample(*got)
+
+        preset = self.QUALITY_PRESETS[self._quality]
+        cut2d, th, ph = self._resample_pattern(*got, preset["grid"])
         th_r = np.deg2rad(th)
         ph_r = np.deg2rad(ph)
         TH, PH = np.meshgrid(th_r, ph_r, indexing="ij")
 
-        # Absolute dBi window (sliders): radius 0..1 and the color scale both
-        # map the [dmin, dmax] dBi interval, so the surface carries the full
-        # color gradient and the user can zoom the dBi range.
+        # Absolute dBi window (sliders): color scale; in dB mode also radius.
         data_min = float(np.nanmin(cut2d))
         data_max = float(np.nanmax(cut2d))
         dmin, dmax = self._dbi_window()
@@ -1856,56 +2118,128 @@ class AntennaPatternViewer(QWidget):
                 dmin, dmax = dmin - 0.5, dmax + 0.5
         cut2d = np.nan_to_num(cut2d, nan=dmin, posinf=dmax, neginf=dmin)
         span = dmax - dmin
-        R = np.clip((cut2d - dmin) / span, 0.0, 1.0)
+        mode = str(self.cmb_radius.currentData() or "db")
+        if mode == "linear":
+            # normalized gain (power) — physically true lobe silhouette
+            R = np.clip(10.0 ** ((cut2d - data_max) / 10.0), 0.0, 1.0)
+        elif mode == "power":
+            # normalized field amplitude (sqrt of the power pattern)
+            R = np.clip(10.0 ** ((cut2d - data_max) / 20.0), 0.0, 1.0)
+        else:
+            R = np.clip((cut2d - dmin) / span, 0.0, 1.0)
         X = R * np.sin(TH) * np.cos(PH)
         Y = R * np.sin(TH) * np.sin(PH)
         Z = R * np.cos(TH)
 
         field_name = "Dmax" if field == "D_dBi" else "Gain"
-        ax = self.figure.add_subplot(111, projection="3d")
+        # explicit axes rect: no global subplot margins (2D plots keep theirs)
+        ax = self.figure.add_axes([0.02, 0.045, 0.83, 0.90], projection="3d")
+        # explicit artist order: graticule behind the surface, marker/label in
+        # front (matplotlib's computed 3D z-order otherwise lets the sphere
+        # grid shine through the pattern)
+        ax.computed_zorder = False
         import matplotlib.cm as cm
         from matplotlib import colormaps
-        from matplotlib.colors import Normalize
+        from matplotlib.colors import LightSource, Normalize
 
         norm = Normalize(vmin=dmin, vmax=dmax, clip=True)
         try:
             cmap = colormaps[self.cmb_cmap.currentText()]
         except KeyError:
             cmap = colormaps["viridis"]
-        try:
-            from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-            polys = []
-            colors = []
-            for i in range(cut2d.shape[0] - 1):
-                for j in range(cut2d.shape[1] - 1):
-                    quad = [
-                        [X[i, j], Y[i, j], Z[i, j]],
-                        [X[i + 1, j], Y[i + 1, j], Z[i + 1, j]],
-                        [X[i + 1, j + 1], Y[i + 1, j + 1], Z[i + 1, j + 1]],
-                        [X[i, j + 1], Y[i, j + 1], Z[i, j + 1]],
-                    ]
-                    polys.append(quad)
-                    colors.append(cmap(norm(cut2d[i, j])))
-            pc = Poly3DCollection(polys, facecolors=colors, edgecolors="none", alpha=0.9)
-            ax.add_collection3d(pc)
-        except Exception:  # noqa: BLE001
-            ax.plot_surface(
-                X, Y, Z, facecolors=cmap(norm(cut2d)), edgecolor="none", shade=False
+        # Pre-shade the RGB colors once: rotation then only re-projects the
+        # polygons instead of re-lighting them on every frame.
+        rgba = cmap(norm(cut2d))
+        try:
+            lightsource = LightSource(azdeg=225.0, altdeg=35.0)
+            shaded = lightsource.shade_rgb(
+                rgba[..., :3], Z, vert_exag=1.0, blend_mode="soft"
             )
-        ax.set_xlim(-1, 1)
-        ax.set_ylim(-1, 1)
-        ax.set_zlim(-1, 1)
-        ax.set_box_aspect((1, 1, 1))
-        # no numbers on the 3D axes (the colorbar carries the dBi scale), but the
-        # three spatial directions stay labelled
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
-        ax.set_zticklabels([])
-        ax.set_xlabel("x", labelpad=-10)
-        ax.set_ylabel("y", labelpad=-10)
-        ax.set_zlabel("z", labelpad=-10)
-        ax.set_title(f"3D {field_name} [dBi]  ({dmin:.1f} .. {dmax:.1f})", fontsize=10)
+            rgb = np.clip(0.78 * shaded + 0.22 * rgba[..., :3], 0.0, 1.0)
+        except Exception:  # noqa: BLE001 — keep the flat colors as fallback
+            rgb = rgba[..., :3]
+        rgba = np.concatenate([rgb, np.ones(rgb.shape[:2] + (1,))], axis=-1)
+        surf = ax.plot_surface(
+            X,
+            Y,
+            Z,
+            facecolors=rgba,
+            rstride=1,
+            cstride=1,
+            linewidth=0,
+            antialiased=bool(preset["antialias"]),
+            shade=False,
+        )
+        surf.set_zorder(3)
+        if self._show_graticule:
+            self._add_reference_grid(ax, float(preset["graticule"]))
+        if self._show_wireframe:
+            step = max(1, int(preset["grid"]) // 10)
+            ax.plot_wireframe(
+                X,
+                Y,
+                Z,
+                rstride=step,
+                cstride=step,
+                color="0.15",
+                linewidth=0.3,
+                alpha=0.3,
+                zorder=4,
+            )
+
+        # peak marker (plus a small label on the balanced/high presets)
+        try:
+            pk = np.unravel_index(int(np.nanargmax(cut2d)), cut2d.shape)
+            ax.scatter(
+                [X[pk]],
+                [Y[pk]],
+                [Z[pk]],
+                color="crimson",
+                s=14,
+                depthshade=False,
+                zorder=5,
+            )
+            if preset["annotate"]:
+                ax.text(
+                    X[pk] * 1.05,
+                    Y[pk] * 1.05,
+                    Z[pk] * 1.05,
+                    f" {float(cut2d[pk]):.1f} dBi",
+                    fontsize=7,
+                    color="0.2",
+                    zorder=6,
+                )
+        except (ValueError, TypeError):
+            pass
+
+        ax.set_xlim(-1.02, 1.02)
+        ax.set_ylim(-1.02, 1.02)
+        ax.set_zlim(-1.02, 1.02)
+        ax.set_box_aspect((1, 1, 1), zoom=1.18)
+        ax.set_proj_type("ortho")
+        ax.view_init(elev=self._view3d[0], azim=self._view3d[1])
+        # clean panes/ticks: the graticule and colorbar carry the scale
+        ax.grid(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_zticks([])
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            axis.pane.fill = False
+            axis.pane.set_edgecolor((1.0, 1.0, 1.0, 0.0))
+            axis.line.set_color((0.72, 0.72, 0.72, 0.65))
+            axis.line.set_linewidth(0.6)
+        ax.set_xlabel("x", labelpad=-5, fontsize=8)
+        ax.set_ylabel("y", labelpad=-5, fontsize=8)
+        ax.set_zlabel("z", labelpad=-5, fontsize=8)
+        title = (
+            f"3D {field_name} — max {data_max:.1f} dBi"
+            f" · window {dmin:.1f}…{dmax:.1f}"
+        )
+        if mode != "db":
+            title += f" · r={self.cmb_radius.currentText()}"
+        ax.set_title(title, fontsize=9, pad=2)
+
         extend = "neither"
         if data_min < dmin and data_max > dmax:
             extend = "both"
@@ -1915,11 +2249,36 @@ class AntennaPatternViewer(QWidget):
             extend = "max"
         mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
         mappable.set_array(cut2d)
-        self.figure.colorbar(
-            mappable,
-            ax=ax,
-            shrink=0.6,
-            pad=0.12,
-            label=f"{field_name} [dBi]",
-            extend=extend,
-        )
+        cax = self.figure.add_axes([0.885, 0.24, 0.025, 0.52])
+        cb = self.figure.colorbar(mappable, cax=cax, extend=extend)
+        cb.set_label(f"{field_name} [dBi]", fontsize=8, labelpad=2)
+        cb.ax.tick_params(labelsize=7, length=2, pad=2)
+        cb.outline.set_linewidth(0.4)
+
+    @staticmethod
+    def _add_reference_grid(ax, step_deg: float) -> None:
+        """Faint θ rings / φ meridians on the unit sphere (one Line3D artist)."""
+        step = float(step_deg) if step_deg and step_deg > 0 else 30.0
+        phi = np.linspace(0.0, 2.0 * np.pi, 145)
+        xs: list[float] = []
+        ys: list[float] = []
+        zs: list[float] = []
+        nan = float("nan")
+        for t_deg in np.arange(step, 180.0, step):
+            t = np.deg2rad(t_deg)
+            xs.extend((np.sin(t) * np.cos(phi)).tolist())
+            ys.extend((np.sin(t) * np.sin(phi)).tolist())
+            zs.extend([float(np.cos(t))] * phi.size)
+            xs.append(nan)
+            ys.append(nan)
+            zs.append(nan)
+        theta = np.linspace(0.0, np.pi, 73)
+        for p_deg in np.arange(0.0, 360.0, step):
+            p = np.deg2rad(p_deg)
+            xs.extend((np.sin(theta) * np.cos(p)).tolist())
+            ys.extend((np.sin(theta) * np.sin(p)).tolist())
+            zs.extend(np.cos(theta).tolist())
+            xs.append(nan)
+            ys.append(nan)
+            zs.append(nan)
+        ax.plot(xs, ys, zs, color="0.68", linewidth=0.45, alpha=0.45, zorder=1)

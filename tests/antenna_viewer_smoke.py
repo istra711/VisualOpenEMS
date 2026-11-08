@@ -290,6 +290,77 @@ def main() -> int:
             print("FAIL: no axes for cmap", cm_name)
             return 10
     print("cmaps OK:", viewer.cmb_cmap.currentText())
+
+    # --- 3D quality presets, radius modes, view + dB-window buttons ---
+    for q in ("fast", "balanced", "high"):
+        viewer.set_quality(q)
+        viewer._redraw()
+        if viewer.quality() != q or len(viewer.figure.axes) < 2:
+            print("FAIL: 3D quality preset", q, "axes", len(viewer.figure.axes))
+            return 26
+    viewer.set_quality("nonsense")
+    if viewer.quality() != "balanced":
+        print("FAIL: invalid quality did not fall back to balanced")
+        return 26
+    viewer.set_quality("balanced")
+    viewer._redraw()
+    print("[3D] quality presets OK: fast/balanced/high + fallback")
+
+    radii = {}
+    for i in range(viewer.cmb_radius.count()):
+        viewer.cmb_radius.setCurrentIndex(i)
+        viewer._redraw()
+        viewer.canvas.draw()
+        ax3d = viewer.figure.axes[0]
+        surfaces = [
+            c for c in ax3d.collections if type(c).__name__ == "Poly3DCollection"
+        ]
+        if not surfaces or len(viewer.figure.axes) < 2:
+            print("FAIL: radius mode", viewer.cmb_radius.currentText().encode("ascii", "replace"))
+            return 27
+        radii[viewer.cmb_radius.currentText()] = len(surfaces[0].get_paths())
+    viewer.cmb_radius.setCurrentIndex(0)
+    viewer._redraw()
+    print(
+        "[3D] radius modes OK:",
+        {k.encode("ascii", "replace").decode(): v for k, v in radii.items()},
+    )
+
+    viewer._set_view3d(11.0, 22.0)
+    ax3d = viewer.figure.axes[0]
+    if abs(ax3d.elev - 11.0) > 0.5 or abs(ax3d.azim - 22.0) > 0.5:
+        print("FAIL: view preset not applied", ax3d.elev, ax3d.azim)
+        return 28
+    viewer._redraw()
+    ax3d = viewer.figure.axes[0]
+    if abs(ax3d.elev - 11.0) > 0.5 or abs(ax3d.azim - 22.0) > 0.5:
+        print("FAIL: view lost on redraw", ax3d.elev, ax3d.azim)
+        return 28
+    viewer._set_view3d(*AntennaPatternViewer.DEFAULT_VIEW)
+    print("[3D] view preset + redraw persistence OK")
+
+    viewer._init_dbi_sliders()
+    lo, hi = viewer._dbi_window()
+    if not (28.5 <= (hi - lo) <= 31.5):
+        print("FAIL: default 3D window is not max-30 dB", lo, hi)
+        return 28
+    target = max(
+        viewer.slider_dbi_min.minimum(),
+        min(
+            viewer.slider_dbi_min.maximum(),
+            int(round((viewer._dbi_data_max - 30.0) * 10.0)),
+        ),
+    )
+    viewer.btn_db30.click()
+    if viewer.slider_dbi_min.value() != target:
+        print("FAIL: -30 dB button", viewer.slider_dbi_min.value(), target)
+        return 28
+    viewer.btn_dbfull.click()
+    if viewer.slider_dbi_min.value() != viewer.slider_dbi_min.minimum():
+        print("FAIL: Full button", viewer.slider_dbi_min.value())
+        return 28
+    print("[3D] default max-30 dB window + -30 dB/Full buttons OK")
+
     viewer.cmb_plot.setCurrentText("E-Plane (phi=90)")
     viewer._redraw()
     if not viewer.slider_dbi_min.isHidden() or not viewer.cmb_cmap.isHidden():
