@@ -110,6 +110,10 @@ def main() -> int:
         fit=True,
     )
     viewer._render_design()
+    assert viewer._geom_actors, "geometry actors missing"
+    assert (
+        viewer._geom_actors[0].GetMapper().GetResolveCoincidentTopology() != 0
+    ), "copper trace lost its coplanar depth bias"
 
     def _cube_ruler_count(renderer) -> int:
         props = renderer.GetViewProps()

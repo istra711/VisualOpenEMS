@@ -54,6 +54,7 @@ from app.ui.vtk_viewer import (
     VtkFieldViewer,
     _vtk,
     configure_marker_widget,
+    prefer_metal_on_top,
     preset_camera,
     style_axes_triad,
 )
@@ -1396,6 +1397,7 @@ class Design3DViewer(VtkFieldViewer):
                     max(0.0, rgb[2] * 0.45),
                 )
                 prop.SetLineWidth(1.0)
+            prefer_metal_on_top(actor, pr)
             self._apply_clipping_to_actor(actor)
             self._renderer.AddActor(actor)
             self._geom_actors.append(actor)

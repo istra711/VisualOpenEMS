@@ -285,6 +285,20 @@ def main() -> int:
     assert prop.GetLineWidth() < 1.9, prop.GetLineWidth()
     print("  high-contrast object mode OK")
 
+    # Coplanar zero-thickness copper traces get a negative polygon offset so
+    # the substrate top face cannot win the depth test in some pixels.
+    from app.ui.vtk_viewer import is_metal_primitive, prefer_on_top
+
+    assert is_metal_primitive({"kind": "polygon", "material": "copper"})
+    assert is_metal_primitive({"kind": "wire", "material": "FR4"})
+    assert not is_metal_primitive({"kind": "box", "material": "FR4"})
+    mapper = vtk.vtkPolyDataMapper()
+    depth_actor = vtk.vtkActor()
+    depth_actor.SetMapper(mapper)
+    prefer_on_top(depth_actor)
+    assert mapper.GetResolveCoincidentTopology() != 0
+    print("  coplanar metal trace depth bias OK")
+
     # "keep" has no direction to keep in a fresh geometry preview -> isometric
     v2.set_view_default("keep")
     v2.set_geometry(

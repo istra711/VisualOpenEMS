@@ -110,6 +110,56 @@ RULER_UNITS: tuple[tuple[str, str, float], ...] = (
 )
 
 #: Defaults for the axes display options (also persisted in AppSettings).
+#: material/name tokens that identify metal (copper) primitives
+_METAL_TOKENS = (
+    "copper",
+    "pec",
+    "metal",
+    "conducting",
+    "gold",
+    "silver",
+    "aluminium",
+    "aluminum",
+)
+
+
+def is_metal_primitive(prim: dict) -> bool:
+    """True for copper/PEC traces that should win coplanar depth tests."""
+    try:
+        mat = str(prim.get("material", "") or "").strip().lower()
+        name = str(prim.get("name", "") or "").strip().lower()
+        kind = str(prim.get("kind", "") or "").strip().lower()
+    except AttributeError:
+        return False
+    if kind in ("wire", "curve"):
+        return True
+    blob = f"{mat} {name}"
+    return any(tok in blob for tok in _METAL_TOKENS)
+
+
+def prefer_on_top(actor) -> None:
+    """Depth-bias a metal actor so coplanar traces beat the substrate face.
+
+    A zero-thickness copper trace at the substrate's top elevation is exactly
+    coplanar with the substrate polygon. OpenGL then picks the substrate in
+    some pixels (the trace looks broken/dashed). A negative polygon offset is
+    the standard fix; it only changes the depth comparison, not the geometry.
+    """
+    try:
+        mapper = actor.GetMapper()
+        mapper.SetResolveCoincidentTopologyToPolygonOffset()
+        mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-1.0, -2.0)
+        mapper.SetRelativeCoincidentTopologyLineOffsetParameters(-1.0, -2.0)
+    except Exception:  # noqa: BLE001 — older VTK / no mapper
+        pass
+
+
+def prefer_metal_on_top(actor, prim: dict) -> None:
+    """Apply :func:`prefer_on_top` only to copper/PEC primitives."""
+    if is_metal_primitive(prim):
+        prefer_on_top(actor)
+
+
 DEFAULT_AXES: dict = {
     "show": True,  # master switch for the triad / corner marker
     "corner": True,  # True = ParaView-style corner widget, False = in-scene triad
@@ -1611,6 +1661,7 @@ class VtkFieldViewer(QWidget):
             else:
                 prop.SetEdgeColor(0.35, 0.42, 0.60)
                 prop.SetLineWidth(1.0)
+            prefer_metal_on_top(actor, pr)
             self._renderer.AddActor(actor)
             self._geom_actors.append(actor)
 

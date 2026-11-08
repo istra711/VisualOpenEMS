@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the project/primitives actually changed. Camera zoom/pan, slice, colour
   and mesh settings now survive switching between Antenna, Field Viewer and
   3D Design.
+- **Coplanar copper traces**: metal (copper/PEC) geometry receives a negative
+  polygon/line depth offset, so zero-thickness traces lying exactly on the
+  substrate surface are no longer partly hidden by z-fighting. The trace
+  reliably wins the depth test without changing its coordinates.
 
 ## [0.10.0] - 2026-11-07
 
