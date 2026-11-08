@@ -2030,25 +2030,23 @@ class MainWindow(QMainWindow):
         # opening the Mesh Viewer shows the last mesh (recorded or generated)
         if _index == getattr(self, "mesh_viewer_tab_index", -1):
             self._ensure_mesh_viewer_content()
-        # opening the Antenna tab shows the current project's pattern
+        # opening the Antenna tab shows the current project's pattern; an
+        # already loaded pattern keeps its dBi window, view, radius mode and
+        # marker visibility untouched across tab switches
         if _index == getattr(self, "antenna_tab_index", -1):
-            self._refresh_antenna_viewer()
-        # opening the 3D Design tab refreshes the current project's scene
+            if getattr(self.antenna_viewer, "data", None) is None:
+                self._refresh_antenna_viewer()
+        # opening the 3D Design tab refreshes the scene but keeps the camera
+        # and every view/mesh setting (fit=True is only for the explicit menu
+        # action; doing it here reset the view on every tab switch).
         if _index == getattr(self, "design_tab_index", -1):
             self._ensure_design_mesh()
-            self._refresh_design_viewer(fit=True)
-        # opening the Field Viewer tab points it at the current project's work dir
+            self._refresh_design_viewer(fit=False)
+        # opening the Field Viewer tab points it at the current project's work
+        # dir; only re-push the geometry when it actually changed, otherwise
+        # set_geometry() refits the camera and loses zoom/pan on every switch.
         if _index == getattr(self, "vtk_tab_index", -1):
-            try:
-                self.vtk_viewer.set_work_dir(self._project_work_dir())
-                self.vtk_viewer.set_geometry(
-                    self.primitives,
-                    unit_m=(
-                        self.project.mesh.unit_to_meters() if self.project else 1e-3
-                    ),
-                )
-            except Exception:  # noqa: BLE001
-                pass
+            self._sync_field_viewer_geometry()
         try:
             self.btn_help.setText(f"Help: {title}")
             self.btn_help.setToolTip(f"Open help for the {title} tab")
@@ -2838,16 +2836,38 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             self._log(f"AppCSXCAD open failed: {e}")
 
+    def _sync_field_viewer_geometry(self) -> None:
+        """Push work dir/primitives to the Field Viewer only when they changed.
+
+        ``set_geometry()`` ends with ``apply_view_preset()``, which re-fits the
+        camera. Calling it on every tab switch therefore reset zoom/pan (and
+        the view direction when no dump was loaded) each time the Field Viewer
+        was re-opened. Keep the camera stable when nothing changed.
+        """
+        viewer = getattr(self, "vtk_viewer", None)
+        if viewer is None:
+            return
+        try:
+            work = self._project_work_dir()
+            unit = self.project.mesh.unit_to_meters() if self.project else 1e-3
+            prims = list(self.primitives or [])
+            same = (
+                getattr(viewer, "work_dir", None) == work
+                and list(getattr(viewer, "_geom_prims", []) or []) == prims
+                and abs(
+                    float(getattr(viewer, "_geom_unit", unit)) - float(unit)
+                ) <= 1e-15
+            )
+            if same:
+                return
+            viewer.set_work_dir(work)
+            viewer.set_geometry(prims, unit_m=unit)
+        except Exception:  # noqa: BLE001 — the viewer must not block tab changes
+            pass
+
     def _on_show_vtk(self) -> None:
         """Switch to the Field Viewer tab (work dir follows the current project)."""
-        try:
-            self.vtk_viewer.set_work_dir(self._project_work_dir())
-            self.vtk_viewer.set_geometry(
-                self.primitives,
-                unit_m=self.project.mesh.unit_to_meters() if self.project else 1e-3,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        self._sync_field_viewer_geometry()
         if getattr(self, "vtk_tab_index", -1) >= 0:
             self.tabs.setCurrentIndex(self.vtk_tab_index)
         self._log("Field Viewer opened")

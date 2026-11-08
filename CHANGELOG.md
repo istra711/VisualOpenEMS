@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the project's recorded mesh (without starting a new build), so the mesh-grid
   controls are enabled immediately; if nothing exists the hint now points to
   the Mesh Viewer ("build mesh first (Mesh Viewer)").
+- **Tab switching keeps viewer state**: switching back to the 3D Design tab no
+  longer refits the camera, and the Field Viewer only re-pushes its geometry
+  when the project/primitives actually changed. Camera zoom/pan, slice, colour
+  and mesh settings now survive switching between Antenna, Field Viewer and
+  3D Design.
 
 ## [0.10.0] - 2026-11-07
 

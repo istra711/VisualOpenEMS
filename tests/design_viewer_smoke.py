@@ -137,6 +137,25 @@ def main() -> int:
     assert norm > 0 and all(abs(v / norm - 0.5774) < 2e-3 for v in d), d
     print("  standard view applied on first render OK")
 
+    # A tab-switch refresh (fit=False) must keep the camera exactly as it was.
+    pos_before = tuple(viewer._renderer.GetActiveCamera().GetPosition())
+    viewer.set_design(
+        project=project,
+        primitives=prims,
+        ports=ports,
+        nf2ff=nf,
+        unit_m=1e-3,
+        domain=([-20, -20, -10], [20, 20, 10]),
+        fit=False,
+    )
+    viewer._render_design()
+    pos_after = tuple(viewer._renderer.GetActiveCamera().GetPosition())
+    assert all(abs(a - b) < 1e-12 for a, b in zip(pos_before, pos_after)), (
+        pos_before,
+        pos_after,
+    )
+    print("  design refresh without fit keeps the camera OK")
+
     # Camera fit follows the visible bounds too: with the domain hidden, the
     # focal point is the geometry/port center (y = 0.75 mm here), not (0,0,0).
     viewer.chk_domain.setChecked(False)
@@ -331,6 +350,40 @@ def main() -> int:
     _MainWindow._ensure_design_mesh(dummy)
     assert calls == ["load"]  # a deleted mesh is not resurrected
     print("  3D Design loads a recorded mesh for the mesh plane OK")
+
+    # Unchanged Field Viewer geometry must not be re-pushed on a tab switch
+    # (set_geometry refits the camera, which reset zoom/pan every time).
+    class _VtkStub:
+        work_dir = Path("/tmp/proj")
+        _geom_prims = [{"kind": "box", "start": [0, 0, 0], "stop": [1, 1, 1]}]
+        _geom_unit = 1e-3
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def set_work_dir(self, _work) -> None:
+            self.calls.append("work")
+
+        def set_geometry(self, _prims, unit_m=1e-3) -> None:
+            self.calls.append("geom")
+
+    vtk_stub = _VtkStub()
+    switch_dummy = SimpleNamespace(
+        vtk_viewer=vtk_stub,
+        primitives=list(vtk_stub._geom_prims),
+        project=SimpleNamespace(
+            mesh=SimpleNamespace(unit_to_meters=lambda: 1e-3)
+        ),
+        _project_work_dir=lambda: Path("/tmp/proj"),
+    )
+    _MainWindow._sync_field_viewer_geometry(switch_dummy)
+    assert vtk_stub.calls == []
+    switch_dummy.primitives = [
+        {"kind": "box", "start": [0, 0, 0], "stop": [2, 2, 2]}
+    ]
+    _MainWindow._sync_field_viewer_geometry(switch_dummy)
+    assert vtk_stub.calls == ["work", "geom"]
+    print("  field-viewer tab switch keeps unchanged geometry/camera OK")
 
     # Keep the QApplication alive for the widget destructors.
     app.processEvents()
