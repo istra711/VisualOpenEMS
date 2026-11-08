@@ -201,10 +201,9 @@ def make_mouse_style(vtk, options: dict | None = None):
     """Create a VTK camera style from the Viewer-settings mouse options.
 
     ``invert_wheel`` is implemented by negating VTK's wheel motion factor
-    (forward then dollies out and backward dollies in).  ``swap_buttons`` uses
-    a tiny Python subclass so left-drag pans and middle-drag rotates.
-    ``right_button_pan`` maps the right drag to pan; a plain right-click (no
-    drag) still opens the context menu through the viewer's event filter.
+    (forward then dollies out and backward dollies in).  Button remapping
+    (``swap_buttons`` / ``right_button_pan``) is done in :meth:`eventFilter`
+    by forwarding the gesture as the built-in middle-button pan.
     """
     opts = normalise_mouse_options(options)
     base = (
@@ -212,41 +211,11 @@ def make_mouse_style(vtk, options: dict | None = None):
         if opts["style"] == "joystick"
         else vtk.vtkInteractorStyleTrackballCamera
     )
-    if opts["swap_buttons"] or opts["right_button_pan"]:
-
-        class _ConfiguredMouseStyle(base):
-            if opts["swap_buttons"]:
-                def OnLeftButtonDown(self):
-                    base.OnMiddleButtonDown(self)
-
-                def OnLeftButtonUp(self):
-                    base.OnMiddleButtonUp(self)
-
-                def OnMiddleButtonDown(self):
-                    base.OnLeftButtonDown(self)
-
-                def OnMiddleButtonUp(self):
-                    base.OnLeftButtonUp(self)
-
-                def OnLeftButtonDoubleClick(self):
-                    base.OnMiddleButtonDoubleClick(self)
-
-                def OnMiddleButtonDoubleClick(self):
-                    base.OnLeftButtonDoubleClick(self)
-
-            if opts["right_button_pan"]:
-                def OnRightButtonDown(self):
-                    base.OnMiddleButtonDown(self)
-
-                def OnRightButtonUp(self):
-                    base.OnMiddleButtonUp(self)
-
-                def OnRightButtonDoubleClick(self):
-                    base.OnMiddleButtonDoubleClick(self)
-
-        style = _ConfiguredMouseStyle()
-    else:
-        style = base()
+    # Button remapping (right=pan, left/middle swap) is done at the Qt event
+    # level in ``eventFilter``: VTK's interactor does not reliably dispatch
+    # right-button events to Python event-handler overrides. The built-in
+    # middle-button pan event is used for the translated gesture instead.
+    style = base()
     try:
         style.SetMotionFactor(float(opts["motion_factor"]))
     except Exception:  # noqa: BLE001 — joystick style has no motion factor
@@ -2614,31 +2583,66 @@ class VtkFieldViewer(QWidget):
         """The menu is available on the controls *and* inside the 3D pane."""
         return True
 
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt API
-        """Right-drag pans/zooms; a right-click without drag opens the menu.
+    def _forward_vtk_button(self, name: str, press: bool, event) -> None:
+        """Forward a Qt gesture as a VTK button event (middle-button pan)."""
+        if self._iren is None:
+            return
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:  # older Qt
+            pos = event.pos()
+        try:
+            self._iren.SetEventPosition(int(pos.x()), int(pos.y()))
+            suffix = "Press" if press else "Release"
+            getattr(self._iren, f"{name}Button{suffix}Event")()
+        except Exception:  # noqa: BLE001 — never break navigation
+            pass
 
-        The press must reach VTK (return False) so the camera style can start
-        its pan/dolly gesture.  On release the menu is only opened when the
-        pointer did not move more than a few pixels, so the context menu and
-        the drag gesture can coexist.
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt API
+        """Mouse remapping, right-drag pan/zoom and the context-menu click.
+
+        VTK does not reliably dispatch right-button events to Python overrides
+        of the interaction style, so the remapping is done here: a right drag
+        is forwarded as VTK's built-in middle-button pan; a right click without
+        a drag still opens the context menu on release.  ``swap_buttons`` maps
+        left/middle to the opposite gesture the same way.
         """
         if obj is getattr(self, "_iren", None):
             etype = event.type()
-            if (
-                etype == QEvent.Type.MouseButtonPress
-                and event.button() == Qt.MouseButton.RightButton
-            ):
+            mouse = getattr(self, "_mouse", {}) or {}
+            press = etype == QEvent.Type.MouseButtonPress
+            release = etype == QEvent.Type.MouseButtonRelease
+            if (press or release) and bool(mouse.get("swap_buttons", False)):
+                # In the 3D Design viewer a left click is the tape-measure
+                # pick; keep the default mapping while measure mode is active.
+                if not bool(getattr(self, "_measure_mode", False)):
+                    btn = event.button()
+                    if btn in (
+                        Qt.MouseButton.LeftButton,
+                        Qt.MouseButton.MiddleButton,
+                    ):
+                        target = (
+                            "Middle"
+                            if btn == Qt.MouseButton.LeftButton
+                            else "Left"
+                        )
+                        self._forward_vtk_button(target, press, event)
+                        return True
+            if press and event.button() == Qt.MouseButton.RightButton:
                 try:
                     self._right_menu_press = event.position().toPoint()
                 except AttributeError:  # older Qt
                     self._right_menu_press = event.pos()
-                return False  # let VTK start the pan/zoom gesture
-            if (
-                etype == QEvent.Type.MouseButtonRelease
-                and event.button() == Qt.MouseButton.RightButton
-            ):
+                if bool(mouse.get("right_button_pan", True)):
+                    self._forward_vtk_button("Middle", True, event)
+                    return True
+                return False  # let VTK start the right-drag zoom
+            if release and event.button() == Qt.MouseButton.RightButton:
                 start = getattr(self, "_right_menu_press", None)
                 self._right_menu_press = None
+                right_pan = bool(mouse.get("right_button_pan", True))
+                if right_pan:
+                    self._forward_vtk_button("Middle", False, event)
                 if start is not None:
                     try:
                         end = event.position().toPoint()
@@ -2656,7 +2660,7 @@ class VtkFieldViewer(QWidget):
                             0,
                             lambda p=end: self._show_context_menu(p, source=obj),
                         )
-                return False  # let VTK end the gesture
+                return True if right_pan else False
             if etype == QEvent.Type.ContextMenu:
                 # Some platforms send only ContextMenu (no press/release
                 # pair). Do not open twice after a normal right-click.
