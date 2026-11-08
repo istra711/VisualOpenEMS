@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **3D Design mesh-plane colour**: Viewer settings → Mesh colours now exposes
   "3D Design mesh plane"; the default is white (`#ffffff`) and the colour is
   applied live to the docked viewer and its pop-out.
+- **High-contrast object mode** (right-click in the Field Viewer and 3D Design
+  viewer): geometry is drawn more opaque with a bright 2 px outline and flatter
+  lighting so low-contrast objects stand out against the dark background.
+  Optional and off by default; the state is copied to the viewer pop-out.
 
 ### Fixed
 

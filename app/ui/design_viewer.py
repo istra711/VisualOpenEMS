@@ -441,6 +441,16 @@ class Design3DViewer(VtkFieldViewer):
 
     def _build_context_menu(self) -> QMenu:
         menu = QMenu(self)
+        act_contrast = menu.addAction("High contrast objects")
+        act_contrast.setCheckable(True)
+        act_contrast.setChecked(bool(self._high_contrast))
+        act_contrast.setToolTip(
+            "Draw the geometry opaque with a bright outline and flatter\n"
+            "lighting so it stands out against the dark background.\n"
+            "Optional; off by default."
+        )
+        act_contrast.toggled.connect(self.set_high_contrast)
+        menu.addSeparator()
         coord = menu.addMenu("Coordinate system")
         act_axes = coord.addAction("Show axes (X/Y/Z)")
         act_axes.setCheckable(True)
@@ -1368,10 +1378,24 @@ class Design3DViewer(VtkFieldViewer):
             prop = actor.GetProperty()
             rgb = display_rgb(disp) or self._default_material_color(pr)
             alpha = opacity * display_alpha(disp)
-            prop.SetOpacity(alpha)
             prop.SetColor(*rgb)
             prop.SetEdgeVisibility(True)
-            prop.SetEdgeColor(max(0.0, rgb[0] * 0.45), max(0.0, rgb[1] * 0.45), max(0.0, rgb[2] * 0.45))
+            if self._high_contrast:
+                # opaque fill + a bright outline: the object stays readable
+                # even when its colour is close to the dark background
+                prop.SetOpacity(1.0)
+                prop.SetEdgeColor(1.0, 1.0, 1.0)
+                prop.SetLineWidth(2.0)
+                prop.SetAmbient(0.35)
+                prop.SetDiffuse(0.9)
+            else:
+                prop.SetOpacity(alpha)
+                prop.SetEdgeColor(
+                    max(0.0, rgb[0] * 0.45),
+                    max(0.0, rgb[1] * 0.45),
+                    max(0.0, rgb[2] * 0.45),
+                )
+                prop.SetLineWidth(1.0)
             self._apply_clipping_to_actor(actor)
             self._renderer.AddActor(actor)
             self._geom_actors.append(actor)
@@ -2235,6 +2259,7 @@ class DesignViewerWindow(QMainWindow):
             fit=True,
         )
         self.viewer.set_mesh_color(source.mesh_color())
+        self.viewer.set_high_contrast(source._high_contrast)
         self.viewer.chk_mesh_plane.setChecked(source.chk_mesh_plane.isChecked())
         idx = self.viewer.cmb_mesh_axis.findText(source.cmb_mesh_axis.currentText())
         if idx >= 0:

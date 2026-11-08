@@ -246,6 +246,17 @@ def main() -> int:
     viewer._mesh_overlay_window = None
     print("  mesh-plane XY/XZ/YZ slider + transparent overlay OK")
 
+    # High-contrast mode: opaque objects with a bright outline.
+    viewer.set_high_contrast(True)
+    assert viewer._high_contrast is True and viewer._geom_actors
+    prop = viewer._geom_actors[0].GetProperty()
+    assert abs(prop.GetOpacity() - 1.0) < 1e-9
+    assert all(abs(c - 1.0) < 1e-9 for c in prop.GetEdgeColor())
+    viewer.set_high_contrast(False)
+    assert viewer._high_contrast is False
+    assert viewer._geom_actors[0].GetProperty().GetOpacity() < 0.999
+    print("  high-contrast object mode OK")
+
     viewer._renderer = None  # the remaining checks run without a VTK renderer
 
     # Toggles and the tool API must be safe even without a GL context.
@@ -273,6 +284,7 @@ def main() -> int:
     menu = viewer._build_context_menu()
     labels = [a.text() for a in menu.actions()]
     assert "Coordinate system" in labels and "Measure distance (tape, 2 clicks)" in labels
+    assert "High contrast objects" in labels
     coord = next(a.menu() for a in menu.actions() if a.text() == "Coordinate system")
     coord_labels = [a.text() for a in coord.actions()]
     assert "Axes size" in coord_labels and "Axes location" in coord_labels

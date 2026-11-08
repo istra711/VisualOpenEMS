@@ -545,6 +545,8 @@ class VtkFieldViewer(QWidget):
         self._geom_actors: list = []
         self._geom_prims: list = []
         self._geom_unit: float = 1e-3
+        #: optional right-click display mode: opaque geometry + bright outline
+        self._high_contrast = False
         self._title_actor = None
         self._bar_title: str = ""
         self._grid = None
@@ -1596,10 +1598,19 @@ class VtkFieldViewer(QWidget):
             if actor is None:
                 continue
             prop = actor.GetProperty()
-            prop.SetOpacity(opacity)
+            prop.SetOpacity(
+                min(1.0, max(opacity, 0.35)) if self._high_contrast else opacity
+            )
             prop.SetColor(0.62, 0.70, 0.88)
             prop.SetEdgeVisibility(True)
-            prop.SetEdgeColor(0.35, 0.42, 0.60)
+            if self._high_contrast:
+                prop.SetEdgeColor(1.0, 1.0, 1.0)
+                prop.SetLineWidth(2.0)
+                prop.SetAmbient(0.35)
+                prop.SetDiffuse(0.9)
+            else:
+                prop.SetEdgeColor(0.35, 0.42, 0.60)
+                prop.SetLineWidth(1.0)
             self._renderer.AddActor(actor)
             self._geom_actors.append(actor)
 
@@ -1613,6 +1624,24 @@ class VtkFieldViewer(QWidget):
                 self._iren.GetRenderWindow().Render()
         except Exception:  # noqa: BLE001 - never block on a redraw
             pass
+
+    def set_high_contrast(self, on: bool) -> None:
+        """Toggle high-contrast object styling (visible fill + bright outline).
+
+        A right-click display option, off by default.  Geometry is drawn more
+        opaque with a bright 2 px edge and flatter lighting, so objects whose
+        fill colour is close to the dark background remain clearly visible.
+        """
+        self._high_contrast = bool(on)
+        try:
+            self._draw_geometry()
+        except Exception:  # noqa: BLE001 — a display option must never block
+            pass
+        if self._iren is not None:
+            try:
+                self._iren.GetRenderWindow().Render()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _make_geometry_actor(self, vtk, pr: dict, scale: float):
         """Polydata actor for one project primitive (box/cylinder/sphere/polygon/stl)."""
@@ -2446,6 +2475,14 @@ class VtkFieldViewer(QWidget):
         else:
             menu.addAction("Pop out view", self.popout)
         menu.addAction("Reset view", self._reset_camera)
+        act_contrast = menu.addAction("High contrast objects")
+        act_contrast.setCheckable(True)
+        act_contrast.setChecked(bool(self._high_contrast))
+        act_contrast.setToolTip(
+            "Draw the geometry more opaque with a bright outline so it stands\n"
+            "out against the dark background. Optional; off by default."
+        )
+        act_contrast.toggled.connect(self.set_high_contrast)
         menu.addSeparator()
         menu.addMenu(self.build_views_menu(menu))
         menu.addMenu(self.build_axes_menu(menu))
@@ -2480,6 +2517,7 @@ class VtkFieldViewer(QWidget):
             lambda: self.set_color_bar_options(other.color_bar_options()),
             lambda: self.set_layout_mode(other.layout_mode()),
             lambda: self.set_view_default(other.view_preset()),
+            lambda: self.set_high_contrast(other._high_contrast),
         ):
             try:
                 setter()

@@ -273,6 +273,18 @@ def main() -> int:
     assert v2._renderer.GetActors().GetNumberOfItems() == 1, "axes not removed"
     print("  axes/ruler on a geometry-only scene OK")
 
+    # High-contrast mode: more opaque objects with a bright 2 px outline.
+    v2.set_high_contrast(True)
+    assert v2._high_contrast is True and v2._geom_actors
+    prop = v2._geom_actors[0].GetProperty()
+    assert prop.GetEdgeColor() == (1.0, 1.0, 1.0), prop.GetEdgeColor()
+    assert prop.GetLineWidth() >= 1.9, prop.GetLineWidth()
+    v2.set_high_contrast(False)
+    assert v2._high_contrast is False
+    prop = v2._geom_actors[0].GetProperty()
+    assert prop.GetLineWidth() < 1.9, prop.GetLineWidth()
+    print("  high-contrast object mode OK")
+
     # "keep" has no direction to keep in a fresh geometry preview -> isometric
     v2.set_view_default("keep")
     v2.set_geometry(
