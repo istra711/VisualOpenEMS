@@ -113,7 +113,7 @@ class Design3DViewer(VtkFieldViewer):
         #: mesh-plane grid colour; white by default (Viewer settings)
         self._mesh_color = (1.0, 1.0, 1.0)
         #: mesh-plane grid opacity (right-click "Mesh grid opacity")
-        self._mesh_opacity = 0.9
+        self._mesh_opacity = 0.25
         self._highlight_names: list[str] = []
         self._highlight_boxes: list[tuple[tuple, tuple]] = []
         self._highlight_label = ""

@@ -226,6 +226,8 @@ def main() -> int:
     viewer.set_mesh_color("#ffffff")
     r, g, blue = actor.GetProperty().GetColor()
     assert abs(r - 1.0) < 1e-9 and abs(g - 1.0) < 1e-9 and abs(blue - 1.0) < 1e-9
+    assert abs(viewer.mesh_opacity() - 0.25) < 1e-9
+    assert abs(actor.GetProperty().GetOpacity() - 0.25) < 1e-9
     viewer.set_mesh_opacity(0.35)
     assert abs(viewer.mesh_opacity() - 0.35) < 1e-9
     assert abs(actor.GetProperty().GetOpacity() - 0.35) < 1e-9
