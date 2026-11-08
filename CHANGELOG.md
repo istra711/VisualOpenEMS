@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mesh grid opacity** (right-click in 3D Design → "Mesh grid opacity"):
   presets 100 / 90 / 75 / 50 / 25 / 10 % for the section grid; default is now
   25 %. Changes apply live and are copied to the pop-out.
+- **Viewer settings → Mouse**: configurable 3D navigation for the Field Viewer
+  and 3D Design: Trackball/Joystick style, rotation sensitivity, wheel zoom
+  factor, invert wheel direction and swap left/middle drag (left = pan,
+  middle = rotate). Applies live (Preview/Save) and is persisted.
 
 ### Fixed
 

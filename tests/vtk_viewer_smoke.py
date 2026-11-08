@@ -299,6 +299,41 @@ def main() -> int:
     assert mapper.GetResolveCoincidentTopology() != 0
     print("  coplanar metal trace depth bias OK")
 
+    # Configurable mouse navigation (Viewer settings → Mouse).
+    from app.ui.vtk_viewer import (
+        DEFAULT_MOUSE,
+        make_mouse_style,
+        normalise_mouse_options,
+    )
+
+    assert normalise_mouse_options(None) == DEFAULT_MOUSE
+    mouse_opts = normalise_mouse_options(
+        {
+            "style": "joystick",
+            "motion_factor": 2.0,
+            "wheel_factor": 0.5,
+            "invert_wheel": True,
+            "swap_buttons": True,
+        }
+    )
+    style = make_mouse_style(vtk, mouse_opts)
+    assert isinstance(style, vtk.vtkInteractorStyleJoystickCamera)
+    assert abs(style.GetMouseWheelMotionFactor() + 0.5) < 1e-9
+    track = make_mouse_style(
+        vtk,
+        {
+            "style": "trackball",
+            "motion_factor": 2.0,
+            "wheel_factor": 0.5,
+            "invert_wheel": True,
+        },
+    )
+    assert abs(track.GetMotionFactor() - 2.0) < 1e-9
+    assert abs(track.GetMouseWheelMotionFactor() + 0.5) < 1e-9
+    swapped = make_mouse_style(vtk, {"style": "trackball", "swap_buttons": True})
+    assert type(swapped).__name__ == "_SwappedMouseStyle"
+    print("  configurable mouse navigation OK")
+
     # "keep" has no direction to keep in a fresh geometry preview -> isometric
     v2.set_view_default("keep")
     v2.set_geometry(

@@ -2293,6 +2293,7 @@ class DesignViewerWindow(QMainWindow):
         self.viewer.set_mesh_color(source.mesh_color())
         self.viewer.set_mesh_opacity(source._mesh_opacity)
         self.viewer.set_high_contrast(source._high_contrast)
+        self.viewer.set_mouse_options(source.mouse_options())
         self.viewer.chk_mesh_plane.setChecked(source.chk_mesh_plane.isChecked())
         idx = self.viewer.cmb_mesh_axis.findText(source.cmb_mesh_axis.currentText())
         if idx >= 0:

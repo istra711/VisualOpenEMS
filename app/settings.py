@@ -44,7 +44,7 @@ class AppSettings:
     log_splitter_sizes: list[int] = field(default_factory=list)
     #: last active main tab (title, survives tab order changes)
     current_tab: str = ""
-    #: last active tab in the Viewer settings dialog (0 Viewer / 1 Colour / 2 Bar)
+    #: last Viewer-settings tab (0 Viewer / 1 Colour / 2 Bar / 3 Mesh / 4 Mouse)
     viewer_settings_tab: int = 0
     log_panel_visible: bool = True  # simulator log panel under the tabs
     #: prefix each new simulator-log block with [HH:MM:SS.mmm] (optional)
@@ -66,6 +66,9 @@ class AppSettings:
     #: standard view of the 3D pane (see app.ui.vtk_viewer.VIEW_PRESETS);
     #: "keep" only fits the camera and keeps the current direction
     field_viewer_view: str = "iso"
+    #: 3D mouse navigation (see app.ui.vtk_viewer.DEFAULT_MOUSE):
+    #: style / motion_factor / wheel_factor / invert_wheel / swap_buttons
+    field_viewer_mouse: dict = field(default_factory=dict)
     #: vector glyph options (see app.ui.vtk_viewer.DEFAULT_VECTORS):
     #: enabled / size / max_arrows / normalize
     field_viewer_vectors: dict = field(default_factory=dict)

@@ -753,6 +753,9 @@ class MainWindow(QMainWindow):
         self.design_viewer.set_mesh_color(
             str(getattr(self.settings, "design_mesh_color", "#ffffff"))
         )
+        self.design_viewer.set_mouse_options(
+            getattr(self.settings, "field_viewer_mouse", None)
+        )
         tabs.addTab(self.design_viewer, "3D Design")
         self.design_tab_index = tabs.indexOf(self.design_viewer)
 
@@ -964,6 +967,9 @@ class MainWindow(QMainWindow):
         self.vtk_viewer.chk_autoplay.toggled.connect(self._on_field_autoplay_toggled)
         self.vtk_viewer.set_axes_options(
             getattr(self.settings, "field_viewer_axes", None)
+        )
+        self.vtk_viewer.set_mouse_options(
+            getattr(self.settings, "field_viewer_mouse", None)
         )
         self.vtk_viewer.on_axes_changed = self._on_field_axes_changed
         # standard view (applied on every load; picked in the viewer or Settings)
@@ -8079,13 +8085,16 @@ class MainWindow(QMainWindow):
         bar_layout = QVBoxLayout(tab_bar)
         tab_mesh = QWidget()
         mesh_color_layout = QVBoxLayout(tab_mesh)
+        tab_mouse = QWidget()
+        mouse_layout = QVBoxLayout(tab_mouse)
         tabs.addTab(tab_viewer, "Viewer")
         tabs.addTab(tab_colour, "Colour")
         tabs.addTab(tab_bar, "Colour bar")
         tabs.addTab(tab_mesh, "Mesh colours")
+        tabs.addTab(tab_mouse, "Mouse")
         try:
             tabs.setCurrentIndex(
-                max(0, min(3, int(getattr(self.settings, "viewer_settings_tab", 0))))
+                max(0, min(4, int(getattr(self.settings, "viewer_settings_tab", 0))))
             )
         except (TypeError, ValueError):
             tabs.setCurrentIndex(0)
@@ -8435,6 +8444,55 @@ class MainWindow(QMainWindow):
         mesh_color_layout.addWidget(grp_design)
         mesh_color_layout.addStretch(1)
 
+        # --- 3D mouse navigation (Field Viewer + 3D Design) ----------------
+        mouse_opts = self.vtk_viewer.mouse_options()
+        grp_mouse = QGroupBox("3D mouse navigation")
+        moform = QFormLayout(grp_mouse)
+        cmb_mouse_style = QComboBox()
+        cmb_mouse_style.addItem("Trackball (default)", "trackball")
+        cmb_mouse_style.addItem("Joystick", "joystick")
+        idx_mouse = cmb_mouse_style.findData(str(mouse_opts.get("style", "trackball")))
+        cmb_mouse_style.setCurrentIndex(idx_mouse if idx_mouse >= 0 else 0)
+        cmb_mouse_style.setToolTip(
+            "Camera navigation style for the Field Viewer and 3D Design view.\n"
+            "Trackball is the VTK/FreeCAD-style rotation; Joystick keeps the\n"
+            "horizon level while dragging."
+        )
+        spn_motion = QDoubleSpinBox()
+        spn_motion.setRange(1.0, 20.0)
+        spn_motion.setDecimals(1)
+        spn_motion.setSingleStep(0.5)
+        spn_motion.setValue(float(mouse_opts.get("motion_factor", 5.0)))
+        spn_motion.setToolTip(
+            "Trackball rotation/pan sensitivity. Lower = slower and more\n"
+            "precise; VTK's default is 10, this app uses 5. (The Joystick\n"
+            "style has its own fixed dynamics.)"
+        )
+        spn_wheel = QDoubleSpinBox()
+        spn_wheel.setRange(0.1, 3.0)
+        spn_wheel.setDecimals(2)
+        spn_wheel.setSingleStep(0.1)
+        spn_wheel.setValue(float(mouse_opts.get("wheel_factor", 1.0)))
+        spn_wheel.setToolTip("Mouse-wheel zoom step. 1.0 = VTK default.")
+        chk_invert_wheel = QCheckBox("Invert wheel zoom direction")
+        chk_invert_wheel.setChecked(bool(mouse_opts.get("invert_wheel", False)))
+        chk_swap_buttons = QCheckBox("Left drag pans, middle drag rotates")
+        chk_swap_buttons.setChecked(bool(mouse_opts.get("swap_buttons", False)))
+        moform.addRow("Navigation style", cmb_mouse_style)
+        moform.addRow("Rotation sensitivity", spn_motion)
+        moform.addRow("Wheel zoom factor", spn_wheel)
+        moform.addRow("", chk_invert_wheel)
+        moform.addRow("", chk_swap_buttons)
+        mouse_layout.addWidget(grp_mouse)
+        mouse_hint = QLabel(
+            "Default: left drag rotates, middle drag or Shift+left pans,\n"
+            "right drag and the wheel zoom. Applies to the Field Viewer and\n"
+            "the 3D Design view; the pop-out windows follow."
+        )
+        mouse_hint.setWordWrap(True)
+        mouse_layout.addWidget(mouse_hint)
+        mouse_layout.addStretch(1)
+
         viewer_layout.addStretch(1)
         colour_layout.addStretch(1)
         bar_layout.addStretch(1)
@@ -8458,6 +8516,7 @@ class MainWindow(QMainWindow):
             "title": self.vtk_viewer.bar_title_options(),
             "color_bar": self.vtk_viewer.color_bar_options(),
             "layout": self.vtk_viewer.layout_mode(),
+            "mouse": self.vtk_viewer.mouse_options(),
             "mesh_colors": self.mesh_viewer.colors(),
             "design_mesh_color": self.design_viewer.mesh_color(),
             "critical_threshold": self.mesh_viewer.critical_threshold(),
@@ -8495,6 +8554,13 @@ class MainWindow(QMainWindow):
                     "font_size": int(spn_bar_font.value()),
                 },
                 "layout": str(cmb_layout.currentData() or DEFAULT_VIEWER_LAYOUT),
+                "mouse": {
+                    "style": str(cmb_mouse_style.currentData() or "trackball"),
+                    "motion_factor": float(spn_motion.value()),
+                    "wheel_factor": float(spn_wheel.value()),
+                    "invert_wheel": bool(chk_invert_wheel.isChecked()),
+                    "swap_buttons": bool(chk_swap_buttons.isChecked()),
+                },
                 "mesh_colors": dict(mesh_colors),
                 "design_mesh_color": design_color["value"].name(),
                 "critical_threshold": float(
@@ -8545,6 +8611,7 @@ class MainWindow(QMainWindow):
                 target.set_bar_title_options(dict(opts["title"]))
                 target.set_color_bar_options(dict(opts["color_bar"]))
                 target.set_layout_mode(str(opts["layout"]))
+                target.set_mouse_options(dict(opts["mouse"]))
             self.mesh_viewer.set_colors(dict(opts["mesh_colors"]))
             self.mesh_viewer.set_critical_threshold(
                 float(opts["critical_threshold"])
@@ -8557,6 +8624,7 @@ class MainWindow(QMainWindow):
             for target in design_targets:
                 if target is not None:
                     target.set_mesh_color(str(opts["design_mesh_color"]))
+                    target.set_mouse_options(dict(opts["mouse"]))
             if not persist:
                 return
             self.settings.field_viewer_autoplay = bool(opts["autoplay"])
@@ -8568,6 +8636,7 @@ class MainWindow(QMainWindow):
             self.settings.field_viewer_title = dict(opts["title"])
             self.settings.field_viewer_color_bar = dict(opts["color_bar"])
             self.settings.field_viewer_layout = str(opts["layout"])
+            self.settings.field_viewer_mouse = dict(opts["mouse"])
             self.settings.mesh_viewer_colors = dict(opts["mesh_colors"])
             self.settings.design_mesh_color = str(opts["design_mesh_color"])
             self.settings.mesh_critical_min_penalty = float(

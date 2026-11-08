@@ -160,6 +160,90 @@ def prefer_metal_on_top(actor, prim: dict) -> None:
         prefer_on_top(actor)
 
 
+#: 3D mouse navigation defaults (Viewer settings → Mouse)
+DEFAULT_MOUSE = {
+    "style": "trackball",  # trackball | joystick
+    "motion_factor": 5.0,  # rotate/pan sensitivity (VTK default is 10)
+    "wheel_factor": 1.0,  # wheel zoom step
+    "invert_wheel": False,
+    "swap_buttons": False,  # left drag pans, middle drag rotates
+}
+
+
+def normalise_mouse_options(options: dict | None = None) -> dict:
+    """Return a validated mouse-options dict (unknown values clamped/ignored)."""
+    opts = dict(DEFAULT_MOUSE)
+    if isinstance(options, dict):
+        for key in DEFAULT_MOUSE:
+            if key in options:
+                opts[key] = options[key]
+    opts["style"] = (
+        "joystick"
+        if str(opts.get("style", "trackball")).strip().lower() == "joystick"
+        else "trackball"
+    )
+    try:
+        opts["motion_factor"] = max(1.0, min(20.0, float(opts["motion_factor"])))
+    except (TypeError, ValueError):
+        opts["motion_factor"] = DEFAULT_MOUSE["motion_factor"]
+    try:
+        opts["wheel_factor"] = max(0.1, min(3.0, float(opts["wheel_factor"])))
+    except (TypeError, ValueError):
+        opts["wheel_factor"] = DEFAULT_MOUSE["wheel_factor"]
+    opts["invert_wheel"] = bool(opts.get("invert_wheel", False))
+    opts["swap_buttons"] = bool(opts.get("swap_buttons", False))
+    return opts
+
+
+def make_mouse_style(vtk, options: dict | None = None):
+    """Create a VTK camera style from the Viewer-settings mouse options.
+
+    ``invert_wheel`` is implemented by negating VTK's wheel motion factor
+    (forward then dollies out and backward dollies in).  ``swap_buttons`` uses
+    a tiny Python subclass so left-drag pans and middle-drag rotates.
+    """
+    opts = normalise_mouse_options(options)
+    base = (
+        vtk.vtkInteractorStyleJoystickCamera
+        if opts["style"] == "joystick"
+        else vtk.vtkInteractorStyleTrackballCamera
+    )
+    if opts["swap_buttons"]:
+
+        class _SwappedMouseStyle(base):
+            def OnLeftButtonDown(self):
+                base.OnMiddleButtonDown(self)
+
+            def OnLeftButtonUp(self):
+                base.OnMiddleButtonUp(self)
+
+            def OnMiddleButtonDown(self):
+                base.OnLeftButtonDown(self)
+
+            def OnMiddleButtonUp(self):
+                base.OnLeftButtonUp(self)
+
+            def OnLeftButtonDoubleClick(self):
+                base.OnMiddleButtonDoubleClick(self)
+
+            def OnMiddleButtonDoubleClick(self):
+                base.OnLeftButtonDoubleClick(self)
+
+        style = _SwappedMouseStyle()
+    else:
+        style = base()
+    try:
+        style.SetMotionFactor(float(opts["motion_factor"]))
+    except Exception:  # noqa: BLE001 — joystick style has no motion factor
+        pass
+    try:
+        wheel = float(opts["wheel_factor"])
+        style.SetMouseWheelMotionFactor(-wheel if opts["invert_wheel"] else wheel)
+    except Exception:  # noqa: BLE001 — older VTK / unusual style
+        pass
+    return style
+
+
 DEFAULT_AXES: dict = {
     "show": True,  # master switch for the triad / corner marker
     "corner": True,  # True = ParaView-style corner widget, False = in-scene triad
@@ -622,6 +706,8 @@ class VtkFieldViewer(QWidget):
         self._popout_win: FieldViewerWindow | None = None
         # axes display options (menu + persisted settings)
         self._axes = dict(DEFAULT_AXES)
+        #: 3D mouse navigation (Viewer settings → Mouse)
+        self._mouse = dict(DEFAULT_MOUSE)
         #: True once the user picked a ruler unit; then project loading must not
         #: overwrite it (the default follows the project's drawing unit).
         self._ruler_unit_user = False
@@ -1518,6 +1604,26 @@ class VtkFieldViewer(QWidget):
         self.panel_scroll.setMaximumWidth(200)
         self.panel_scroll.setVisible(self._layout_mode == "panel")
 
+    def mouse_options(self) -> dict:
+        """Current 3D mouse navigation options (JSON-serialisable)."""
+        return dict(self._mouse)
+
+    def set_mouse_options(self, options: dict | None = None) -> None:
+        """Apply 3D mouse navigation options; live if the view exists."""
+        self._mouse = normalise_mouse_options(options)
+        self._install_interactor_style()
+
+    def _install_interactor_style(self) -> None:
+        """(Re-)install the camera style after an option change."""
+        if self._iren is None:
+            return
+        try:
+            vtk = self._vtk or _vtk()
+            self._vtk = vtk
+            self._iren.SetInteractorStyle(make_mouse_style(vtk, self._mouse))
+        except Exception as e:  # noqa: BLE001 — navigation must not break the view
+            print(f"Mouse style setup failed: {e}")
+
     def _configure_render_window(self, render_window) -> None:
         """Hook: configure GL window attributes before ``Initialize()``.
 
@@ -1561,15 +1667,9 @@ class VtkFieldViewer(QWidget):
             self._configure_render_window(render_window)
             render_window.AddRenderer(self._renderer)
             self._iren.Initialize()
-            # VTK's default MotionFactor is 10: a few pixels of mouse travel
-            # already swing the camera, which makes precise positioning
-            # impossible. 2.0 is a fifth of that and still moves fast enough.
-            try:
-                style = vtk.vtkInteractorStyleTrackballCamera()
-                style.SetMotionFactor(5.0)
-                self._iren.SetInteractorStyle(style)
-            except Exception:  # noqa: BLE001 - older VTK without the setter
-                pass
+            # Camera navigation is configurable in Viewer settings → Mouse
+            # (default motion factor 5; VTK's 10 is very fast).
+            self._install_interactor_style()
             self._draw_geometry()
             return True
         except Exception as e:  # noqa: BLE001 — e.g. no OpenGL in this session
@@ -2561,6 +2661,7 @@ class VtkFieldViewer(QWidget):
             lambda: self.chk_loop.setChecked(other.chk_loop.isChecked()),
             lambda: self.chk_autoplay.setChecked(other.chk_autoplay.isChecked()),
             lambda: self.set_axes_options(other.axes_options()),
+            lambda: self.set_mouse_options(other.mouse_options()),
             lambda: self.set_vector_options(other.vector_options()),
             lambda: self.set_streamline_options(other.streamline_options()),
             lambda: self.set_color_scale_options(other.color_scale_options()),

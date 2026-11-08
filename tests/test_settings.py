@@ -33,6 +33,26 @@ def test_field_viewer_view_default_and_roundtrip(tmp_path):
     assert AppSettings.load(legacy).field_viewer_view == "iso"
 
 
+def test_field_viewer_mouse_default_and_roundtrip(tmp_path):
+    # optional mouse options; the viewer fills in DEFAULT_MOUSE
+    assert AppSettings().field_viewer_mouse == {}
+    path = tmp_path / "gui_settings.json"
+    opts = {
+        "style": "joystick",
+        "motion_factor": 2.0,
+        "wheel_factor": 0.5,
+        "invert_wheel": True,
+        "swap_buttons": True,
+    }
+    s = AppSettings()
+    s.field_viewer_mouse = dict(opts)
+    s.save(path)
+    assert AppSettings.load(path).field_viewer_mouse == opts
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text('{"work_dir": "x"}', encoding="utf-8")
+    assert AppSettings.load(legacy).field_viewer_mouse == {}
+
+
 def test_field_viewer_vectors_default_and_roundtrip(tmp_path):
     # vector glyphs are opt-in; the viewer fills in its own defaults
     assert AppSettings().field_viewer_vectors == {}
