@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mesh Viewer slice focus for flat boxes**: selecting a zero-thickness box
+  trace (`start.z == stop.z`, e.g. `arm_top_vert` at z=1.0 mm) now moves the
+  slice to its elevation and outlines it. Previously the trace was invisible:
+  the CSX build/inflation did not match the current project box (or the mesh
+  was stale after an edit), and CSX properties are named after the material
+  (`copper#N`) rather than the primitive, so the highlight lookup found
+  nothing. Focus and the yellow outline fall back to the current project/tree
+  box (and the real polygon plane) without requiring a mesh rebuild.
 - **Mesh Viewer slice focus for flat polygons**: selecting a copper trace or
   other polygon now focuses the slice at the polygon's real elevation instead of
   the middle of a stale CAD bounding box. A flat trace at z=1.651 mm was

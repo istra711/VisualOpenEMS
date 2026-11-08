@@ -2995,6 +2995,8 @@ class MainWindow(QMainWindow):
         if viewer is None or not hasattr(viewer, "set_highlight"):
             return
         try:
+            if hasattr(viewer, "set_primitives"):
+                viewer.set_primitives(self.primitives)
             viewer.set_highlight(boxes=boxes, names=names, label=label, focus=focus)
         except Exception as e:  # noqa: BLE001 — never break the GUI on a highlight
             print("mesh viewer highlight failed:", e)

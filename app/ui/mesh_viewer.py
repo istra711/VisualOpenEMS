@@ -1949,6 +1949,15 @@ class MeshGeometryViewer(QWidget):
         # Do NOT redraw here — caller should follow with set_csx() for a new CSX.
         # Redrawing with a stale CSX while the caller is replacing it can crash.
 
+    def set_primitives(self, primitives: list[dict] | None = None) -> None:
+        """Update only the project primitive dicts (no CSX/mesh swap, no redraw).
+
+        Tree selection must work for geometry added/edited after the last
+        Build Mesh; :meth:`_project_highlight_boxes` uses these dicts when the
+        built CSX does not contain the object (yet).
+        """
+        self._primitives = list(primitives or [])
+
     def set_nf2ff(self, nf2ff=None) -> None:
         """Update the NF2FF overlay in place (after Fit/Edit NF2FF) and redraw.
 
@@ -2651,7 +2660,7 @@ class MeshGeometryViewer(QWidget):
             self._redraw()  # Overview / Cell sizes draw the highlight too
             return False
         normal = _SLICE_AXES[key][2]
-        boxes = self._highlight_boxes()
+        boxes = self._project_highlight_boxes() or self._highlight_boxes()
         if not boxes:
             self._redraw()  # label/count may have changed without a match
             return False
@@ -2711,6 +2720,82 @@ class MeshGeometryViewer(QWidget):
             )
         return out
 
+    def _project_highlight_boxes(self) -> list[tuple[tuple, tuple, object]]:
+        """Fallback highlight geometry from the project / tree selection.
+
+        A built CSX may not contain a newly added trace yet, and sheet
+        inflation changes a zero-thickness box (``start.z == stop.z``) so its
+        CSX bbox no longer matches the project box.  The selection must still
+        focus the slice and draw the outline in that case.
+
+        The boxes handed over by the tree are authoritative (they are derived
+        from the *current* project, not from the possibly stale CSX).  A
+        matching project primitive only contributes its real polygon plane so
+        a flat trace is focused at its actual elevation instead of the middle
+        of a stale CAD bounding box.
+        """
+        from types import SimpleNamespace
+
+        hl = getattr(self, "_highlight", None) or {}
+        names = [str(n) for n in (hl.get("names") or []) if str(n)]
+        boxes = list(hl.get("boxes") or [])
+        out: list[tuple[tuple, tuple, object]] = []
+
+        def _add(st, sp, poly=None) -> None:
+            try:
+                st3 = tuple(float(v) for v in st)
+                sp3 = tuple(float(v) for v in sp)
+            except (TypeError, ValueError):
+                return
+            if len(st3) == 3 and len(sp3) == 3:
+                out.append((st3, sp3, poly))
+
+        def _poly(pr) -> object | None:
+            if not (pr.get("points") and pr.get("axis")):
+                return None
+            try:
+                points = tuple(
+                    (float(pt[0]), float(pt[1]))
+                    for pt in pr.get("points") or []
+                    if len(pt) >= 2
+                )
+                return SimpleNamespace(
+                    poly_points=points,
+                    poly_axis=str(pr.get("axis") or "z").lower(),
+                    poly_coord=float(pr.get("coord", 0.0) or 0.0),
+                    poly_length=float(pr.get("length", 0.0) or 0.0),
+                )
+            except (TypeError, ValueError):
+                return None
+
+        by_name = {}
+        for pr in getattr(self, "_primitives", []) or []:
+            name = str(pr.get("name") or "").lower()
+            if name:
+                by_name[name] = pr
+
+        for i, name in enumerate(names):
+            pr = by_name.get(name.lower())
+            poly = _poly(pr) if pr is not None else None
+            if i < len(boxes):
+                try:
+                    b0, b1 = boxes[i]
+                except (TypeError, ValueError):
+                    continue
+                _add(b0, b1, poly)
+            elif pr is not None:
+                _add(pr.get("start"), pr.get("stop"), poly)
+
+        if not out:
+            # No names (e.g. a result-only view): use the tree boxes directly.
+            for box in boxes:
+                try:
+                    b0, b1 = box
+                except (TypeError, ValueError):
+                    continue
+                _add(b0, b1)
+        return out
+
     def _is_highlighted(self, start=None, stop=None, name: str = "") -> bool:
         """True when this element is the one selected in the geometry list."""
         hl = getattr(self, "_highlight", None) or {}
@@ -2753,7 +2838,8 @@ class MeshGeometryViewer(QWidget):
         )
         mesh = self._grid_mesh()
         drawn = False
-        for st, sp, poly in self._highlight_boxes():
+        boxes = self._project_highlight_boxes() or self._highlight_boxes()
+        for st, sp, poly in boxes:
             tol = eps
             if plane is not None:
                 if (

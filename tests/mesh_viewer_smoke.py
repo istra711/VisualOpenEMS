@@ -497,6 +497,47 @@ def main() -> int:
         assert _yellow(viewer.fig_slice) == 0, "highlight not cleared"
         print("  geometry-list highlight (box + name, overview/slice): OK")
 
+        # --- flat copper sheet (start.z == stop.z) --------------------------
+        # The CSX sheet inflation changes the built bbox, so the CSX box no
+        # longer matches the project box and name matching fails (properties
+        # are grouped by material). The tree fallback must still focus the
+        # slice on the sheet and outline it there.
+        _flat = next(
+            p for p in primitives
+            if abs(float(p["stop"][2]) - float(p["start"][2])) < 1e-12
+        )
+        _flat_z = float(_flat["start"][2])
+        viewer.cmb_view.setCurrentText("XY slice")
+        viewer.clear_highlight()
+        viewer.spn_plane.setValue(0.0)
+        assert abs(float(viewer.spn_plane.value()) - _flat_z) > 1e-9
+        _old_project_boxes = viewer._highlight_boxes
+        # Stale CSX box (e.g. from before the trace was moved): it must not win
+        # over the current project/tree box.
+        viewer._highlight_boxes = lambda: [
+            ((0.0, 0.0, 0.0), (10.0, 10.0, 0.0))
+        ]
+        try:
+            viewer.set_highlight(
+                boxes=[(_flat["start"], _flat["stop"])],
+                names=[str(_flat.get("name", ""))],
+                label="Prim: flat sheet",
+                focus=True,
+            )
+            assert abs(float(viewer.spn_plane.value()) - _flat_z) < 1e-6, (
+                "flat sheet selection did not focus its elevation: "
+                f"{viewer.spn_plane.value()} != {_flat_z}"
+            )
+            _flat_title = viewer.fig_slice.axes[0].get_title()
+            assert "Prim: flat sheet" in _flat_title, _flat_title
+            assert _yellow(viewer.fig_slice) >= 1, (
+                "flat sheet fallback outline missing"
+            )
+        finally:
+            viewer._highlight_boxes = _old_project_boxes
+        viewer.clear_highlight()
+        print("  flat-sheet selection falls back to project box: OK")
+
         # --- the outline/label must follow EVERY click, even when the slice
         # plane does not move ------------------------------------------------
         # The plane spinbox rounds to 4 decimals and the CSX boxes are
