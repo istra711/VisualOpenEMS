@@ -191,6 +191,11 @@ def build_mesh_and_validate(
             from app.meshing.polar import ensure_polar_primitive
 
             ensure_polar_primitive(kind, name)
+        if kind == "lumped":
+            from app.csxcad_builder.lumped import add_lumped_element
+
+            add_lumped_element(CSX, pr)
+            continue
         mat = pr.get("material", "copper")
         pri = int(pr.get("priority", 10))
         prop = _prop_for(mat)

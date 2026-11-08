@@ -278,7 +278,7 @@ def source_coordinates(
         name = str(pr.get("name", "?"))
         kind = str(pr.get("kind", "box"))
         tag = f"{kind}:{name}"
-        if kind == "box":
+        if kind in ("box", "lumped"):
             add(pr.get("start"), tag)
             add(pr.get("stop"), tag)
         elif kind == "polygon":

@@ -513,6 +513,11 @@ def main() -> int:
         name = pr["name"]
         if project.mesh.is_cylindrical:
             ensure_polar_primitive(kind, name)
+        if kind == "lumped":
+            from app.csxcad_builder.lumped import add_lumped_element
+
+            add_lumped_element(CSX, pr)
+            continue
         mat = pr.get("material", "copper")
         pri = int(pr.get("priority", 10))
         if mat not in props:

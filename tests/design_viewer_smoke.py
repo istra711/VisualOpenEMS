@@ -53,6 +53,18 @@ def main() -> int:
             "start": [-5.0, -1.0, 0.0],
             "stop": [5.0, 1.0, 0.035],
         },
+        {
+            "kind": "lumped",
+            "name": "R1",
+            "direction": "z",
+            "start": [0.0, 0.0, 0.0],
+            "stop": [0.0, 0.0, 0.035],
+            "resistance": 50.0,
+            "inductance": 0.0,
+            "capacitance": 0.0,
+            "caps": True,
+            "priority": 15,
+        },
     ]
     ports = [
         PortDef(name="P1", type="msl", start=[-4.0, -1.0, 0.0], stop=[-4.0, 1.0, 0.035]),
@@ -76,11 +88,11 @@ def main() -> int:
         domain=([-20, -20, -10], [20, 20, 10]),
         fit=True,
     )
-    assert len(viewer._design_prims) == 4
+    assert len(viewer._design_prims) == 5
     assert len(viewer._design_ports) == 2
     assert viewer._side_panel.maximumWidth() <= 165
     assert viewer._design_domain == ([-20, -20, -10], [20, 20, 10])
-    assert "Primitives: 4" in viewer.lbl_design_info.text()
+    assert "Primitives: 5" in viewer.lbl_design_info.text()
     assert "Ports: 1/2 active" in viewer.lbl_design_info.text()
     assert "NF2FF: on" in viewer.lbl_design_info.text()
 
@@ -122,7 +134,7 @@ def main() -> int:
         fit=True,
     )
     viewer._render_design()
-    assert viewer._geom_actors, "geometry actors missing"
+    assert len(viewer._geom_actors) == 5, "geometry actors missing"
     assert (
         viewer._geom_actors[0].GetMapper().GetResolveCoincidentTopology() != 0
     ), "copper trace lost its coplanar depth bias"

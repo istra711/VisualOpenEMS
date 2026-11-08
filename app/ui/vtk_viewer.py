@@ -1831,6 +1831,36 @@ class VtkFieldViewer(QWidget):
                     return None
                 mapper = vtk.vtkPolyDataMapper()
                 mapper.SetInputData(pd)
+            elif kind == "lumped":
+                # Lumped R/L/C component: a small tube along start->stop (or a
+                # sphere for a point element) so it is visible in the 3D views.
+                s = [float(v) * scale for v in pr.get("start", [0, 0, 0])]
+                e = [float(v) * scale for v in pr.get("stop", s)]
+                length = math.dist(s, e)
+                if length > 1e-15:
+                    line = vtk.vtkLineSource()
+                    line.SetPoint1(*s)
+                    line.SetPoint2(*e)
+                    tube = vtk.vtkTubeFilter()
+                    tube.SetInputConnection(line.GetOutputPort())
+                    # visible marker: 15 % of the element length, capped at
+                    # half a drawing unit (0.5 mm for a mm project)
+                    radius = max(length * 0.15, 1e-9)
+                    if scale > 0:
+                        radius = min(radius, 0.5 * scale)
+                    tube.SetRadius(radius)
+                    tube.SetNumberOfSides(12)
+                    tube.CappingOn()
+                    mapper = vtk.vtkPolyDataMapper()
+                    mapper.SetInputConnection(tube.GetOutputPort())
+                else:
+                    src = vtk.vtkSphereSource()
+                    src.SetCenter(*s)
+                    src.SetRadius(max(0.6 * scale, 1e-9))
+                    src.SetThetaResolution(16)
+                    src.SetPhiResolution(10)
+                    mapper = vtk.vtkPolyDataMapper()
+                    mapper.SetInputConnection(src.GetOutputPort())
             else:
                 return None
             actor = vtk.vtkActor()

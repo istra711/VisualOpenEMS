@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   middle = rotate) and right-drag pan instead of zoom (default; a plain
   right-click still opens the context menu). Applies live (Preview/Save) and
   is persisted.
+- **Lumped R/L/C geometry**: Geometry → "Add Lumped Element (R/L/C)…" places
+  an openEMS/CSXCAD `AddLumpedElement` (direction x/y/z, R, L, C, PEC end
+  caps) between Start/Stop. It is included in the mesh build and the generated
+  run script, and shown as a small tube/marker in the Field Viewer and 3D
+  Design. Like other non-box primitives it is blocked on cylindrical meshes.
 
 ### Fixed
 

@@ -654,6 +654,117 @@ class PrimitiveSphereDialog(QDialog, _DisplayMixin):
         self.accept()
 
 
+class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
+    """Add/edit a lumped R/L/C element (openEMS ``AddLumpedElement``)."""
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        prim: dict[str, Any] | None = None,
+        coord_system: str = "cartesian",
+        display: dict | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Lumped element (R/L/C)")
+        self.resize(430, 610)
+        self._coord_system = coord_system
+        p = prim or {
+            "name": "R1",
+            "direction": "z",
+            "start": [0, 0, 0],
+            "stop": [0, 0, 1],
+            "resistance": 50.0,
+            "inductance": 0.0,
+            "capacitance": 0.0,
+            "caps": True,
+            "priority": 15,
+        }
+        self._keep_extra = dict(p) if prim else {}
+        self.result: dict[str, Any] | None = None
+
+        form = QFormLayout(self)
+        self.ed_name = QLineEdit(str(p.get("name", "R1")))
+        self.spn_pri = QSpinBox()
+        self.spn_pri.setRange(0, 200)
+        self.spn_pri.setValue(int(p.get("priority", 15)))
+        self.cmb_dir = QComboBox()
+        self.cmb_dir.addItems(["x", "y", "z"])
+        self.cmb_dir.setCurrentText(str(p.get("direction", "z")).lower())
+        self.cmb_dir.setToolTip(
+            "Component direction: the axis along which the lumped element acts.\n"
+            "The Start/Stop box should span this axis."
+        )
+        self.spn_r = QDoubleSpinBox()
+        self.spn_r.setRange(0.0, 1e9)
+        self.spn_r.setDecimals(3)
+        self.spn_r.setValue(float(p.get("resistance", 50.0) or 0.0))
+        self.spn_r.setSuffix(" Ω")
+        self.spn_l = QDoubleSpinBox()
+        self.spn_l.setRange(0.0, 1e9)
+        self.spn_l.setDecimals(4)
+        self.spn_l.setValue(float(p.get("inductance", 0.0) or 0.0) * 1e9)
+        self.spn_l.setSuffix(" nH")
+        self.spn_c = QDoubleSpinBox()
+        self.spn_c.setRange(0.0, 1e9)
+        self.spn_c.setDecimals(4)
+        self.spn_c.setValue(float(p.get("capacitance", 0.0) or 0.0) * 1e12)
+        self.spn_c.setSuffix(" pF")
+        self.chk_caps = QCheckBox("PEC end caps (ensure contact)")
+        self.chk_caps.setChecked(bool(p.get("caps", True)))
+
+        form.addRow("Name", self.ed_name)
+        form.addRow("Priority", self.spn_pri)
+        form.addRow("Direction", self.cmb_dir)
+        self.spn_start = _vec3_row(
+            form,
+            "Start",
+            list(p.get("start", [0, 0, 0])),
+            coord_system=coord_system,
+        )
+        self.spn_stop = _vec3_row(
+            form,
+            "Stop / other end",
+            list(p.get("stop", [0, 0, 1])),
+            coord_system=coord_system,
+        )
+        form.addRow("Resistance", self.spn_r)
+        form.addRow("Inductance", self.spn_l)
+        form.addRow("Capacitance", self.spn_c)
+        form.addRow(self.chk_caps)
+        hint = QLabel(
+            "R, L and C are applied at the element; use 0 for values that are\n"
+            "not present. Start/Stop define the component box/line (drawing unit)."
+        )
+        hint.setWordWrap(True)
+        form.addRow(hint)
+        self._add_display(form, display)
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        form.addRow(bb)
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+
+    def _accept(self) -> None:
+        prim: dict[str, Any] = {
+            "kind": "lumped",
+            "name": self.ed_name.text().strip() or "R1",
+            "direction": self.cmb_dir.currentText() or "z",
+            "priority": self.spn_pri.value(),
+            "start": _vec3_read(self.spn_start, self._coord_system),
+            "stop": _vec3_read(self.spn_stop, self._coord_system),
+            "resistance": float(self.spn_r.value()),
+            "inductance": float(self.spn_l.value()) * 1e-9,
+            "capacitance": float(self.spn_c.value()) * 1e-12,
+            "caps": bool(self.chk_caps.isChecked()),
+        }
+        for k, v in (self._keep_extra or {}).items():
+            if k not in prim:
+                prim[k] = v
+        self.result = prim
+        self.accept()
+
+
 class PrimitivePolygonDialog(QDialog, _DisplayMixin):
     """Add/edit a polygon primitive (flat sheet or extruded prism).
 

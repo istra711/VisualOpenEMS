@@ -1391,7 +1391,7 @@ class MeshGeometryViewer(QWidget):
             queues.setdefault(mat, []).append(pr)
         out: dict[int, dict] = {}
         for info in infos:
-            if self._is_port_artifact(info.kind):
+            if self._is_port_artifact(info.kind, info.name):
                 continue  # ports are drawn separately and never styled
             mat = str(info.name).rsplit("#", 1)[0]
             queue = queues.get(mat)
@@ -3789,18 +3789,20 @@ class MeshGeometryViewer(QWidget):
         return max(cells)
 
     @staticmethod
-    def _is_port_artifact(kind: str) -> bool:
+    def _is_port_artifact(kind: str, name: str = "") -> bool:
         """True for CSX properties that belong to a port, not to the structure.
 
         openEMS stores every port as a set of CSX primitives (LumpedElement,
         Excitation, ProbeBox/ResBox) whose sliding-plane footprints used to be
-        drawn by the *structure* block — so they ignored "Show ports" and
-        vanished with "Show structure".
+        drawn by the *structure* block.  A user-placed lumped element is also
+        a ``LumpedElement`` property; only the generated ``port_*`` names are
+        port artifacts, so it stays part of the structure.
         """
         k = (kind or "").lower()
-        return any(
-            tok in k for tok in ("lumped", "excitation", "probe", "resbox", "dump")
-        )
+        n = (name or "").lower()
+        if any(tok in k for tok in ("excitation", "probe", "resbox", "dump")):
+            return True
+        return "lumped" in k and n.startswith("port_")
 
     def _draw_slice(self, view: str) -> None:
         ax_a, ax_b, normal = _SLICE_AXES[view]
@@ -3953,7 +3955,7 @@ class MeshGeometryViewer(QWidget):
             # visible on top of the dielectric (10) it sits on — CSXCAD
             # resolves overlapping objects by priority as well.
             for info in sorted(infos, key=lambda i: int(getattr(i, "priority", 0) or 0)):
-                if self._is_port_artifact(info.kind):
+                if self._is_port_artifact(info.kind, info.name):
                     continue  # ports are drawn by the "Show ports" block below
                 if self._info_hidden(info):
                     continue  # object switched invisible in the Geometry dialog

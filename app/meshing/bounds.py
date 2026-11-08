@@ -25,6 +25,7 @@ _ALLOWED_KINDS = (
     "polygon",
     "wire",
     "curve",
+    "lumped",
 )
 
 

@@ -1303,6 +1303,12 @@ class MainWindow(QMainWindow):
         add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
         add_action(gmenu, "Add Cylinder…", slot=self._on_add_prim_cyl)
         add_action(gmenu, "Add Sphere…", slot=self._on_add_prim_sphere)
+        add_action(
+            gmenu,
+            "Add Lumped Element (R/L/C)…",
+            slot=self._on_add_prim_lumped,
+            tip="openEMS AddLumpedElement: resistor/inductor/capacitor at a box/line",
+        )
         add_action(gmenu, "Add Polygon…", slot=self._on_add_prim_polygon)
         add_action(
             gmenu,
@@ -2427,6 +2433,11 @@ class MainWindow(QMainWindow):
             ("Box\u2026", self._on_add_prim_box, "Add a box primitive"),
             ("Cylinder\u2026", self._on_add_prim_cyl, "Add a cylinder primitive"),
             ("Sphere\u2026", self._on_add_prim_sphere, "Add a sphere primitive"),
+            (
+                "Lumped Element (R/L/C)\u2026",
+                self._on_add_prim_lumped,
+                "Add an openEMS lumped element (resistor/inductor/capacitor)",
+            ),
             ("Polygon\u2026", self._on_add_prim_polygon, "Add a flat polygon sheet"),
             (
                 "Extruded Polygon\u2026",
@@ -6145,6 +6156,27 @@ class MainWindow(QMainWindow):
             )
             self._refresh_tree()
 
+    def _on_add_prim_lumped(self) -> None:
+        from app.ui.geometry_editors import PrimitiveLumpedElementDialog
+
+        if self._polar_prim_blocked("lumped"):
+            return
+        dlg = PrimitiveLumpedElementDialog(
+            self, coord_system=self.project.mesh.coord_system
+        )
+        if dlg.exec() and dlg.result:
+            pr = dlg.result
+            self.primitives = [p for p in self.primitives if p.get("name") != pr["name"]]
+            self.primitives.append(pr)
+            self._store_object_display(pr["name"], dlg.display_values())
+            self._log(
+                f"Lumped element: {pr['name']} dir={pr['direction']} "
+                f"R={pr['resistance']:g}Ω L={pr['inductance'] * 1e9:g}nH "
+                f"C={pr['capacitance'] * 1e12:g}pF "
+                f"{pr['start']}→{pr['stop']}"
+            )
+            self._refresh_tree()
+
     def _on_add_prim_polygon(self) -> None:
         self._add_primitive_polygon(extruded=False)
 
@@ -6707,6 +6739,17 @@ class MainWindow(QMainWindow):
             _add(f"Geom: {Path(gf.path).name} [{gf.format}]", "geom", i)
         for i, pr in enumerate(self.primitives):
             kind = pr.get("kind", "box")
+            if kind == "lumped":
+                try:
+                    detail = (
+                        f"R={float(pr.get('resistance', 0.0)):g}Ω "
+                        f"L={float(pr.get('inductance', 0.0)) * 1e9:g}nH "
+                        f"C={float(pr.get('capacitance', 0.0)) * 1e12:g}pF"
+                    )
+                except (TypeError, ValueError):
+                    detail = "R/L/C"
+                _add(f"Prim: {pr.get('name')} (lumped {detail})", "prim", i)
+                continue
             _add(
                 f"Prim: {pr.get('name')} ({kind}/{pr.get('material', '?')})",
                 "prim",
@@ -6989,13 +7032,22 @@ class MainWindow(QMainWindow):
                 return
             pr = self.primitives[idx]
             ptype = str(pr.get("kind", "box"))
-            if ptype in {"box", "cylinder", "sphere", "polygon", "wire", "curve"}:
-                if ptype in {"sphere", "polygon", "wire", "curve"} and self._polar_prim_blocked(ptype):
+            if ptype in {
+                "box",
+                "cylinder",
+                "sphere",
+                "polygon",
+                "wire",
+                "curve",
+                "lumped",
+            }:
+                if ptype in {"sphere", "polygon", "wire", "curve", "lumped"} and self._polar_prim_blocked(ptype):
                     return
                 from app.ui.geometry_editors import (
                     PrimitiveBoxDialog,
                     PrimitiveCurveDialog,
                     PrimitiveCylinderDialog,
+                    PrimitiveLumpedElementDialog,
                     PrimitivePolygonDialog,
                     PrimitiveSphereDialog,
                     PrimitiveWireDialog,
@@ -7008,6 +7060,7 @@ class MainWindow(QMainWindow):
                     "polygon": PrimitivePolygonDialog,
                     "wire": PrimitiveWireDialog,
                     "curve": PrimitiveCurveDialog,
+                    "lumped": PrimitiveLumpedElementDialog,
                 }[ptype]
                 kwargs: dict[str, object] = {
                     "prim": pr,
@@ -7029,8 +7082,13 @@ class MainWindow(QMainWindow):
                     if old_name and new_name and old_name != new_name:
                         self._rename_primitive(old_name, new_name)
                     self._store_object_display(new_name, dlg.display_values())
+                    spec = (
+                        dlg.result.get("material")
+                        or dlg.result.get("kind")
+                        or "prim"
+                    )
                     self._log(
-                        f"Primitive updated: {new_name} {dlg.result.get('material')} "
+                        f"Primitive updated: {new_name} {spec} "
                         f"{dlg.result.get('start')}→{dlg.result.get('stop')}"
                     )
                     self._refresh_tree()
