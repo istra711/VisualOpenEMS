@@ -361,6 +361,43 @@ def main() -> int:
         return 28
     print("[3D] default max-30 dB window + -30 dB/Full buttons OK")
 
+    # right-click 3D grid controls: enable, strength, line width, density
+    if not viewer.grp_grid3d.isEnabled():
+        print("FAIL: 3D grid controls disabled on the 3D plot")
+        return 29
+    viewer.spn_grid_alpha.setValue(0.9)
+    viewer.spn_grid_width.setValue(1.2)
+    viewer.cmb_grid_step.setCurrentIndex(2)  # 30 deg
+    viewer._redraw()
+    ax3d = viewer.figure.axes[0]
+    grid = [ln for ln in ax3d.lines if ln.get_gid() == "antenna_graticule"]
+    if len(grid) != 1:
+        print("FAIL: graticule line missing/duplicated", len(grid))
+        return 29
+    if (
+        abs(grid[0].get_alpha() - 0.9) > 1e-6
+        or abs(grid[0].get_linewidth() - 1.2) > 1e-6
+    ):
+        print("FAIL: graticule style", grid[0].get_alpha(), grid[0].get_linewidth())
+        return 29
+    viewer.chk_grid3d.setChecked(False)
+    ax3d = viewer.figure.axes[0]
+    if any(ln.get_gid() == "antenna_graticule" for ln in ax3d.lines):
+        print("FAIL: graticule still drawn after unchecking")
+        return 29
+    if viewer.act_graticule.isChecked():
+        print("FAIL: View-menu graticule not synced off")
+        return 29
+    viewer.chk_grid3d.setChecked(True)
+    ax3d = viewer.figure.axes[0]
+    if not any(ln.get_gid() == "antenna_graticule" for ln in ax3d.lines):
+        print("FAIL: graticule not restored after re-checking")
+        return 29
+    if not viewer.act_graticule.isChecked():
+        print("FAIL: View-menu graticule not synced on")
+        return 29
+    print("[3D] right-click grid strength/width/density + toggle sync OK")
+
     viewer.cmb_plot.setCurrentText("E-Plane (phi=90)")
     viewer._redraw()
     if not viewer.slider_dbi_min.isHidden() or not viewer.cmb_cmap.isHidden():

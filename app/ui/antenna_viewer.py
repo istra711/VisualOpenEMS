@@ -14,12 +14,14 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -396,6 +398,10 @@ class AntennaPatternViewer(QWidget):
         self._view3d = tuple(self.DEFAULT_VIEW)
         self._show_graticule = True
         self._show_wireframe = False
+        # graticule style (right-click → "3D reference grid")
+        self._grid_alpha = 0.6
+        self._grid_width = 0.7
+        self._grid_step = 0.0  # 0 = use the quality preset's density
         # throttle 3D rebuilds while the dBi slider is dragged (the surface is
         # rebuilt from scratch; rebuilding on every slider tick would lag)
         self._dbi_redraw_timer = QTimer(self)
@@ -636,6 +642,10 @@ class AntennaPatternViewer(QWidget):
         self.spn_rstep.valueChanged.connect(self._redraw)
         self.spn_lblpos.valueChanged.connect(self._redraw)
         self._radial_dlg.accepted.connect(self._redraw)
+        self.chk_grid3d.toggled.connect(self._set_graticule_visible)
+        self.spn_grid_alpha.valueChanged.connect(self._on_grid_style_changed)
+        self.spn_grid_width.valueChanged.connect(self._on_grid_style_changed)
+        self.cmb_grid_step.currentIndexChanged.connect(self._on_grid_step_changed)
         self.slider_dbi_min.valueChanged.connect(self._on_dbi_slider)
         self.btn_db30.clicked.connect(lambda _checked=False: self._set_dbi_auto(30.0))
         self.btn_dbfull.clicked.connect(lambda _checked=False: self._set_dbi_auto(None))
@@ -726,6 +736,49 @@ class AntennaPatternViewer(QWidget):
         form.addRow(self.lbl_lblpos, self.spn_lblpos)
         form.addRow(self.btn_hpbw)
         form.addRow(self.btn_vrv)
+
+        # --- 3D reference graticule (only relevant on the 3D pattern) ---
+        self.grp_grid3d = QGroupBox("3D reference grid")
+        gform = QFormLayout(self.grp_grid3d)
+        self.chk_grid3d = QCheckBox("Show θ/φ grid")
+        self.chk_grid3d.setChecked(self._show_graticule)
+        self.chk_grid3d.setToolTip(
+            "Reference sphere with θ rings and φ meridians.\n"
+            "Also toggled by View ▾ → Reference graticule."
+        )
+        self.spn_grid_alpha = QDoubleSpinBox()
+        self.spn_grid_alpha.setRange(0.05, 1.0)
+        self.spn_grid_alpha.setDecimals(2)
+        self.spn_grid_alpha.setSingleStep(0.05)
+        self.spn_grid_alpha.setValue(self._grid_alpha)
+        self.spn_grid_alpha.setToolTip(
+            "Grid line opacity. Higher = stronger / more visible."
+        )
+        self.spn_grid_width = QDoubleSpinBox()
+        self.spn_grid_width.setRange(0.2, 3.0)
+        self.spn_grid_width.setDecimals(2)
+        self.spn_grid_width.setSingleStep(0.1)
+        self.spn_grid_width.setValue(self._grid_width)
+        self.spn_grid_width.setToolTip("Grid line width in points.")
+        self.cmb_grid_step = QComboBox()
+        for label, deg in (
+            ("auto (quality)", 0.0),
+            ("45°", 45.0),
+            ("30°", 30.0),
+            ("15°", 15.0),
+            ("10°", 10.0),
+        ):
+            self.cmb_grid_step.addItem(label, deg)
+        self.cmb_grid_step.setToolTip(
+            "Angular spacing of the θ rings / φ meridians.\n"
+            "auto = follow the 3D quality preset (Fast/Balanced 30°, High 15°)."
+        )
+        gform.addRow(self.chk_grid3d)
+        gform.addRow("Strength", self.spn_grid_alpha)
+        gform.addRow("Line width", self.spn_grid_width)
+        gform.addRow("Density", self.cmb_grid_step)
+        form.addRow(self.grp_grid3d)
+
         self.btn_clear_markers = QPushButton("Clear markers")
         form.addRow(self.btn_clear_markers)
         self.btn_popout = QPushButton("Pop out graph")
@@ -763,6 +816,10 @@ class AntennaPatternViewer(QWidget):
             w = getattr(self, name, None)
             if w is not None:
                 w.setEnabled(polar)
+        # the grid controls only apply to the 3D pattern (right-click any plot)
+        grp = getattr(self, "grp_grid3d", None)
+        if grp is not None:
+            grp.setVisible(self.cmb_plot.currentText() == "3D Pattern")
         self._radial_dlg.setWindowTitle("Polar analysis" if polar else "Antenna analysis")
 
     # ----- 3D dBi window (slider) + field selection ----------------------
@@ -927,9 +984,52 @@ class AntennaPatternViewer(QWidget):
                 return
 
     def _on_graticule_toggled(self, checked: bool) -> None:
-        self._show_graticule = bool(checked)
+        self._set_graticule_visible(checked)
+
+    def _set_graticule_visible(self, enabled: bool) -> None:
+        """Show/hide the reference graticule and keep both toggles in sync."""
+        self._show_graticule = bool(enabled)
+        for w in (
+            getattr(self, "act_graticule", None),
+            getattr(self, "chk_grid3d", None),
+        ):
+            if w is not None and w.isChecked() != self._show_graticule:
+                w.blockSignals(True)
+                w.setChecked(self._show_graticule)
+                w.blockSignals(False)
         if self.cmb_plot.currentText() == "3D Pattern":
-            self._redraw()
+            self._update_graticule()
+
+    def _on_grid_style_changed(self, *_args: object) -> None:
+        self._grid_alpha = float(self.spn_grid_alpha.value())
+        self._grid_width = float(self.spn_grid_width.value())
+        if self.cmb_plot.currentText() == "3D Pattern":
+            self._update_graticule()
+
+    def _on_grid_step_changed(self, *_args: object) -> None:
+        self._grid_step = float(self.cmb_grid_step.currentData() or 0.0)
+        if self.cmb_plot.currentText() == "3D Pattern":
+            self._update_graticule()
+
+    def _update_graticule(self) -> None:
+        """Re-add/remove the grid lines without rebuilding the 3D surface."""
+        ax = None
+        for candidate in self.figure.axes:
+            if getattr(candidate, "name", "") == "3d":
+                ax = candidate
+                break
+        if ax is None:
+            return
+        for line in list(getattr(ax, "lines", [])):
+            if line.get_gid() == "antenna_graticule":
+                line.remove()
+        if self._show_graticule:
+            preset = self.QUALITY_PRESETS[self._quality]
+            step = (
+                self._grid_step if self._grid_step > 0 else float(preset["graticule"])
+            )
+            self._add_reference_grid(ax, step)
+        self.canvas.draw_idle()
 
     def _on_wireframe_toggled(self, checked: bool) -> None:
         self._show_wireframe = bool(checked)
@@ -2173,7 +2273,10 @@ class AntennaPatternViewer(QWidget):
         )
         surf.set_zorder(3)
         if self._show_graticule:
-            self._add_reference_grid(ax, float(preset["graticule"]))
+            step = (
+                self._grid_step if self._grid_step > 0 else float(preset["graticule"])
+            )
+            self._add_reference_grid(ax, step)
         if self._show_wireframe:
             step = max(1, int(preset["grid"]) // 10)
             ax.plot_wireframe(
@@ -2255,9 +2358,8 @@ class AntennaPatternViewer(QWidget):
         cb.ax.tick_params(labelsize=7, length=2, pad=2)
         cb.outline.set_linewidth(0.4)
 
-    @staticmethod
-    def _add_reference_grid(ax, step_deg: float) -> None:
-        """Faint θ rings / φ meridians on the unit sphere (one Line3D artist)."""
+    def _add_reference_grid(self, ax, step_deg: float) -> None:
+        """θ rings / φ meridians on the unit sphere (one Line3D artist)."""
         step = float(step_deg) if step_deg and step_deg > 0 else 30.0
         phi = np.linspace(0.0, 2.0 * np.pi, 145)
         xs: list[float] = []
@@ -2281,4 +2383,13 @@ class AntennaPatternViewer(QWidget):
             xs.append(nan)
             ys.append(nan)
             zs.append(nan)
-        ax.plot(xs, ys, zs, color="0.68", linewidth=0.45, alpha=0.45, zorder=1)
+        line = ax.plot(
+            xs,
+            ys,
+            zs,
+            color="0.55",
+            linewidth=self._grid_width,
+            alpha=self._grid_alpha,
+            zorder=1,
+        )[0]
+        line.set_gid("antenna_graticule")

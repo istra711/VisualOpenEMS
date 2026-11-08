@@ -11,8 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Antenna pattern 3D overhaul** (`app/ui/antenna_viewer.py`): default dBi
   window max−30 dB with "−30 dB" / "Full" buttons, pre-shaded smooth surface
-  (no per-frame re-lighting), orthographic projection, faint θ/φ reference
-  graticule, Gmax marker/label, radius modes dB / linear / √G, view presets
+  (no per-frame re-lighting), orthographic projection, adjustable θ/φ
+  reference graticule (right-click → "3D reference grid": on/off, strength,
+  line width, density), Gmax marker/label, radius modes dB / linear / √G,
+  view presets
   (iso/front/top/side) with rotation-preserving redraws, optional wireframe,
   fixed colorbar and 300 dpi PNG/PDF/SVG export. The dBi-slider rebuild is
   debounced so dragging stays responsive.
