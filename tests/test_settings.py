@@ -43,6 +43,7 @@ def test_field_viewer_mouse_default_and_roundtrip(tmp_path):
         "wheel_factor": 0.5,
         "invert_wheel": True,
         "swap_buttons": True,
+        "right_button_pan": False,
     }
     s = AppSettings()
     s.field_viewer_mouse = dict(opts)

@@ -314,6 +314,7 @@ def main() -> int:
             "wheel_factor": 0.5,
             "invert_wheel": True,
             "swap_buttons": True,
+            "right_button_pan": False,
         }
     )
     style = make_mouse_style(vtk, mouse_opts)
@@ -331,7 +332,11 @@ def main() -> int:
     assert abs(track.GetMotionFactor() - 2.0) < 1e-9
     assert abs(track.GetMouseWheelMotionFactor() + 0.5) < 1e-9
     swapped = make_mouse_style(vtk, {"style": "trackball", "swap_buttons": True})
-    assert type(swapped).__name__ == "_SwappedMouseStyle"
+    assert type(swapped).__name__ == "_ConfiguredMouseStyle"
+    right_pan = make_mouse_style(
+        vtk, {"style": "trackball", "right_button_pan": True}
+    )
+    assert type(right_pan).__name__ == "_ConfiguredMouseStyle"
     print("  configurable mouse navigation OK")
 
     # "keep" has no direction to keep in a fresh geometry preview -> isometric

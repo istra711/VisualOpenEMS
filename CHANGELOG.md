@@ -40,8 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   25 %. Changes apply live and are copied to the pop-out.
 - **Viewer settings → Mouse**: configurable 3D navigation for the Field Viewer
   and 3D Design: Trackball/Joystick style, rotation sensitivity, wheel zoom
-  factor, invert wheel direction and swap left/middle drag (left = pan,
-  middle = rotate). Applies live (Preview/Save) and is persisted.
+  factor, invert wheel direction, swap left/middle drag (left = pan,
+  middle = rotate) and right-drag pan instead of zoom (default; a plain
+  right-click still opens the context menu). Applies live (Preview/Save) and
+  is persisted.
 
 ### Fixed
 

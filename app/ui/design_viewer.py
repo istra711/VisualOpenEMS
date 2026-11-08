@@ -386,20 +386,15 @@ class Design3DViewer(VtkFieldViewer):
             self._updating_ruler_labels = False
 
     def _install_vtk_context_menu(self) -> None:
-        """Add a right-click menu to the VTK pane.
+        """Add the measurement hook to the VTK pane.
 
-        VTK uses the right button for zooming, so the menu is only shown when
-        the button is released without a drag (movement <= 5 pixels).
+        Right-click handling lives in the shared ``VtkFieldViewer.eventFilter``:
+        a press reaches VTK (right-drag pans or zooms), a release without a drag
+        opens this viewer's context menu.
         """
         if self._vtk_menu_installed or self._iren is None:
             return
         try:
-            self._iren.AddObserver(
-                "RightButtonPressEvent", self._on_vtk_right_press
-            )
-            self._iren.AddObserver(
-                "RightButtonReleaseEvent", self._on_vtk_right_release
-            )
             self._iren.AddObserver(
                 "LeftButtonPressEvent", self._on_measure_pick, 1.0
             )
@@ -431,10 +426,14 @@ class Design3DViewer(VtkFieldViewer):
         QTimer.singleShot(0, lambda: self._show_context_menu_global(point))
 
     # ----------------------------------------------------------- context menu
-    def _show_context_menu(self, pos) -> None:
-        sender = self.sender()
+    def _show_context_menu(self, pos, source=None) -> None:
+        sender = source if source is not None else self.sender()
         try:
-            point = sender.mapToGlobal(pos) if sender is not None else self.mapToGlobal(pos)
+            point = (
+                sender.mapToGlobal(pos)
+                if sender is not None
+                else self.mapToGlobal(pos)
+            )
         except Exception:  # noqa: BLE001
             point = self.mapToGlobal(pos)
         self._show_context_menu_global(point)

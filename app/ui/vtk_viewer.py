@@ -167,6 +167,7 @@ DEFAULT_MOUSE = {
     "wheel_factor": 1.0,  # wheel zoom step
     "invert_wheel": False,
     "swap_buttons": False,  # left drag pans, middle drag rotates
+    "right_button_pan": True,  # right drag pans instead of zooming
 }
 
 
@@ -192,6 +193,7 @@ def normalise_mouse_options(options: dict | None = None) -> dict:
         opts["wheel_factor"] = DEFAULT_MOUSE["wheel_factor"]
     opts["invert_wheel"] = bool(opts.get("invert_wheel", False))
     opts["swap_buttons"] = bool(opts.get("swap_buttons", False))
+    opts["right_button_pan"] = bool(opts.get("right_button_pan", True))
     return opts
 
 
@@ -201,6 +203,8 @@ def make_mouse_style(vtk, options: dict | None = None):
     ``invert_wheel`` is implemented by negating VTK's wheel motion factor
     (forward then dollies out and backward dollies in).  ``swap_buttons`` uses
     a tiny Python subclass so left-drag pans and middle-drag rotates.
+    ``right_button_pan`` maps the right drag to pan; a plain right-click (no
+    drag) still opens the context menu through the viewer's event filter.
     """
     opts = normalise_mouse_options(options)
     base = (
@@ -208,28 +212,39 @@ def make_mouse_style(vtk, options: dict | None = None):
         if opts["style"] == "joystick"
         else vtk.vtkInteractorStyleTrackballCamera
     )
-    if opts["swap_buttons"]:
+    if opts["swap_buttons"] or opts["right_button_pan"]:
 
-        class _SwappedMouseStyle(base):
-            def OnLeftButtonDown(self):
-                base.OnMiddleButtonDown(self)
+        class _ConfiguredMouseStyle(base):
+            if opts["swap_buttons"]:
+                def OnLeftButtonDown(self):
+                    base.OnMiddleButtonDown(self)
 
-            def OnLeftButtonUp(self):
-                base.OnMiddleButtonUp(self)
+                def OnLeftButtonUp(self):
+                    base.OnMiddleButtonUp(self)
 
-            def OnMiddleButtonDown(self):
-                base.OnLeftButtonDown(self)
+                def OnMiddleButtonDown(self):
+                    base.OnLeftButtonDown(self)
 
-            def OnMiddleButtonUp(self):
-                base.OnLeftButtonUp(self)
+                def OnMiddleButtonUp(self):
+                    base.OnLeftButtonUp(self)
 
-            def OnLeftButtonDoubleClick(self):
-                base.OnMiddleButtonDoubleClick(self)
+                def OnLeftButtonDoubleClick(self):
+                    base.OnMiddleButtonDoubleClick(self)
 
-            def OnMiddleButtonDoubleClick(self):
-                base.OnLeftButtonDoubleClick(self)
+                def OnMiddleButtonDoubleClick(self):
+                    base.OnLeftButtonDoubleClick(self)
 
-        style = _SwappedMouseStyle()
+            if opts["right_button_pan"]:
+                def OnRightButtonDown(self):
+                    base.OnMiddleButtonDown(self)
+
+                def OnRightButtonUp(self):
+                    base.OnMiddleButtonUp(self)
+
+                def OnRightButtonDoubleClick(self):
+                    base.OnMiddleButtonDoubleClick(self)
+
+        style = _ConfiguredMouseStyle()
     else:
         style = base()
     try:
@@ -2600,12 +2615,53 @@ class VtkFieldViewer(QWidget):
         return True
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt API
-        """Open the field-viewer menu for right-clicks inside the VTK pane."""
+        """Right-drag pans/zooms; a right-click without drag opens the menu.
+
+        The press must reach VTK (return False) so the camera style can start
+        its pan/dolly gesture.  On release the menu is only opened when the
+        pointer did not move more than a few pixels, so the context menu and
+        the drag gesture can coexist.
+        """
         if obj is getattr(self, "_iren", None):
-            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
-                self._show_context_menu(event.position().toPoint(), source=obj)
-                return True
-            if event.type() == QEvent.Type.ContextMenu:
+            etype = event.type()
+            if (
+                etype == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.MouseButton.RightButton
+            ):
+                try:
+                    self._right_menu_press = event.position().toPoint()
+                except AttributeError:  # older Qt
+                    self._right_menu_press = event.pos()
+                return False  # let VTK start the pan/zoom gesture
+            if (
+                etype == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.MouseButton.RightButton
+            ):
+                start = getattr(self, "_right_menu_press", None)
+                self._right_menu_press = None
+                if start is not None:
+                    try:
+                        end = event.position().toPoint()
+                    except AttributeError:  # older Qt
+                        end = event.pos()
+                    # Suppress a platform ContextMenu event that may follow the
+                    # release; a drag must not open the menu either.
+                    self._right_release_seen = True
+                    QTimer.singleShot(
+                        400,
+                        lambda: setattr(self, "_right_release_seen", False),
+                    )
+                    if (end - start).manhattanLength() <= 5:
+                        QTimer.singleShot(
+                            0,
+                            lambda p=end: self._show_context_menu(p, source=obj),
+                        )
+                return False  # let VTK end the gesture
+            if etype == QEvent.Type.ContextMenu:
+                # Some platforms send only ContextMenu (no press/release
+                # pair). Do not open twice after a normal right-click.
+                if getattr(self, "_right_release_seen", False):
+                    return True
                 self._show_context_menu(event.pos(), source=obj)
                 return True
         return super().eventFilter(obj, event)

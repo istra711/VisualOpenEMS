@@ -8478,16 +8478,23 @@ class MainWindow(QMainWindow):
         chk_invert_wheel.setChecked(bool(mouse_opts.get("invert_wheel", False)))
         chk_swap_buttons = QCheckBox("Left drag pans, middle drag rotates")
         chk_swap_buttons.setChecked(bool(mouse_opts.get("swap_buttons", False)))
+        chk_right_pan = QCheckBox("Right drag pans (instead of zoom)")
+        chk_right_pan.setChecked(bool(mouse_opts.get("right_button_pan", True)))
+        chk_right_pan.setToolTip(
+            "Right-drag moves the view. A plain right-click (no drag) still\n"
+            "opens the context menu; the mouse wheel always zooms."
+        )
         moform.addRow("Navigation style", cmb_mouse_style)
         moform.addRow("Rotation sensitivity", spn_motion)
         moform.addRow("Wheel zoom factor", spn_wheel)
         moform.addRow("", chk_invert_wheel)
         moform.addRow("", chk_swap_buttons)
+        moform.addRow("", chk_right_pan)
         mouse_layout.addWidget(grp_mouse)
         mouse_hint = QLabel(
             "Default: left drag rotates, middle drag or Shift+left pans,\n"
-            "right drag and the wheel zoom. Applies to the Field Viewer and\n"
-            "the 3D Design view; the pop-out windows follow."
+            "right drag pans, wheel zooms. A right-click without dragging\n"
+            "opens the context menu. Applies to Field Viewer and 3D Design."
         )
         mouse_hint.setWordWrap(True)
         mouse_layout.addWidget(mouse_hint)
@@ -8560,6 +8567,7 @@ class MainWindow(QMainWindow):
                     "wheel_factor": float(spn_wheel.value()),
                     "invert_wheel": bool(chk_invert_wheel.isChecked()),
                     "swap_buttons": bool(chk_swap_buttons.isChecked()),
+                    "right_button_pan": bool(chk_right_pan.isChecked()),
                 },
                 "mesh_colors": dict(mesh_colors),
                 "design_mesh_color": design_color["value"].name(),
