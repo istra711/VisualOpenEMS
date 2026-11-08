@@ -132,6 +132,36 @@ _SLICE_AXES = {
 }
 
 
+def _highlight_plane_center(boxes, normal: str) -> float | None:
+    """Coordinate used to focus the slice on the highlighted geometry.
+
+    Polygons use their real elevation (``poly_coord``) instead of the middle
+    of their CAD AABB; an extruded polygon uses the middle of its actual
+    extrusion.  A flat copper trace at z=1.651 mm with a stale 0…1.651 mm CAD
+    box was focused at 0.8255 mm — exactly the "trace not visible" report.
+    """
+    idx = _AXIS.get(str(normal).lower())
+    if idx is None:
+        return None
+    coords: list[float] = []
+    for st, sp, poly in boxes or []:
+        if (
+            poly is not None
+            and str(getattr(poly, "poly_axis", "")).lower() == str(normal).lower()
+        ):
+            c0 = float(getattr(poly, "poly_coord", 0.0))
+            length = max(0.0, float(getattr(poly, "poly_length", 0.0) or 0.0))
+            coords.append(c0 + 0.5 * length)
+            continue
+        try:
+            coords.append(0.5 * (float(st[idx]) + float(sp[idx])))
+        except (TypeError, ValueError, IndexError):
+            continue
+    if not coords:
+        return None
+    return 0.5 * (min(coords) + max(coords))
+
+
 def _slice_key(view: str) -> str | None:
     """Combo label ('XY slice') -> _SLICE_AXES key ('XY'), else None.
 
@@ -2620,14 +2650,15 @@ class MeshGeometryViewer(QWidget):
         if key is None:
             self._redraw()  # Overview / Cell sizes draw the highlight too
             return False
-        idx = _AXIS[_SLICE_AXES[key][2]]
+        normal = _SLICE_AXES[key][2]
         boxes = self._highlight_boxes()
         if not boxes:
             self._redraw()  # label/count may have changed without a match
             return False
-        lo = min(min(float(b[0][idx]), float(b[1][idx])) for b in boxes)
-        hi = max(max(float(b[0][idx]), float(b[1][idx])) for b in boxes)
-        mid = 0.5 * (lo + hi)
+        mid = _highlight_plane_center(boxes, normal)
+        if mid is None:
+            self._redraw()
+            return False
         before = float(self.spn_plane.value())
         if abs(before - mid) <= 1e-12:
             self._redraw()
@@ -2725,7 +2756,21 @@ class MeshGeometryViewer(QWidget):
         for st, sp, poly in self._highlight_boxes():
             tol = eps
             if plane is not None:
-                lo_n, hi_n = min(st[inorm], sp[inorm]), max(st[inorm], sp[inorm])
+                if (
+                    poly is not None
+                    and str(getattr(poly, "poly_axis", "")).lower()
+                    == _axis_letter(inorm)
+                ):
+                    # Flat polygons use their real elevation; their CAD bbox
+                    # may span 0…z and would let the plane test pass at the
+                    # wrong position.
+                    c0 = float(getattr(poly, "poly_coord", 0.0))
+                    length = max(
+                        0.0, float(getattr(poly, "poly_length", 0.0) or 0.0)
+                    )
+                    lo_n, hi_n = c0, c0 + length
+                else:
+                    lo_n, hi_n = min(st[inorm], sp[inorm]), max(st[inorm], sp[inorm])
                 # an element in the neighbouring cell counts as well (like the
                 # port overlay), so a plane between mesh lines still shows it
                 tol = self._cell_span(mesh, _axis_letter(inorm), (lo_n + hi_n) / 2.0)

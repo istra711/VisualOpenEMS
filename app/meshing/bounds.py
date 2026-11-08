@@ -32,6 +32,35 @@ def _span(a: float, b: float) -> tuple[float, float]:
     return (a, b) if a <= b else (b, a)
 
 
+def primitive_view_bbox(
+    prim: dict[str, Any],
+) -> tuple[list[float], list[float]] | None:
+    """AABB for the viewers, preferring the real polygon outline.
+
+    CSXCAD polygons carry their actual plane/extrusion in ``points`` / ``axis``
+    / ``coord`` / ``length``.  Their stored ``start``/``stop`` can come from a
+    larger CAD bounding box (e.g. 0…1.651 mm for a copper sheet at z=1.651 mm).
+    The Mesh Viewer used that box to focus the slice, so selecting the trace
+    put the plane at 0.8255 mm and the trace was not visible.  Use the polygon
+    geometry here; every other kind keeps the normal Cartesian AABB.
+    """
+    if str(prim.get("kind", "box")) == "polygon":
+        try:
+            from app.meshing.polygon_geometry import polygon_bbox
+
+            bb = polygon_bbox(
+                prim.get("points"),
+                prim.get("axis", "z"),
+                prim.get("coord", 0.0),
+                prim.get("length", 0.0),
+            )
+            if bb is not None:
+                return bb
+        except Exception:  # noqa: BLE001 — fall back to start/stop
+            pass
+    return cartesian_primitive_bbox(prim)
+
+
 def cartesian_primitive_bbox(
     prim: dict[str, Any],
 ) -> tuple[list[float], list[float]] | None:

@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   YZ and moved with a slider (one step per mesh line, snapped to the built
   grid); it follows a mesh rebuild.
 
+### Fixed
+
+- **Mesh Viewer slice focus for flat polygons**: selecting a copper trace or
+  other polygon now focuses the slice at the polygon's real elevation instead of
+  the middle of a stale CAD bounding box. A flat trace at z=1.651 mm was
+  previously focused at 0.8255 mm ("not in this plane"); it is now visible
+  immediately. Polygon highlights also use the true plane for the in-slice test.
+
 ## [0.10.0] - 2026-11-07
 
 ### Added

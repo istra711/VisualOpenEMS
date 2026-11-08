@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.meshing.bounds import cartesian_primitive_bbox
+from app.meshing.bounds import cartesian_primitive_bbox, primitive_view_bbox
 
 
 def test_box_uses_corners():
@@ -67,6 +67,32 @@ def test_polygon_passthrough():
     )
     assert lo == [-4.0, 0.0, -2.0]
     assert hi == [-4.0, 7.0, 3.0]
+
+
+def test_polygon_view_bbox_uses_actual_plane_not_stale_cad_box():
+    # Report: selecting a copper trace at z=1.651 focused the slice at 0.8255
+    # because start/stop spanned 0…1.651 although the polygon is a flat sheet.
+    prim = {
+        "kind": "polygon",
+        "points": [[-15, -10], [-5, 0], [5, 10], [15, 0], [5, -10]],
+        "axis": "z",
+        "coord": 1.651,
+        "length": 0.0,
+        "start": [-15, -10, 0.0],
+        "stop": [15, 10, 1.651],
+    }
+    lo, hi = primitive_view_bbox(prim)
+    assert lo[2] == pytest.approx(1.651)
+    assert hi[2] == pytest.approx(1.651)
+    assert lo[0] == pytest.approx(-15.0)
+    assert hi[0] == pytest.approx(15.0)
+
+    # Extruded LinPoly: the real extrusion, not the stale CAD bounding box.
+    prim["coord"] = 1.616
+    prim["length"] = 0.035
+    lo, hi = primitive_view_bbox(prim)
+    assert lo[2] == pytest.approx(1.616)
+    assert hi[2] == pytest.approx(1.651)
 
 
 def test_sphere_from_center_when_no_bbox():

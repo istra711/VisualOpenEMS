@@ -154,6 +154,52 @@ def main() -> int:
     viewer.fig_slice.savefig(OUT / "slice_xy_highlight.png", dpi=110)
     print("  highlight: yellow hexagon outline  OK")
 
+    # --- focus must use the real polygon plane, not a stale CAD box middle
+    from types import SimpleNamespace
+
+    from app.ui.mesh_viewer import _highlight_plane_center
+
+    flat = SimpleNamespace(poly_axis="z", poly_coord=1.651, poly_length=0.0)
+    box = ((-15.0, -10.0, 0.0), (15.0, 10.0, 1.651), flat)
+    assert abs(_highlight_plane_center([box], "z") - 1.651) < 1e-12
+    extruded = SimpleNamespace(poly_axis="z", poly_coord=1.616, poly_length=0.035)
+    box = ((-15.0, -10.0, 0.0), (15.0, 10.0, 1.651), extruded)
+    assert abs(_highlight_plane_center([box], "z") - 1.6335) < 1e-12
+    viewer.spn_plane.setValue(0.0)
+    viewer.set_highlight(names=["patch"], label="Prim: patch", focus=True)
+    assert abs(float(viewer.spn_plane.value()) - 1.6) < 1e-9, viewer.spn_plane.value()
+    assert "not in this plane" not in viewer.fig_slice.axes[0].get_title()
+
+    # full regression: stale CAD box (0…1.6) on a sheet at z=1.6
+    from app.meshing.preview import PrimitiveInfo
+
+    fake_info = PrimitiveInfo(
+        name="patch_hexagon",
+        kind="Metal",
+        start=(-15.0, -10.0, 0.0),
+        stop=(15.0, 10.0, 1.6),
+        poly_points=tuple(HEX),
+        poly_axis="z",
+        poly_coord=1.6,
+        poly_length=0.0,
+    )
+    orig_boxes = viewer._highlight_boxes
+    viewer._highlight_boxes = lambda: [
+        ((-15.0, -10.0, 0.0), (15.0, 10.0, 1.6), fake_info)
+    ]
+    try:
+        viewer.spn_plane.setValue(0.0)
+        viewer.set_highlight(
+            names=["patch_hexagon"], label="Prim: trace", focus=True
+        )
+        assert abs(float(viewer.spn_plane.value()) - 1.6) < 1e-9
+        assert "not in this plane" not in viewer.fig_slice.axes[0].get_title()
+    finally:
+        viewer._highlight_boxes = orig_boxes
+        viewer.set_highlight()
+        viewer._redraw()
+    print("  polygon focus uses the real plane (not the CAD box middle)  OK")
+
     # --- overview: XY footprint is the hexagon, XZ is a segment
     viewer._draw_overview()
     axes = viewer.fig_slice.axes

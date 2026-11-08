@@ -2912,7 +2912,14 @@ class MainWindow(QMainWindow):
         if kind == "prim" and 0 <= idx < len(self.primitives):
             pr = self.primitives[idx]
             name = str(pr.get("name") or "")
-            return [(pr.get("start"), pr.get("stop"))], [name], f"Prim: {name}"
+            # Prefer the real polygon plane over a possibly stale/larger CAD
+            # start/stop box (a flat trace at z=1.651 was focused at 0.8255).
+            from app.meshing.bounds import primitive_view_bbox
+
+            box = primitive_view_bbox(pr)
+            if box is None:
+                box = (pr.get("start"), pr.get("stop"))
+            return [box], [name], f"Prim: {name}"
         if kind == "port" and 0 <= idx < len(self.project.ports):
             p = self.project.ports[idx]
             return [(p.start, p.stop)], [p.name], f"Port: {p.name}"
