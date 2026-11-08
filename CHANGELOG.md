@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   viewer): geometry is drawn more opaque with a bright 2 px outline and flatter
   lighting so low-contrast objects stand out against the dark background.
   Optional and off by default; the state is copied to the viewer pop-out.
+- **Mesh grid opacity** (right-click in 3D Design → "Mesh grid opacity"):
+  presets 100 / 90 / 75 / 50 / 25 / 10 % for the section grid. Changes apply
+  live and are copied to the pop-out.
 
 ### Fixed
 

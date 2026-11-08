@@ -226,6 +226,11 @@ def main() -> int:
     viewer.set_mesh_color("#ffffff")
     r, g, blue = actor.GetProperty().GetColor()
     assert abs(r - 1.0) < 1e-9 and abs(g - 1.0) < 1e-9 and abs(blue - 1.0) < 1e-9
+    viewer.set_mesh_opacity(0.35)
+    assert abs(viewer.mesh_opacity() - 0.35) < 1e-9
+    assert abs(actor.GetProperty().GetOpacity() - 0.35) < 1e-9
+    viewer.set_mesh_opacity(0.9)
+    assert abs(actor.GetProperty().GetOpacity() - 0.9) < 1e-9
     viewer.chk_mesh_plane.setChecked(False)
     assert viewer._mesh_plane_actor is None
     viewer.chk_mesh_plane.setChecked(True)
@@ -288,7 +293,18 @@ def main() -> int:
     menu = viewer._build_context_menu()
     labels = [a.text() for a in menu.actions()]
     assert "Coordinate system" in labels and "Measure distance (tape, 2 clicks)" in labels
-    assert "High contrast objects" in labels
+    assert "High contrast objects" in labels and "Mesh grid opacity" in labels
+    opacity_menu = next(
+        a.menu() for a in menu.actions() if a.text() == "Mesh grid opacity"
+    )
+    assert [a.text() for a in opacity_menu.actions()] == [
+        "100%",
+        "90%",
+        "75%",
+        "50%",
+        "25%",
+        "10%",
+    ]
     coord = next(a.menu() for a in menu.actions() if a.text() == "Coordinate system")
     coord_labels = [a.text() for a in coord.actions()]
     assert "Axes size" in coord_labels and "Axes location" in coord_labels

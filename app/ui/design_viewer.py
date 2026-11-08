@@ -112,6 +112,8 @@ class Design3DViewer(VtkFieldViewer):
         self._mesh_plane_actor = None
         #: mesh-plane grid colour; white by default (Viewer settings)
         self._mesh_color = (1.0, 1.0, 1.0)
+        #: mesh-plane grid opacity (right-click "Mesh grid opacity")
+        self._mesh_opacity = 0.9
         self._highlight_names: list[str] = []
         self._highlight_boxes: list[tuple[tuple, tuple]] = []
         self._highlight_label = ""
@@ -451,6 +453,14 @@ class Design3DViewer(VtkFieldViewer):
             "Optional; off by default."
         )
         act_contrast.toggled.connect(self.set_high_contrast)
+        opacity_menu = menu.addMenu("Mesh grid opacity")
+        for pct in (100, 90, 75, 50, 25, 10):
+            act = opacity_menu.addAction(f"{pct}%")
+            act.setCheckable(True)
+            act.setChecked(abs(self._mesh_opacity * 100.0 - pct) < 0.5)
+            act.triggered.connect(
+                lambda _checked=False, p=pct: self.set_mesh_opacity(p / 100.0)
+            )
         menu.addSeparator()
         coord = menu.addMenu("Coordinate system")
         act_axes = coord.addAction("Show axes (X/Y/Z)")
@@ -999,6 +1009,21 @@ class Design3DViewer(VtkFieldViewer):
             f"{int(round(b * 255)):02x}"
         )
 
+    def set_mesh_opacity(self, opacity: float) -> None:
+        """Set the mesh-grid line opacity (0..1) and update the live overlay."""
+        self._mesh_opacity = max(0.05, min(1.0, float(opacity)))
+        actor = self._mesh_plane_actor
+        if actor is not None:
+            try:
+                actor.GetProperty().SetOpacity(self._mesh_opacity)
+            except Exception:  # noqa: BLE001
+                pass
+            self._render()
+
+    def mesh_opacity(self) -> float:
+        """Current mesh-grid line opacity (0..1)."""
+        return float(self._mesh_opacity)
+
     def _mesh_axis_key(self) -> str:
         """Normal axis of the selected section plane (XY->z, XZ->y, YZ->x)."""
         return {"XY": "z", "XZ": "y", "YZ": "x"}.get(
@@ -1117,7 +1142,7 @@ class Design3DViewer(VtkFieldViewer):
             prop = actor.GetProperty()
             prop.SetColor(*self._mesh_color)
             prop.SetLineWidth(1.0)
-            prop.SetOpacity(0.9)
+            prop.SetOpacity(self._mesh_opacity)
             prop.SetLighting(False)
             return actor
         except Exception:  # noqa: BLE001 — never block the design view
@@ -2261,6 +2286,7 @@ class DesignViewerWindow(QMainWindow):
             fit=True,
         )
         self.viewer.set_mesh_color(source.mesh_color())
+        self.viewer.set_mesh_opacity(source._mesh_opacity)
         self.viewer.set_high_contrast(source._high_contrast)
         self.viewer.chk_mesh_plane.setChecked(source.chk_mesh_plane.isChecked())
         idx = self.viewer.cmb_mesh_axis.findText(source.cmb_mesh_axis.currentText())
