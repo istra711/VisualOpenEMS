@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **S-parameter export from the viewer**: the S-Params tab now has an
+  "Export…" button (and a right-click → "Export S-parameters" submenu) for
+  **Touchstone** (.sNp), **CSV** (frequency + every Sij as dB / phase / real /
+  imaginary) and **ASCII** tables (.txt). The automatic Touchstone/JSON/PNG
+  export after a completed run is unchanged.
 - **Antenna pattern 3D overhaul** (`app/ui/antenna_viewer.py`): default dBi
   window max−30 dB with "−30 dB" / "Full" buttons, pre-shaded smooth surface
   (no per-frame re-lighting), orthographic projection, adjustable θ/φ

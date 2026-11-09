@@ -291,6 +291,128 @@ def write_touchstone(
     return out_path
 
 
+def network_to_sparam_dict(network) -> dict[str, np.ndarray]:
+    """Convert a scikit-rf ``Network`` into the app's ``Sij`` dict format."""
+    if network is None:
+        raise ValueError("No S-parameter network to export")
+    s = np.asarray(network.s, dtype=complex)
+    if s.ndim != 3:
+        raise ValueError("S-parameter matrix must have shape (freq, port, port)")
+    n = int(s.shape[1])
+    out: dict[str, np.ndarray] = {
+        "freq": np.asarray(network.f, dtype=float),
+    }
+    for i in range(n):
+        for j in range(n):
+            out[f"S{i + 1}{j + 1}"] = s[:, i, j]
+    return out
+
+
+def _network_z0(network) -> float:
+    try:
+        z0 = float(np.real(np.asarray(network.z0, dtype=complex).ravel()[0]))
+    except Exception:  # noqa: BLE001
+        z0 = 50.0
+    return z0 if np.isfinite(z0) and z0 > 0 else 50.0
+
+
+def export_network_touchstone(
+    network,
+    out_path: Path | str,
+    comments: list[str] | None = None,
+) -> Path:
+    """Write a scikit-rf ``Network`` as a Touchstone ``.sNp`` file."""
+    data = network_to_sparam_dict(network)
+    return write_touchstone(
+        data,
+        out_path,
+        z0=_network_z0(network),
+        comments=list(comments or []),
+    )
+
+
+def _fmt_sparam(value: float) -> str:
+    value = float(value)
+    return "nan" if not np.isfinite(value) else f"{value:.12g}"
+
+
+def _sparam_table_columns(network) -> tuple[np.ndarray, list[tuple[str, np.ndarray]]]:
+    data = network_to_sparam_dict(network)
+    freqs = np.asarray(data.pop("freq"), dtype=float)
+    columns: list[tuple[str, np.ndarray]] = []
+    for key, values in data.items():
+        columns.append((key, np.asarray(values, dtype=complex)))
+    return freqs, columns
+
+
+def write_sparam_csv(network, out_path: Path | str) -> Path:
+    """Write frequency and every Sij as dB / phase / real / imaginary (CSV)."""
+    freqs, columns = _sparam_table_columns(network)
+    out_path = Path(out_path)
+    if out_path.suffix.lower() != ".csv":
+        out_path = out_path.with_suffix(".csv")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    header = ["freq_Hz", "freq_GHz"]
+    for key, _s in columns:
+        header.extend(
+            [f"{key}_dB", f"{key}_deg", f"{key}_real", f"{key}_imag"]
+        )
+    lines = [",".join(header)]
+    for i, freq in enumerate(freqs):
+        row = [_fmt_sparam(freq), _fmt_sparam(freq / 1e9)]
+        for _key, s in columns:
+            value = complex(s[i])
+            mag = abs(value)
+            db = 20.0 * np.log10(max(mag, 1e-30))
+            phase = np.degrees(np.angle(value))
+            row.extend(
+                [
+                    _fmt_sparam(db),
+                    _fmt_sparam(phase),
+                    _fmt_sparam(value.real),
+                    _fmt_sparam(value.imag),
+                ]
+            )
+        lines.append(",".join(row))
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out_path
+
+
+def write_sparam_ascii(network, out_path: Path | str) -> Path:
+    """Write an ASCII table (frequency in GHz, Sij dB/phase/re/im)."""
+    freqs, columns = _sparam_table_columns(network)
+    out_path = Path(out_path)
+    if out_path.suffix.lower() not in (".txt", ".dat", ".asc"):
+        out_path = out_path.with_suffix(".txt")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    header = ["# freq_GHz"]
+    for key, _s in columns:
+        header.extend(
+            [f"{key}_dB", f"{key}_deg", f"{key}_real", f"{key}_imag"]
+        )
+    lines = [" ".join(header)]
+    for i, freq in enumerate(freqs):
+        row = [_fmt_sparam(freq / 1e9)]
+        for _key, s in columns:
+            value = complex(s[i])
+            mag = abs(value)
+            db = 20.0 * np.log10(max(mag, 1e-30))
+            phase = np.degrees(np.angle(value))
+            row.extend(
+                [
+                    _fmt_sparam(db),
+                    _fmt_sparam(phase),
+                    _fmt_sparam(value.real),
+                    _fmt_sparam(value.imag),
+                ]
+            )
+        lines.append("\t".join(row))
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out_path
+
+
 def export_sparams(sparams: dict[str, np.ndarray], out_dir: Path | str, basename: str = "sparams", z0: float = 50.0) -> dict[str, Path]:
     """Write JSON + Touchstone + PNG for a completed S-param table.
 

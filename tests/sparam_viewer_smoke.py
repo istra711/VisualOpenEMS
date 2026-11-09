@@ -24,7 +24,13 @@ def main() -> int:
     if not files:
         print("FAIL: no sparam files under work/")
         return 1
-    touch = next((p for p in files if p.suffix.lower().startswith(".s")), files[0])
+    # Prefer a 4-port fixture: the multi-trace preset checks below need
+    # S11/S22/S33/S44; the newest file in work/ may be a 1-port result.
+    touch = next((p for p in files if p.suffix.lower() == ".s4p"), None)
+    if touch is None:
+        touch = next(
+            (p for p in files if p.suffix.lower().startswith(".s")), files[0]
+        )
     print("loading", touch)
     ntwk = load_network_from_path(touch)
     print("network", ntwk.nports, "pts", len(ntwk.f))
@@ -37,6 +43,53 @@ def main() -> int:
     print("info:", viewer.lbl_info.text())
     print("ports combo:", [viewer.cmb_port.itemText(i) for i in range(viewer.cmb_port.count())])
     print("trace S11", None if viewer._trace("S11") is None else viewer._trace("S11").shape)
+
+    # --- explicit export: Touchstone, CSV, ASCII --------------------------
+    import tempfile
+
+    import numpy as np
+    import skrf as rf
+
+    from app.postproc.sparams import (
+        export_network_touchstone,
+        write_sparam_ascii,
+        write_sparam_csv,
+    )
+
+    if not viewer.btn_export.isEnabled():
+        print("FAIL: export button disabled with a loaded network")
+        return 13
+    empty_viewer = SParamViewer(work_dir=work)
+    if empty_viewer.btn_export.isEnabled():
+        print("FAIL: export button enabled without data")
+        return 13
+    test_net = rf.Network(
+        f=[1e9, 2e9],
+        s=np.array(
+            [
+                [[0.1 + 0.2j, 0.3], [0.4, 0.5 - 0.1j]],
+                [[0.2, 0.1j], [0.0, 0.6]],
+            ]
+        ),
+        z0=50,
+    )
+    out_dir = Path(tempfile.mkdtemp(prefix="sparam_export_"))
+    touch_out = export_network_touchstone(test_net, out_dir / "sparams")
+    back = rf.Network(str(touch_out))
+    if not np.allclose(back.s, test_net.s, atol=1e-9):
+        print("FAIL: Touchstone round-trip mismatch")
+        return 13
+    csv_out = write_sparam_csv(test_net, out_dir / "sparams.csv")
+    csv_text = csv_out.read_text(encoding="utf-8")
+    if "freq_Hz" not in csv_text or "S21_dB" not in csv_text:
+        print("FAIL: CSV header missing")
+        return 13
+    ascii_out = write_sparam_ascii(test_net, out_dir / "sparams.txt")
+    ascii_text = ascii_out.read_text(encoding="utf-8")
+    if not ascii_text.startswith("# freq_GHz") or "S11_deg" not in ascii_text:
+        print("FAIL: ASCII header missing")
+        return 13
+    print("export Touchstone / CSV / ASCII OK:", touch_out.name, csv_out.name, ascii_out.name)
 
     for plot in viewer.PLOT_TYPES:
         viewer.cmb_plot.setCurrentText(plot)

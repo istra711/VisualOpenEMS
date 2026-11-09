@@ -1261,10 +1261,14 @@ Results → field data (VTK)
     (fps from Settings).
 
 Results → network data
-  • The S-Params viewer exports **Touchstone** (.s1p / .s2p / …) — the standard
-    both CST and openEMS read. One FDTD run measures one S-matrix column; the
-    Touchstone file is only written once the matrix is complete (partial
-    matrices stay in sparams.json), so a 2-port needs both excitations.
+  • The S-Params viewer exports **Touchstone** (.s1p / .s2p / …), **CSV**
+    (frequency + every Sij as dB / phase / real / imaginary) and an **ASCII
+    table** (.txt) via "Export…" (or the plot's right-click menu). Touchstone
+    is the standard both CST and openEMS read. One FDTD run measures one
+    S-matrix column; the automatically written Touchstone is only created once
+    the matrix is complete (partial matrices stay in sparams.json), so a 2-port
+    needs both excitations. An explicit viewer export writes missing cells as 0
+    and adds a warning comment.
   • Every viewer (S-Params, Antenna, Field Viewer) exports **PNG**.
 
 Quick reference

@@ -36,6 +36,12 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
+from app.postproc.sparams import (
+    export_network_touchstone,
+    write_sparam_ascii,
+    write_sparam_csv,
+)
+
 
 def load_network_from_path(path: Path | str):
     """Load skrf Network from Touchstone or sparams.json (app export format)."""
@@ -280,6 +286,12 @@ class SParamViewer(QWidget):
             "List all sparams.s*p / sparams.json files in the whole work\n"
             "directory (not only the current project)"
         )
+        self.btn_export = QPushButton("Export…")
+        self.btn_export.setToolTip(
+            "Export the loaded S-parameters as Touchstone (.sNp), CSV or\n"
+            "ASCII table. Touchstone is the standard for CST / VNA / skrf."
+        )
+        self.btn_export.setEnabled(False)
         self.cmb_plot = QComboBox()
         self.cmb_plot.addItems(self.PLOT_TYPES)
         self.cmb_port = QComboBox()
@@ -300,6 +312,7 @@ class SParamViewer(QWidget):
             self.btn_open,
             self.btn_reload,
             self.btn_scan,
+            self.btn_export,
         ):
             bar.addWidget(w)
         bar.addWidget(QLabel("Plot"))
@@ -381,6 +394,7 @@ class SParamViewer(QWidget):
         self.btn_open.clicked.connect(self._on_open)
         self.btn_reload.clicked.connect(self._reload_current)
         self.btn_scan.clicked.connect(self._on_scan_workdir)
+        self.btn_export.clicked.connect(self._on_export)
         self.chk_markers_visible.toggled.connect(self._on_markers_visible_toggled)
         self.cmb_marker_style.currentTextChanged.connect(self._on_marker_style_changed)
         self.cmb_plot.currentTextChanged.connect(lambda *_: self._redraw())
@@ -462,6 +476,8 @@ class SParamViewer(QWidget):
         self._marker_tags.clear()
         self._delta_refs.clear()
         self._selected_marker = None
+        if hasattr(self, "btn_export"):
+            self.btn_export.setEnabled(False)
         self._populate_ports()
         self._refresh_markers()
         self.lbl_info.setText("")
@@ -484,6 +500,8 @@ class SParamViewer(QWidget):
         self._marker_tags.clear()
         self._delta_refs.clear()
         self._selected_marker = None
+        if hasattr(self, "btn_export"):
+            self.btn_export.setEnabled(True)
         self.set_untrusted(None)
         self._populate_ports()
         self._refresh_markers()
@@ -728,6 +746,112 @@ class SParamViewer(QWidget):
             self.load_path(self.network_path)
         else:
             self._on_scan()
+
+    # ----- export --------------------------------------------------------
+    def _export_default_dir(self) -> Path:
+        if self.network_path is not None:
+            return self.network_path.parent
+        if self.work_dir is not None:
+            return self.work_dir
+        return Path.cwd()
+
+    def _on_export(self) -> None:
+        if self.network is None:
+            QMessageBox.information(
+                self, "Export S-parameters", "No S-parameters are loaded."
+            )
+            return
+        menu = QMenu(self)
+        act_touch = menu.addAction("Touchstone (.sNp)…")
+        act_csv = menu.addAction("CSV (dB / phase / real / imag)…")
+        act_ascii = menu.addAction("ASCII table (.txt)…")
+        chosen = menu.exec(
+            self.btn_export.mapToGlobal(self.btn_export.rect().bottomLeft())
+        )
+        if chosen is act_touch:
+            self._export_touchstone()
+        elif chosen is act_csv:
+            self._export_csv()
+        elif chosen is act_ascii:
+            self._export_ascii()
+
+    def _export_done(self, path: Path) -> None:
+        self.lbl_info.setText(f"Exported: {path}")
+        self.lbl_info.setToolTip(str(path))
+
+    def _export_missing_note(self) -> list[str]:
+        if self.network is None:
+            return []
+        missing = self._missing_traces(self.network)
+        if not missing:
+            return []
+        return [
+            "missing S-matrix cells: "
+            + ", ".join(missing)
+            + " (written as 0 in Touchstone; run all ports and merge)"
+        ]
+
+    def _export_touchstone(self) -> None:
+        if self.network is None:
+            return
+        n = max(1, int(self.network.nports))
+        default = self._export_default_dir() / f"sparams.s{n}p"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Touchstone",
+            str(default),
+            f"Touchstone (*.s{n}p *.s*p);;All (*.*)",
+        )
+        if not path:
+            return
+        try:
+            out = export_network_touchstone(
+                self.network,
+                path,
+                comments=[
+                    f"source={self.network_path or 'viewer'}",
+                    *self._export_missing_note(),
+                ],
+            )
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Touchstone export failed", str(e))
+            return
+        self._export_done(out)
+
+    def _export_csv(self) -> None:
+        if self.network is None:
+            return
+        default = self._export_default_dir() / "sparams.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export S-parameters (CSV)", str(default), "CSV (*.csv);;All (*.*)"
+        )
+        if not path:
+            return
+        try:
+            out = write_sparam_csv(self.network, path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "CSV export failed", str(e))
+            return
+        self._export_done(out)
+
+    def _export_ascii(self) -> None:
+        if self.network is None:
+            return
+        default = self._export_default_dir() / "sparams.txt"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export S-parameters (ASCII)",
+            str(default),
+            "ASCII table (*.txt *.dat *.asc);;All (*.*)",
+        )
+        if not path:
+            return
+        try:
+            out = write_sparam_ascii(self.network, path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "ASCII export failed", str(e))
+            return
+        self._export_done(out)
 
     # ----- markers / cursor ---------------------------------------------
     @staticmethod
@@ -1155,9 +1279,18 @@ class SParamViewer(QWidget):
         act_clear = menu.addAction("Clear markers")
         act_analysis = menu.addAction("Analysis dialog…")
         act_popout = menu.addAction("Pop out graph")
+        export_menu = menu.addMenu("Export S-parameters")
+        act_export_touch = export_menu.addAction("Touchstone (.sNp)…")
+        act_export_csv = export_menu.addAction("CSV (dB / phase / re / im)…")
+        act_export_ascii = export_menu.addAction("ASCII table (.txt)…")
+        act_export_touch.triggered.connect(self._export_touchstone)
+        act_export_csv.triggered.connect(self._export_csv)
+        act_export_ascii.triggered.connect(self._export_ascii)
         enabled = bool(self.network is not None and self.cmb_port.count())
         for act in (act_min, act_max, act_ext, act_bw, act_center, act_clear):
             act.setEnabled(enabled)
+        for act in (act_export_touch, act_export_csv, act_export_ascii):
+            act.setEnabled(self.network is not None)
         chosen = menu.exec(
             self.canvas.mapToGlobal(QPoint(int(event.x), int(event.y)))
         )
