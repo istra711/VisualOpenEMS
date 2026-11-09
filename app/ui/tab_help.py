@@ -336,7 +336,9 @@ Tab Simulation-Parameter
     • Patch / geometry readout when using the built-in patch preset.
   Overrides
     • Max timesteps, end criteria (S-param stability).
-    • Boundary xmin/xmax/ymin/ymax/zmin/zmax (PEC / PML / periodic…).
+    • Boundary xmin/xmax/ymin/ymax/zmin/zmax (PEC / PMC / MUR / PML).
+      “All sides equal” + “Apply to all six” sets every face in one action;
+      individual faces can still be changed afterwards.
     • Air margin around geometry + min cell size.
     • Apply Patch Params — feeds / patch size for the patch antenna example.
 

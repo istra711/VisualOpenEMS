@@ -150,6 +150,9 @@ class SimParamsPanel(QWidget):
         self.txt_nf2ff_freqs.editingFinished.connect(self._on_form_edited)
         for cb in self.cmb_b.values():
             cb.currentTextChanged.connect(self._on_form_edited)
+        self.btn_b_all.clicked.connect(self._apply_all_boundary)
+        for cb in self.cmb_b.values():
+            cb.currentTextChanged.connect(self._refresh_boundary_all_combo)
         self.btn_edit_patch.clicked.connect(self._on_edit_patch)
         self.btn_apply_patch.clicked.connect(self._on_apply_patch)
         self.btn_fit_nf2ff.clicked.connect(self._on_fit_nf2ff)
@@ -244,6 +247,22 @@ class SimParamsPanel(QWidget):
         # --- Boundary ---
         g_b = QGroupBox("Boundary conditions")
         fb = QFormLayout(g_b)
+        all_row = QHBoxLayout()
+        self.cmb_b_all = QComboBox()
+        self.cmb_b_all.addItems(["—", *BOUNDARY_KINDS])
+        self.cmb_b_all.setToolTip(
+            "Choose a boundary kind and apply it to xmin/xmax/ymin/ymax/"
+            "zmin/zmax at once. Per-side fields stay editable afterwards."
+        )
+        self.btn_b_all = QPushButton("Apply to all six")
+        self.btn_b_all.setToolTip(
+            "Set all six boundary faces to the selected kind. This explicit "
+            "action does not preserve MSL-port faces — use the PCB presets if "
+            "you need that protection."
+        )
+        all_row.addWidget(self.cmb_b_all, 1)
+        all_row.addWidget(self.btn_b_all)
+        fb.addRow("All sides equal", all_row)
         self.cmb_b: dict[str, QComboBox] = {}
         self.lbl_b: dict[str, QLabel] = {}
         for axis in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax"):
@@ -632,6 +651,28 @@ class SimParamsPanel(QWidget):
                 sides.add(f"{prop}max")
         return sides
 
+    def _refresh_boundary_all_combo(self, *_args: Any) -> None:
+        """Show the common kind, or the neutral entry when sides differ."""
+        kinds = {cb.currentText() for cb in self.cmb_b.values()}
+        with QSignalBlocker(self.cmb_b_all):
+            if len(kinds) == 1:
+                kind = next(iter(kinds))
+                if kind in BOUNDARY_KINDS:
+                    self.cmb_b_all.setCurrentText(kind)
+                else:
+                    self.cmb_b_all.setCurrentIndex(0)
+            else:
+                self.cmb_b_all.setCurrentIndex(0)
+
+    def _apply_all_boundary(self) -> None:
+        kind = self.cmb_b_all.currentText()
+        if kind not in BOUNDARY_KINDS:
+            return
+        for cb in self.cmb_b.values():
+            cb.setCurrentText(kind)
+        self._refresh_boundary_all_combo()
+        self._on_form_edited()
+
     def _apply_pcb_defaults(self) -> None:
         case = self.chk_pcb_case.isChecked()
         if case:
@@ -649,6 +690,7 @@ class SimParamsPanel(QWidget):
                 cb.setCurrentText("PEC" if axis == "zmin" else "MUR")
             values = [10.0, 10.0, 10.0, 10.0, 0.0, 10.0]
         self._set_air_values(values)
+        self._refresh_boundary_all_combo()
         self._update_air_controls()
 
     def _on_pcb_defaults_toggled(self, checked: bool) -> None:
@@ -860,6 +902,7 @@ class SimParamsPanel(QWidget):
             if kind not in BOUNDARY_KINDS:
                 kind = "PML"
             cb.setCurrentText(kind)
+        self._refresh_boundary_all_combo()
         self.spn_pml.setValue(int(b.pml_size or 8))
         air = list(b.air_margin or ["auto"] * 6)
         is_auto = all(a == "auto" or a is None for a in air)

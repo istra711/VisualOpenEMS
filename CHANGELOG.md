@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Boundary “all sides equal”**: Simulation Parameters → Boundary conditions
+  now has a kind selector and **Apply to all six** button, so xmin/xmax/ymin/
+  ymax/zmin/zmax can be set to PEC, PMC, MUR or PML in one action. Individual
+  per-side fields remain editable afterwards.
 - **Transactional run workflow**: runs are written into a project-local
   `staging/` folder and only become project results when the user chooses
   **Simulation → Commit staged results**. Committed runs live in immutable

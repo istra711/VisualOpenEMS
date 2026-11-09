@@ -51,6 +51,10 @@ def main() -> int:
         win.project.sim.num_threads or 0
     )
     win.sim_params.spn_num_threads.setValue(4)
+    # "All sides equal" applies one boundary kind to all six faces at once.
+    win.sim_params.cmb_b_all.setCurrentText("MUR")
+    win.sim_params.btn_b_all.click()
+    assert all(cb.currentText() == "MUR" for cb in win.sim_params.cmb_b.values())
     win.sim_params.cmb_b["xmin"].setCurrentText("PML")
     win.sim_params.spn_air.setValue(30.0)
     win.sim_params.chk_air_auto.setChecked(False)
