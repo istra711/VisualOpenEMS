@@ -448,6 +448,8 @@ Progress (status bar)
     the openEMS output, plus elapsed time and "converged" / "max TS reached".
     "Converged" appears only when the engine actually reached the configured
     end criterion; a warning/report that says it was not met does not count.
+    If max timesteps is reached first, both bars turn red, the TS bar is
+    labelled `(max)` and the energy bar keeps the real reached percentage.
     - TS bar: timesteps done / max timesteps.
     - Bottom right: current engine wall-clock runtime (`Runtime …`) and
       remaining estimate (`ETA ~…`) from the engine's live s/TS.

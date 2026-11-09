@@ -58,9 +58,31 @@ def main() -> int:
     assert win.progress_energy.value() == 52, win.progress_energy.value()
     assert win.progress_energy.format() == "E 52%", win.progress_energy.format()
 
+    # Max timesteps without reaching the energy criterion: the TS bar is full
+    # (all timesteps really ran) but turns red and is labelled "(max)"; the
+    # energy bar shows the actual 4 % instead of a misleading 100 %.
+    win._reset_engine_progress()
+    win._log(_LINES[0])
+    win._log(
+        "[@   1h50m] Timestep:       200000 || Speed:  28.8 MC/s (3.5e-03 s/TS) "
+        "|| Energy: ~1e-5 (-2.0dB)"
+    )
+    win._log(
+        "RunFDTD: Warning: Max. number of timesteps was reached before the "
+        "end-criteria of -50dB was reached..."
+    )
+    win._drain_log_queue()
+    assert win.progress.value() == 100
+    assert "max" in win.progress.format().lower(), win.progress.format()
+    assert "converged" not in win.lbl_engine.text().lower(), win.lbl_engine.text()
+    assert win.progress_energy.value() == 4, win.progress_energy.value()
+    assert "c62828" in win.progress.styleSheet().lower()
+    assert "c62828" in win.progress_energy.styleSheet().lower()
+
     win._reset_engine_progress()
     assert win.progress.isHidden(), "reset must hide the bar"
     assert win.progress_energy.isHidden(), "reset must hide the energy bar"
+    assert win.progress.styleSheet() == ""
 
     win.close()
     print("PROGRESS SMOKE OK")

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a real end-criteria hit; otherwise it shows “max TS reached” and the
   energy remains e.g. `-2.0 dB / -50 dB`. App report lines are no longer fed
   into the engine progress parser.
+- **Non-converged runs are shown in red**: when the timestep budget is
+  exhausted without reaching the energy criterion, the TS and energy bars turn
+  red and the TS bar is labelled `(max)`; the energy bar continues to show the
+  actual reached percentage (e.g. `E 4%` for `-2 dB / -50 dB`). A new run
+  clears the red state.
 
 ### Added
 

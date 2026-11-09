@@ -2220,6 +2220,7 @@ class MainWindow(QMainWindow):
             ec = 0.0
         # end criterion as a positive dB drop to reach (energy ratio -> 10*log10)
         self._engine_progress.target_db = (-10.0 * math.log10(ec)) if ec > 0 else None
+        self._style_engine_progress(False)
         for bar in (self.progress, self.progress_energy):
             bar.setValue(0)
             bar.setFormat("")
@@ -2231,16 +2232,41 @@ class MainWindow(QMainWindow):
         self.lbl_eta.setText("")
         self.lbl_eta.setVisible(False)
 
+    def _style_engine_progress(self, failed: bool) -> None:
+        """Red fill = the run stopped without reaching the energy criterion."""
+        style = (
+            "QProgressBar { color: #7f0000; } "
+            "QProgressBar::chunk { background-color: #c62828; }"
+            if failed
+            else ""
+        )
+        for bar in (self.progress, self.progress_energy):
+            if bar.styleSheet() != style:
+                bar.setStyleSheet(style)
+
     def _show_engine_progress(self) -> None:
         p = self._engine_progress
         percent = p.percent
+        stopped = bool(
+            not p.end_criteria_hit
+            and (
+                p.stopped_before_criteria
+                or (p.max_timesteps and p.timestep >= p.max_timesteps)
+            )
+        )
+        self._style_engine_progress(stopped)
         self.progress.setValue(percent)
-        self.progress.setFormat(f"TS {percent}%")
+        self.progress.setFormat(
+            f"TS {percent}% (max)" if stopped else f"TS {percent}%"
+        )
         self.progress.setVisible(True)
         self.progress_energy.setValue(p.energy_percent)
         self.progress_energy.setFormat(f"E {p.energy_percent}%")
         self.progress_energy.setVisible(True)
-        self.lbl_engine.setText(p.text())
+        text = p.text()
+        if stopped and "max TS reached" not in text:
+            text = f"{text}   max TS reached" if text else "max TS reached"
+        self.lbl_engine.setText(text)
         self.lbl_engine.setVisible(True)
         runtime = p.elapsed_text()
         self.lbl_runtime.setText(runtime)
