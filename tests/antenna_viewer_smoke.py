@@ -264,10 +264,15 @@ def main() -> int:
         print("FAIL: 3D controls hidden in 3D plot")
         return 9
     ax3d = viewer.figure.axes[0]
-    axis_labels = (ax3d.get_xlabel(), ax3d.get_ylabel(), ax3d.get_zlabel())
-    print("[3D] axis labels:", axis_labels)
-    if axis_labels != ("x", "y", "z"):
-        print("FAIL: 3D spatial axis labels missing", axis_labels)
+    triad = next(
+        (a for a in viewer.figure.axes if a.get_gid() == "antenna_triad"), None
+    )
+    triad_labels = (
+        sorted(t.get_text() for t in triad.texts if t.get_text()) if triad else []
+    )
+    print("[3D] custom axis triad:", triad_labels, "| box axes:", ax3d.axison)
+    if triad is None or triad_labels != ["x", "y", "z"] or ax3d.axison:
+        print("FAIL: 3D orientation triad/axis hiding wrong", triad_labels)
         return 25
     lo0, hi0 = viewer._dbi_window()
     viewer.slider_dbi_min.setValue(viewer.slider_dbi_min.maximum())

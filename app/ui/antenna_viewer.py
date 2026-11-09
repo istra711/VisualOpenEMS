@@ -378,13 +378,13 @@ class AntennaPatternViewer(QWidget):
             "annotate": False,
         },
         "balanced": {
-            "grid": 72,
+            "grid": 96,
             "antialias": False,
             "graticule": 30.0,
             "annotate": True,
         },
         "high": {
-            "grid": 110,
+            "grid": 132,
             "antialias": False,
             "graticule": 15.0,
             "annotate": True,
@@ -408,8 +408,8 @@ class AntennaPatternViewer(QWidget):
         self._show_graticule = True
         self._show_wireframe = False
         # graticule style (right-click → "3D reference grid")
-        self._grid_alpha = 0.6
-        self._grid_width = 0.7
+        self._grid_alpha = 0.30
+        self._grid_width = 0.65
         self._grid_step = 0.0  # 0 = use the quality preset's density
         # throttle 3D rebuilds while the dBi slider is dragged (the surface is
         # rebuilt from scratch; rebuilding on every slider tick would lag)
@@ -531,6 +531,7 @@ class AntennaPatternViewer(QWidget):
         rv = QVBoxLayout(right)
         self.figure = Figure(figsize=(7, 6), tight_layout=False)
         self.canvas = FigureCanvas(self.figure)
+        self.canvas.mpl_connect("button_release_event", self._on_3d_mouse_release)
         self.toolbar = NavigationToolbar(self.canvas, self)
         # 3D controls live inside the plot panel's toolbar (right of the save
         # icon) so the pop-out window — which reparents this panel — shows
@@ -1007,6 +1008,7 @@ class AntennaPatternViewer(QWidget):
         for ax in self.figure.axes:
             if getattr(ax, "name", "") == "3d":
                 ax.view_init(elev=self._view3d[0], azim=self._view3d[1])
+                self._refresh_orientation_triad()
                 self.canvas.draw_idle()
                 return
 
@@ -2275,7 +2277,7 @@ class AntennaPatternViewer(QWidget):
 
         field_name = "Dmax" if field == "D_dBi" else "Gain"
         # explicit axes rect: no global subplot margins (2D plots keep theirs)
-        ax = self.figure.add_axes([0.02, 0.045, 0.83, 0.90], projection="3d")
+        ax = self.figure.add_axes([0.012, 0.03, 0.85, 0.92], projection="3d")
         # explicit artist order: graticule behind the surface, marker/label in
         # front (matplotlib's computed 3D z-order otherwise lets the sphere
         # grid shine through the pattern)
@@ -2341,49 +2343,52 @@ class AntennaPatternViewer(QWidget):
                 [Y[pk]],
                 [Z[pk]],
                 color="crimson",
-                s=14,
+                edgecolors="white",
+                linewidths=0.8,
+                s=28,
                 depthshade=False,
                 zorder=5,
             )
             if preset["annotate"]:
                 ax.text(
-                    X[pk] * 1.05,
-                    Y[pk] * 1.05,
-                    Z[pk] * 1.05,
-                    f" {float(cut2d[pk]):.1f} dBi",
+                    X[pk] * 1.06,
+                    Y[pk] * 1.06,
+                    Z[pk] * 1.06,
+                    f"{float(cut2d[pk]):.1f} dBi",
                     fontsize=7,
-                    color="0.2",
+                    color="#20242a",
                     zorder=6,
+                    bbox={
+                        "boxstyle": "round,pad=0.18",
+                        "facecolor": "white",
+                        "edgecolor": "none",
+                        "alpha": 0.78,
+                    },
                 )
         except (ValueError, TypeError):
             pass
 
-        ax.set_xlim(-1.02, 1.02)
-        ax.set_ylim(-1.02, 1.02)
-        ax.set_zlim(-1.02, 1.02)
-        ax.set_box_aspect((1, 1, 1), zoom=1.18)
+        ax.set_xlim(-1.04, 1.04)
+        ax.set_ylim(-1.04, 1.04)
+        ax.set_zlim(-1.04, 1.04)
+        # The old 1.18 left a lot of empty cube around the lobe.  With the
+        # default panes removed, a slightly tighter camera is safe and makes
+        # the pattern the visual focus.
+        ax.set_box_aspect((1, 1, 1), zoom=1.30)
         ax.set_proj_type("ortho")
         ax.view_init(elev=self._view3d[0], azim=self._view3d[1])
-        # clean panes/ticks: the graticule and colorbar carry the scale
-        ax.grid(False)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_zticks([])
-        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
-            axis.pane.fill = False
-            axis.pane.set_edgecolor((1.0, 1.0, 1.0, 0.0))
-            axis.line.set_color((0.72, 0.72, 0.72, 0.65))
-            axis.line.set_linewidth(0.6)
-        ax.set_xlabel("x", labelpad=-5, fontsize=8)
-        ax.set_ylabel("y", labelpad=-5, fontsize=8)
-        ax.set_zlabel("z", labelpad=-5, fontsize=8)
-        title = (
-            f"3D {field_name} — max {data_max:.1f} dBi"
-            f" · window {dmin:.1f}…{dmax:.1f}"
-        )
+        # Matplotlib's 3D panes/grid are rectangular and visually overwhelm a
+        # spherical antenna pattern.  Hide them and use the sphere graticule
+        # plus the compact orientation triad instead.
+        ax.set_axis_off()
+        ax.patch.set_alpha(0.0)
+        self._add_orientation_triad(ax)
+
+        freq_txt = str(self.cmb_freq.currentText()).strip()
+        title = f"{field_name} · {freq_txt} · max {data_max:.1f} dBi"
         if mode != "db":
             title += f" · r={self.cmb_radius.currentText()}"
-        ax.set_title(title, fontsize=9, pad=2)
+        ax.set_title(title, fontsize=9.5, pad=4, color="#20242a")
 
         extend = "neither"
         if data_min < dmin and data_max > dmax:
@@ -2394,11 +2399,110 @@ class AntennaPatternViewer(QWidget):
             extend = "max"
         mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
         mappable.set_array(cut2d)
-        cax = self.figure.add_axes([0.885, 0.24, 0.025, 0.52])
+        cax = self.figure.add_axes([0.877, 0.22, 0.024, 0.58])
         cb = self.figure.colorbar(mappable, cax=cax, extend=extend)
-        cb.set_label(f"{field_name} [dBi]", fontsize=8, labelpad=2)
-        cb.ax.tick_params(labelsize=7, length=2, pad=2)
+        cb.set_label(f"{field_name} [dBi]", fontsize=8, labelpad=2, color="#30343a")
+        cb.ax.tick_params(labelsize=7, length=2, pad=2, colors="#30343a")
         cb.outline.set_linewidth(0.4)
+        cb.outline.set_edgecolor("#b8bcc2")
+
+    def _add_orientation_triad(self, ax) -> None:
+        """Small x/y/z compass that follows the 3D camera orientation."""
+        triad = self.figure.add_axes([0.018, 0.018, 0.105, 0.105], zorder=20)
+        triad.set_gid("antenna_triad")
+        triad.patch.set_alpha(0.0)
+        triad.set_axis_off()
+        self._paint_orientation_triad(triad, ax)
+
+    def _paint_orientation_triad(self, triad, ax) -> None:
+        """Project the three unit axes into the current 2D screen view."""
+        try:
+            from mpl_toolkits.mplot3d import proj3d
+
+            proj = ax.get_proj()
+            ox, oy, _ = proj3d.proj_transform(0.0, 0.0, 0.0, proj)
+            vectors = []
+            for xyz, color, label in (
+                ((1.0, 0.0, 0.0), "#c0392b", "x"),
+                ((0.0, 1.0, 0.0), "#27833a", "y"),
+                ((0.0, 0.0, 1.0), "#2f6db0", "z"),
+            ):
+                px, py, _ = proj3d.proj_transform(*xyz, proj)
+                vectors.append((np.array([px - ox, py - oy]), color, label))
+            scale = max(float(np.linalg.norm(vec)) for vec, _, _ in vectors)
+        except Exception:  # noqa: BLE001 — keep the viewer usable if mpl changes
+            return
+        if scale < 1e-9:
+            return
+
+        triad.clear()
+        triad.set_gid("antenna_triad")
+        triad.set_zorder(20)
+        triad.patch.set_alpha(0.0)
+        triad.set_axis_off()
+        triad.set_xlim(-1.25, 1.25)
+        triad.set_ylim(-1.25, 1.25)
+        triad.set_aspect("equal", adjustable="box")
+        for vec, color, label in vectors:
+            # Preserve the projected length: an axis pointing towards the
+            # camera is intentionally shorter than one across the screen.
+            d = vec / scale * 1.02
+            if float(np.linalg.norm(d)) < 0.09:
+                triad.plot(
+                    [float(d[0])], [float(d[1])],
+                    marker="o", ms=4.5, color=color, zorder=3,
+                )
+                tx, ty = float(d[0]) * 1.8, float(d[1]) * 1.8
+            else:
+                triad.annotate(
+                    "",
+                    xy=(float(d[0]), float(d[1])),
+                    xytext=(0.0, 0.0),
+                    arrowprops={
+                        "arrowstyle": "-|>",
+                        "color": color,
+                        "lw": 1.4,
+                        "shrinkA": 0.0,
+                        "shrinkB": 0.0,
+                    },
+                    zorder=3,
+                )
+                tx, ty = float(d[0]) * 1.18, float(d[1]) * 1.18
+            triad.text(
+                tx,
+                ty,
+                label,
+                color=color,
+                fontsize=8,
+                fontweight="bold",
+                ha="center",
+                va="center",
+                zorder=4,
+            )
+        triad.plot([0.0], [0.0], marker="o", ms=2.0, color="#4a4f57", zorder=5)
+
+    def _refresh_orientation_triad(self) -> None:
+        """Update the compass after a programmatic or mouse view change."""
+        if self.cmb_plot.currentText() != "3D Pattern":
+            return
+        ax3d = next(
+            (a for a in self.figure.axes if getattr(a, "name", "") == "3d"), None
+        )
+        triad = next(
+            (a for a in self.figure.axes if a.get_gid() == "antenna_triad"), None
+        )
+        if ax3d is None or triad is None:
+            return
+        try:
+            self._view3d = (float(ax3d.elev), float(ax3d.azim))
+        except Exception:  # noqa: BLE001
+            pass
+        self._paint_orientation_triad(triad, ax3d)
+        self.canvas.draw_idle()
+
+    def _on_3d_mouse_release(self, event) -> None:
+        if getattr(event, "button", None) == 1:
+            self._refresh_orientation_triad()
 
     def _add_reference_grid(self, ax, step_deg: float) -> None:
         """θ rings / φ meridians on the unit sphere (one Line3D artist)."""

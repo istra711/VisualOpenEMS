@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Added `build_linux.sh` and `docs/LINUX.md`; `openEMS`/`easyMesh` are still
   installed separately.
 
+### Changed
+
+- **Cleaner 3D antenna pattern**: the rectangular Matplotlib 3D box, panes and
+  tick grid are gone. A compact x/y/z orientation triad follows the camera,
+  the reference graticule is lighter, the camera is tighter, the peak marker is
+  clearer and the colorbar/title are less cluttered. Balanced/high quality use
+  a denser surface grid for smoother lobes.
+
 ## [0.11.0] - 2026-11-09
 
 ### Added
