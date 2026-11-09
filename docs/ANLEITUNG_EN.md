@@ -831,3 +831,89 @@ Every viewer (S-Params, Antenna, Field Viewer) exports **PNG**.
   Compare solvers via S-parameters / far fields or via VTK in ParaView.
 - Units are converted to **mm** on export (STEP and grid JSON); Touchstone stays
   in Hz. The source unit is the drawing unit from *Mesh*.
+
+---
+
+## 13. Gallery
+
+### 13.1 Geometry, mesh and port placement
+
+![3D Design geometry](images/VisualopenEMS_GUI_3D_Geometry_Viewer.jpg)
+
+*3D Design: rotatable geometry with coordinate ruler, board outline and
+per-object display.*
+
+![Mesh Viewer YZ slice](images/VisualopenEMS_GUI_Mesh-Viewer_yz.jpg)
+
+*Mesh Viewer: YZ slice through a multi-layer board with mesh, materials,
+ports and domain/NF2FF boxes.*
+
+![Mesh and port editor](images/VisualopenEMS_GUI_Mesh_Port_Editor.jpg)
+
+*Mesh and port editing: place a port on the geometry and inspect the port box
+plus the surrounding mesh cells.*
+
+### 13.2 Field Viewer
+
+![Field distribution over SDARS patch](images/FIeld-Viewer_DualFeed_SDARS_Patch.jpg)
+
+*Field distribution over the dual-feed SDARS patch, focused on the radiating
+patch area.*
+
+![Field Viewer dual-feed patch](images/VisualopenEMS_GUI_Field-Viewer_DualFeed_SDARS-Patch.jpg)
+
+*Field Viewer: 3D field distribution over the dual-feed SDARS patch antenna.*
+
+![Vivaldi field 1](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi1.jpg)
+
+*Field Viewer: Vivaldi antenna field snapshot in the 3D scene.*
+
+![Vivaldi field 2](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi3.jpg)
+
+*Field Viewer: another Vivaldi field step from the playback series.*
+
+![Vivaldi field 3](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi4.jpg)
+
+*Field Viewer: Vivaldi field slice with the antenna structure and field
+magnitude together.*
+
+![Vivaldi field 4](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi5.jpg)
+
+*Field Viewer: Vivaldi field view with an additional geometry/plane overlay.*
+
+![Field vectors](images/VisualopenEMS_GUI_Field_Viewer_Vectors.jpg)
+
+*Field Viewer: vector glyphs on a field slice — direction and strength at a
+glance.*
+
+### 13.3 Antenna patterns and polarization
+
+![2D antenna pattern GNSS](images/VisualopenEMS_GUI_2D-Antenna-Pattern_GNSS-Patch.jpg)
+
+*Antenna tab: 2D E/H-plane pattern of a GNSS patch with polar grid, markers and
+pattern details.*
+
+![3D antenna pattern SDARS](images/VisualopenEMS_GUI_3D-Antenna-Pattern_SDARS-Patch.jpg)
+
+*Antenna tab: 3D gain pattern of the dual-feed SDARS patch with the dBi colour
+bar and spatial orientation.*
+
+![Axial ratio dual-feed](images/VisualopenEMS_GUI_AxialRatio_DualFeed_SDARS-Patch.jpg)
+
+*Axial ratio versus frequency for the dual-feed SDARS patch.*
+
+![Axial ratio single-feed](images/VisualopenEMS_GUI_AxialRatio_SingleFeed_GNSS-Patch.jpg)
+
+*Axial ratio versus frequency for the single-feed GNSS patch, including the
+3 dB circular-polarization band.*
+
+![Radiated efficiency](images/VisualopenEMS_GUI_Radiated_Efficiency.jpg)
+
+*Radiated efficiency and gain versus frequency from the loaded NF2FF result.*
+
+### 13.4 S-parameters
+
+![S-parameter Re/Im/phase](images/VisualopenEMS_GUI_S-Paramter_RE-Img-Phase.jpg)
+
+*S-Params Viewer: real/imaginary and phase traces over frequency with markers;
+the same data can be exported as Touchstone, CSV or ASCII.*

@@ -18,6 +18,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 
 - [Features](#features)
 - [Screenshots](#screenshots)
+- [Gallery](#gallery)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -163,6 +164,94 @@ separately, a right click on a marked cell opens the repair actions.*
 
 *3D gain pattern with the spatial axes labelled x/y/z; the radius follows the
 "dBi min" window, the colour bar carries the absolute values.*
+
+---
+
+## Gallery
+
+### Geometry, mesh and port placement
+
+![3D geometry viewer](docs/images/VisualopenEMS_GUI_3D_Geometry_Viewer.jpg)
+
+*3D Design: rotatable geometry with coordinate ruler, board outline and
+per-object display; useful as a quick visual check before meshing.*
+
+![Mesh Viewer YZ slice](docs/images/VisualopenEMS_GUI_Mesh-Viewer_yz.jpg)
+
+*Mesh Viewer: YZ slice through a multi-layer board. The mesh lines, material
+regions, ports and NF2FF/domain boxes are shown together.*
+
+![Mesh and port editor](docs/images/VisualopenEMS_GUI_Mesh_Port_Editor.jpg)
+
+*Mesh and port editing: place a port directly on the geometry and inspect the
+port box plus the surrounding mesh cells.*
+
+### Field Viewer
+
+![Field distribution over SDARS patch](docs/images/FIeld-Viewer_DualFeed_SDARS_Patch.jpg)
+
+*Field distribution over the dual-feed SDARS patch, focused on the radiating
+patch area.*
+
+![Field Viewer dual-feed patch](docs/images/VisualopenEMS_GUI_Field-Viewer_DualFeed_SDARS-Patch.jpg)
+
+*Field Viewer: 3D field distribution over a dual-feed SDARS patch antenna,
+with the openEMS field magnitude and colour bar.*
+
+![Vivaldi field 1](docs/images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi1.jpg)
+
+*Field Viewer: Vivaldi antenna field snapshot in the 3D scene.*
+
+![Vivaldi field 2](docs/images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi3.jpg)
+
+*Field Viewer: another Vivaldi field step, showing how the field pattern
+changes during playback.*
+
+![Vivaldi field 3](docs/images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi4.jpg)
+
+*Field Viewer: Vivaldi field slice with the antenna structure and field
+magnitude together.*
+
+![Vivaldi field 4](docs/images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi5.jpg)
+
+*Field Viewer: Vivaldi field view with an additional geometry/plane overlay.*
+
+![Field vectors](docs/images/VisualopenEMS_GUI_Field_Viewer_Vectors.jpg)
+
+*Field Viewer: vector glyphs on a field slice — direction and strength of the
+field are visible at a glance.*
+
+### Antenna patterns and polarization
+
+![2D antenna pattern GNSS](docs/images/VisualopenEMS_GUI_2D-Antenna-Pattern_GNSS-Patch.jpg)
+
+*Antenna tab: 2D E/H-plane pattern of a GNSS patch with polar grid, markers and
+pattern details.*
+
+![3D antenna pattern SDARS](docs/images/VisualopenEMS_GUI_3D-Antenna-Pattern_SDARS-Patch.jpg)
+
+*Antenna tab: 3D gain pattern of the dual-feed SDARS patch, with the dBi colour
+bar and spatial orientation.*
+
+![Axial ratio dual-feed](docs/images/VisualopenEMS_GUI_AxialRatio_DualFeed_SDARS-Patch.jpg)
+
+*Axial ratio versus frequency for the dual-feed SDARS patch.*
+
+![Axial ratio single-feed](docs/images/VisualopenEMS_GUI_AxialRatio_SingleFeed_GNSS-Patch.jpg)
+
+*Axial ratio versus frequency for the single-feed GNSS patch, including the
+3 dB circular-polarization band.*
+
+![Radiated efficiency](docs/images/VisualopenEMS_GUI_Radiated_Efficiency.jpg)
+
+*Radiated efficiency and gain versus frequency from the loaded NF2FF result.*
+
+### S-parameters
+
+![S-parameter Re/Im/phase](docs/images/VisualopenEMS_GUI_S-Paramter_RE-Img-Phase.jpg)
+
+*S-Params Viewer: real/imaginary and phase traces over frequency with markers;
+the touchstone/JSON import and CSV/ASCII/Touchstone export use the same data.*
 
 ---
 
