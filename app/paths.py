@@ -36,6 +36,13 @@ def app_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def default_work_dir() -> Path:
+    """Default work directory beside the EXE (frozen) or in the repo (source)."""
+    if is_frozen():
+        return Path(sys.executable).resolve().parent / "work"
+    return app_root() / "work"
+
+
 def settings_path() -> Path:
     """Location of app_settings.json (next to the EXE when frozen).
 

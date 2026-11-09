@@ -8,11 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.paths import app_root
+from app.platform_tools import default_freecad_cmd, freecad_gui_candidates
 from app.winproc import hidden_console_kwargs
 
 APP_ROOT = app_root()
 EXPORT_SCRIPT = APP_ROOT / "examples" / "freecad_export_for_openems.py"
-FREECAD_CMD_DEFAULT = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
+FREECAD_CMD_DEFAULT = default_freecad_cmd()
 
 
 @dataclass
@@ -24,30 +25,15 @@ class FreeCADPaths:
 
 
 def resolve_freecad_gui(freecad_cmd: str | Path | None, freecad_gui: str | Path | None = None) -> Path | None:
-    """Locate FreeCAD.exe (GUI). Explicit path wins; else derive from FreeCADCmd."""
+    """Locate the FreeCAD GUI binary for Windows, Linux or macOS."""
     if freecad_gui:
         p = Path(freecad_gui)
-        if p.exists():
+        if p.is_file():
             return p
-    cmd = Path(freecad_cmd) if freecad_cmd else None
-    candidates: list[Path] = []
-    if cmd is not None:
-        candidates.extend(
-            [
-                cmd.parent / "FreeCAD.exe",
-                cmd.parent / "freecad.exe",
-                cmd.parent / "FreeCAD",
-            ]
-        )
-        # FreeCAD 1.x sometimes uses freecad.exe lowercase
-        if cmd.parent.exists():
-            for p in cmd.parent.iterdir():
-                if p.name.lower() == "freecad.exe" and p.suffix.lower() == ".exe":
-                    candidates.append(p)
-    for c in candidates:
+    for candidate in freecad_gui_candidates(freecad_cmd):
         try:
-            if c.exists() and c.suffix.lower() == ".exe":
-                return c
+            if candidate.is_file():
+                return candidate
         except OSError:
             continue
     return None
@@ -68,7 +54,7 @@ def freecad_paths(
     gui = resolve_freecad_gui(cmd_path, freecad_gui)
     if gui is None:
         warnings.append(
-            "FreeCAD GUI (FreeCAD.exe) not found — set path in Settings "
+            "FreeCAD GUI binary not found — set path in Settings "
             "(next to FreeCADCmd or explicit)."
         )
     work = Path(work_dir) if work_dir else None

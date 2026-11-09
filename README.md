@@ -334,6 +334,11 @@ VisualopenEMS/
 | **scikit-rf** | ≥ 0.29 | [scikit-rf.org](https://scikit-rf.org/) |
 | **easyMesh4openEMS** | fork (this repo) | [github.com/istra711/easyMesh4openEMS](https://github.com/istra711/easyMesh4openEMS) |
 
+**Linux:** the Python/Qt/VTK GUI is cross-platform. Native openEMS/CSXCAD, a
+Linux-built easyMesh and—for FCStd/STEP—FreeCAD must be installed separately.
+See [Running on Linux](docs/LINUX.md) for prerequisites, Settings paths,
+environment variables and the `build_linux.sh` packaging script.
+
 ---
 
 ## Installation
@@ -726,6 +731,7 @@ python tests\yagi_mesh_ends.py    # Yagi cylinder-end densification
 |----------|-------------|
 | [docs/ANLEITUNG_EN.md](docs/ANLEITUNG_EN.md) | Full guide: FreeCAD antenna → simulation (EN) |
 | [docs/ANLEITUNG_DE.md](docs/ANLEITUNG_DE.md) | Full guide (DE) |
+| [docs/LINUX.md](docs/LINUX.md) | Linux prerequisites, path configuration and native build |
 | [docs/FREECAD_WORKFLOW_EN.md](docs/FREECAD_WORKFLOW_EN.md) | Step-by-step workflow checklist (EN) |
 | [docs/FREECAD_PORTS_EN.md](docs/FREECAD_PORTS_EN.md) | Port marking in FreeCAD (EN) |
 | [docs/EASYMESH_CHANGES_EN.md](docs/EASYMESH_CHANGES_EN.md) | Local easyMesh modifications (EN) |

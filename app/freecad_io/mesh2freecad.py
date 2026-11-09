@@ -316,7 +316,7 @@ def _ensure_visible_document(
 def _open_document(target: Path, freecad_cmd: Any, freecad_gui: Any) -> tuple[Any | None, str]:
     gui = resolve_freecad_gui(freecad_cmd, freecad_gui)
     if gui is None:
-        return None, "FreeCAD GUI (FreeCAD.exe) not found — set it in Settings."
+        return None, "FreeCAD GUI binary not found — set it in Settings."
     try:
         proc = subprocess.Popen([str(gui), str(target)], cwd=str(target.parent))
     except OSError as exc:

@@ -17,9 +17,10 @@ import numpy as np
 def main() -> int:
     from app.freecad_io.freecad_mesh import tessellate_cad_to_meshes
     from app.models.project import GeometryFile, Project
+    from app.platform_tools import default_freecad_cmd
     from app.simulation.script_gen import generate_run_script
 
-    freecad_cmd = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
+    freecad_cmd = default_freecad_cmd()
     step_candidates = [
         ROOT / "work" / "yagi_antenna" / "yagi_2p45.step",
         ROOT / "work" / "yagi_antenna" / "yagi_2p45.FCStd",

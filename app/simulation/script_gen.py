@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from app.models.project import Project
+from app.platform_tools import default_freecad_cmd
 
 
 def _stl_primitive_from(
@@ -98,8 +99,10 @@ def generate_run_script(
 
             mesh_dir = work_dir / "cad_meshes"
             mesh_dir.mkdir(parents=True, exist_ok=True)
-            freecad_cmd = Path(project.freecad_cmd) if project.freecad_cmd else Path(
-                r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe"
+            freecad_cmd = (
+                Path(project.freecad_cmd)
+                if project.freecad_cmd
+                else default_freecad_cmd()
             )
             for gf in project.geometry_files:
                 src = Path(gf.path)
@@ -241,8 +244,10 @@ def ensure_simulation_meshes(project: Project, work_dir: Path, prims: list) -> l
 
     mesh_dir = work_dir / "cad_meshes"
     mesh_dir.mkdir(parents=True, exist_ok=True)
-    freecad_cmd = Path(project.freecad_cmd) if project.freecad_cmd else Path(
-        r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe"
+    freecad_cmd = (
+        Path(project.freecad_cmd)
+        if project.freecad_cmd
+        else default_freecad_cmd()
     )
     if not freecad_cmd.exists():
         try:

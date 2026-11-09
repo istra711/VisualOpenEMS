@@ -27,7 +27,9 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-FREECAD_CMD = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
+from app.platform_tools import default_freecad_cmd
+
+FREECAD_CMD = default_freecad_cmd()
 
 
 def _write_stl(path: Path, quads: bool = True) -> None:

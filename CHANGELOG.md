@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Antenna and Field Viewer headers show `Project: <name>`, and their pop-out
   window titles carry the same name. It updates automatically after New, Open
   and Save As.
+- **Native Linux preparation**: executable and install-path discovery for
+  FreeCAD, openEMS, AppCSXCAD and the simulation Python is centralized in
+  `app/platform_tools.py`. Fresh settings now use native Linux paths instead of
+  Windows paths, while existing Windows installations keep their old defaults.
+  Added `build_linux.sh` and `docs/LINUX.md`; `openEMS`/`easyMesh` are still
+  installed separately.
 
 ## [0.11.0] - 2026-11-09
 

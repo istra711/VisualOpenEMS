@@ -29,13 +29,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from app.paths import app_root
-from app.winproc import hidden_console_kwargs
 from app.models.project import mm_per_unit
+from app.paths import app_root
+from app.platform_tools import default_freecad_cmd
+from app.winproc import hidden_console_kwargs
 
 APP_ROOT = app_root()
 RUNNER_SCRIPT = APP_ROOT / "app" / "freecad_io" / "freecad_step_runner.py"
-FREECAD_CMD_DEFAULT = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
+FREECAD_CMD_DEFAULT = default_freecad_cmd()
 
 #: Normal axis letter -> index into (x, y, z).
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}

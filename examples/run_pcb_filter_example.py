@@ -32,11 +32,12 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 from app.csxcad_builder.primitives import pcb_filter_primitives  # noqa: E402
+from app.platform_tools import default_freecad_cmd  # noqa: E402
 from app.postproc import sparams as sp  # noqa: E402
 from app.settings import AppSettings  # noqa: E402
 from app.simulation.script_gen import generate_run_script  # noqa: E402
 
-FREECAD_CMD_DEFAULT = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
+FREECAD_CMD_DEFAULT = default_freecad_cmd()
 MODEL_SCRIPT = APP_ROOT / "examples" / "freecad_pcb_filter_model.py"
 
 # FreeCAD solid name -> (role, material, priority) — same values the analytic

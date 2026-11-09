@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Iterable
 
-DEFAULT_FREECAD = Path(r"C:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
+from app.platform_tools import default_freecad_cmd, freecad_cmd_candidates
+
+DEFAULT_FREECAD = default_freecad_cmd()
 
 RUNNER = r'''
 import json
@@ -79,16 +80,7 @@ def find_freecad_cmd(explicit: str | Path | None = None) -> Path | None:
     env = os.environ.get("FREECAD_CMD")
     if env:
         candidates.append(Path(env).expanduser())
-    candidates.append(DEFAULT_FREECAD)
-    for path in (
-        Path(r"C:\Program Files\FreeCAD 1.0\bin\FreeCADCmd.exe"),
-        Path(r"C:\Program Files\FreeCAD 0.21\bin\FreeCADCmd.exe"),
-        Path(r"C:\Program Files\FreeCAD\bin\FreeCADCmd.exe"),
-    ):
-        candidates.append(path)
-    found = shutil.which("FreeCADCmd")
-    if found:
-        candidates.append(Path(found))
+    candidates.extend(freecad_cmd_candidates())
     for candidate in candidates:
         try:
             if candidate.is_file():

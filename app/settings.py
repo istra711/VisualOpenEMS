@@ -8,19 +8,23 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.paths import app_root, settings_path
+from app.paths import app_root, default_work_dir, settings_path
+from app.platform_tools import (
+    default_freecad_cmd,
+    default_freecad_gui,
+    default_openems_root,
+    default_simulation_python,
+)
 
 APP_ROOT = app_root()
-DEFAULT_WORKDIR = Path(r"C:\Users\istra\Documents\claude_ps\FreeCAD_OpenEMS_GUI\work")
+DEFAULT_WORKDIR = default_work_dir()
 DEFAULT_SETTINGS = settings_path()
 
-FREECAD_CMD_DEFAULT = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
-# FreeCAD GUI binary (often freecad.exe next to FreeCADCmd); empty => auto-detect
-FREECAD_GUI_DEFAULT = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCAD.exe")
-OPENEMS_ROOT_DEFAULT = Path(r"c:\openEMS")
-PYTHON_DEFAULT = Path(
-    r"c:\Python\WPy64-31150\python-3.11.5.amd64\python.exe"
-)
+FREECAD_CMD_DEFAULT = default_freecad_cmd()
+# FreeCAD GUI binary (often next to FreeCADCmd); empty => auto-detect
+FREECAD_GUI_DEFAULT = default_freecad_gui(FREECAD_CMD_DEFAULT)
+OPENEMS_ROOT_DEFAULT = default_openems_root()
+PYTHON_DEFAULT = default_simulation_python()
 
 
 @dataclass
@@ -115,7 +119,7 @@ class AppSettings:
         }
 
     def freecad_gui_path(self) -> Path | None:
-        """Resolved FreeCAD.exe (explicit setting or derived from FreeCADCmd)."""
+        """Resolved FreeCAD GUI binary (explicit setting or derived from FreeCADCmd)."""
         from app.freecad_io.freecad_launcher import resolve_freecad_gui
 
         return resolve_freecad_gui(self.freecad_cmd, self.freecad_gui)

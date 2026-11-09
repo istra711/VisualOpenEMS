@@ -1,6 +1,8 @@
 # FreeCAD → openEMS GUI — Python 3.11.5 (WinPython)
 # Install: pip install -r requirements.txt
 # Then: pip install ./third_party/easyMesh4openEMS
+# Linux: use a native Python 3.11 venv and a Linux-built easyMesh;
+#        see docs/LINUX.md. openEMS/CSXCAD are system/built packages.
 
 numpy>=1.26
 matplotlib>=3.8

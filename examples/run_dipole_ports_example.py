@@ -21,7 +21,9 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-FREECAD_CMD_DEFAULT = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
+from app.platform_tools import default_freecad_cmd
+
+FREECAD_CMD_DEFAULT = default_freecad_cmd()
 MODEL_SCRIPT = APP_ROOT / "examples" / "freecad_dipole_ports.py"
 OUT_DIR = APP_ROOT / "work" / "dipole_ports"
 FCSTD = OUT_DIR / "dipole_2p45.FCStd"

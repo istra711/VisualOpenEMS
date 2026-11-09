@@ -3558,7 +3558,7 @@ class MeshGeometryViewer(QWidget):
             QMessageBox.warning(self, "Export failed", str(e))
 
     def _on_open_appcsxcad(self) -> None:
-        """Export temporary XML and launch AppCSXCAD.exe for true 3D review."""
+        """Export temporary XML and launch AppCSXCAD for true 3D review."""
         if self._csx is None:
             QMessageBox.information(self, "AppCSXCAD", "No CSX loaded — build mesh first.")
             return
@@ -3567,8 +3567,8 @@ class MeshGeometryViewer(QWidget):
             QMessageBox.warning(
                 self,
                 "AppCSXCAD not found",
-                "Could not locate AppCSXCAD.exe.\n"
-                "Set openEMS root in Settings, or export XML manually.",
+                "Could not locate AppCSXCAD.\n"
+                "Set the openEMS root in Settings, or export XML manually.",
             )
             return
         work = self.work_dir or Path(".")
@@ -3587,28 +3587,28 @@ class MeshGeometryViewer(QWidget):
             QMessageBox.warning(self, "Launch failed", str(e))
 
     def _find_appcsxcad(self) -> Path | None:
-        candidates: list[Path] = []
-        # From settings (openEMS root)
+        from app.platform_tools import find_appcsxcad
+
+        root = ""
         try:
             from app.settings import AppSettings
 
-            s = AppSettings.load()
-            candidates.append(Path(s.openems_root) / "AppCSXCAD.exe")
+            root = AppSettings.load().openems_root
         except Exception:  # noqa: BLE001
             pass
-        # CSXCAD package constant
+        found = find_appcsxcad(root)
+        if found is not None:
+            return found
+        # CSXCAD may expose the binary path directly.
         try:
             from CSXCAD import AppCSXCAD_BIN
 
             if AppCSXCAD_BIN:
-                candidates.append(Path(AppCSXCAD_BIN))
+                candidate = Path(AppCSXCAD_BIN)
+                if candidate.is_file():
+                    return candidate
         except Exception:  # noqa: BLE001
             pass
-        # Known install path
-        candidates.append(Path(r"c:\openEMS\AppCSXCAD.exe"))
-        for c in candidates:
-            if c and c.exists():
-                return c
         return None
 
     # ------------------------------------------------------------- drawing

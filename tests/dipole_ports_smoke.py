@@ -12,7 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-FREECAD_CMD = Path(r"c:\FreeCAD_1.1.4-Windows-x86_64\bin\FreeCADCmd.exe")
+from app.platform_tools import default_freecad_cmd
+
+FREECAD_CMD = default_freecad_cmd()
 SCRIPT = ROOT / "examples" / "freecad_dipole_ports.py"
 OUT = ROOT / "work" / "dipole_ports_smoke"
 FCSTD = OUT / "dipole_2p45.FCStd"
