@@ -56,6 +56,36 @@ def test_build_scene_csx_contains_lumped_element(tmp_path):
     assert lumped and lumped[0].GetName() == "R1"
 
 
+def test_build_scene_csx_skips_unused_material_properties(tmp_path):
+    """Only materials used by a primitive may create a CSX property.
+
+    Imported CST projects carry a whole material library; the unused entries
+    used to become empty CSX properties and openEMS warned "No primitives
+    found in property: copper!" (looking like missing geometry).
+    """
+    from app.meshing.build_task import build_scene_csx
+    from app.models.project import Project
+
+    project = Project.new_default("materials")
+    trace = {
+        "kind": "box",
+        "name": "trace",
+        "material": "copper",
+        "priority": 10,
+        "start": [0.0, 0.0, 0.0],
+        "stop": [1.0, 1.0, 0.0],
+    }
+    result = build_scene_csx(project, [trace], tmp_path)
+    props = result.csx.GetAllProperties()
+    by_name = {str(p.GetName()): p for p in props}
+    assert "copper" in by_name
+    assert by_name["copper"].GetQtyPrimitives() == 1
+    for unused in ("substrate", "rogers_ro5880", "vacuum", "conducting_sheet"):
+        assert unused not in by_name, f"unused material property {unused} created"
+    empty = [str(p.GetName()) for p in props if p.GetQtyPrimitives() == 0]
+    assert not empty, f"empty CSX properties: {empty}"
+
+
 def test_generated_run_script_contains_lumped_element(tmp_path):
     from app.models.project import Project
     from app.simulation.script_gen import generate_run_script

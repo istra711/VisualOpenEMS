@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Unused material properties in the CSX**: only materials referenced by a
+  primitive now get a CSX property. Imported CST projects carry a full material
+  library, so openEMS used to warn "No primitives found in property: copper!"
+  (and for every other unused library entry) even though all metal solids were
+  correctly present under `PEC`. The warning no longer appears after a rebuild.
 - **Mesh Viewer slice focus for flat boxes**: selecting a zero-thickness box
   trace (`start.z == stop.z`, e.g. `arm_top_vert` at z=1.0 mm) now moves the
   slice to its elevation and outlines it. Previously the trace was invisible:

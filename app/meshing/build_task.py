@@ -150,9 +150,21 @@ def build_mesh_and_validate(
     CSX.GetGrid().SetDeltaUnit(mesh.unit_to_meters())
 
     mat_by_name = {m.name: m for m in project.materials}
+    # Imported CST projects often carry a whole material library while only a
+    # few entries are actually assigned.  Creating a CSX property for every
+    # library entry makes openEMS print "No primitives found in property: ..."
+    # for each unused one (which looks like missing copper).  Only material
+    # names used by a primitive need a property.
+    used_materials = {
+        str(pr.get("material") or "copper").lower()
+        for pr in primitives
+        if str(pr.get("kind", "box")) != "lumped"
+    }
     props: dict = {}
     sheet_boxes: list = []  # (box, axes) widened after the mesh is built
     for mat in project.materials:
+        if mat.name.lower() not in used_materials:
+            continue
         if mat.kind == "pec":
             props[mat.name] = CSX.AddMetal(mat.name)
         elif mat.kind == "dielectric":
