@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
@@ -666,6 +667,11 @@ def _map_project_paths(data: dict[str, Any], base: Path, *, relative: bool) -> N
 class Project:
     name: str = "untitled"
     version: int = 1
+    #: Stable identity independent of the folder/file name.  Used to keep
+    #: staged/committed run metadata tied to the right project after a Save As.
+    project_id: str = ""
+    #: Storage layout: 2 = staging/runs/meshes, 1/0 = legacy flat results.
+    storage_layout: int = 2
     geometry_files: list[GeometryFile] = field(default_factory=list)
     materials: list[MaterialDef] = field(default_factory=list)
     assignments: list[GeomAssignment] = field(default_factory=list)
@@ -702,6 +708,10 @@ class Project:
     #: S-parameter viewer markers persisted with the project:
     #: [{"f": Hz, "tag": str, "delta_ref": Hz | None}, ...]
     sparam_markers: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not str(self.project_id or "").strip():
+            self.project_id = uuid.uuid4().hex
 
     def material_by_name(self, name: str) -> MaterialDef | None:
         for m in self.materials:
@@ -807,7 +817,17 @@ class Project:
         # The JSON is the anchor: store project-owned paths relative to its
         # folder so the whole project can be copied/moved without rewriting.
         _map_project_paths(data, path.parent, relative=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        # Never truncate a good project file when a write is interrupted.
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
         return path
 
     @classmethod

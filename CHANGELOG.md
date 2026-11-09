@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Transactional run workflow**: runs are written into a project-local
+  `staging/` folder and only become project results when the user chooses
+  **Simulation → Commit staged results**. Committed runs live in immutable
+  `runs/<run-id>/` folders with a `manifest.json`; old runs are retained.
+  **Discard staged results** removes only staging. The project JSON is written
+  only by Save/Commit, not by starting a run or building a mesh.
+- **Save As copies staged results**: saving under a new name creates a new
+  project and copies the pending staged run into it; the old project file and
+  its data/runs stay untouched. Without staged results the new project starts
+  without results.
+- **Run history foundation**: stable `project_id`, `storage_layout` and
+  atomic project-JSON writes (`Project.save`), plus per-run manifests with
+  status, project id, timestamps and file inventory. **Simulation → Run
+  history…** lists committed runs, opens their folders and switches the active
+  result set without deleting older runs.
 - **S-parameter export from the viewer**: the S-Params tab now has an
   "Export…" button (and a right-click → "Export S-parameters" submenu) for
   **Touchstone** (.sNp), **CSV** (frequency + every Sij as dB / phase / real /

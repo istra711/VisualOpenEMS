@@ -57,6 +57,7 @@ from app.freecad_io.importer import load_geometry_file, overall_bounds
 from app.models.project import GeomAssignment, PortDef, Project
 from app.runlog import format_run_end, format_run_start, format_run_step
 from app.settings import AppSettings
+from app.storage.run_store import ProjectStore
 from app.simulation.progress import EngineProgress
 from app.simulation.runner import SimulationRunner
 from app.simulation.script_gen import generate_run_script
@@ -129,6 +130,12 @@ class MainWindow(QMainWindow):
         self._last_coord_diag = None
         #: text of the last post-run status block (Simulation menu -> Status)
         self._last_sim_report_text = ""
+        #: Transactional run workflow: the current run is written here until
+        #: the user explicitly commits or discards it.  Committed runs live in
+        #: <project>/runs/<id>/ and are never modified in place.
+        self._staged_run_dir: Path | None = None
+        self._staged_run_status: str = ""
+        self._project_store_obj: ProjectStore | None = None
         #: Auto-load the newest S-params for the CURRENT project when the
         #: viewer is empty.  Off for a new/untitled project and while a run is
         #: active, so old files from a reused work folder cannot reappear.
@@ -147,6 +154,7 @@ class MainWindow(QMainWindow):
         self._run_t0: float | None = None
         self._abort_requested = False
         self._build_ui()
+        self._update_run_actions()
         self._apply_window_geometry()
         self._update_window_title()
         # Baseline for the "unsaved project changes" close prompt.  New/open/
@@ -339,6 +347,29 @@ class MainWindow(QMainWindow):
             return not self._has_unsaved_project_changes()
         return reply == QMessageBox.StandardButton.Discard
 
+    def _confirm_close_staged_results(self) -> bool:
+        """Ask what to do with uncommitted staging before closing."""
+        staged = self._staged_run_dir
+        if staged is None or not Path(staged).is_dir():
+            return True
+        reply = QMessageBox.warning(
+            self,
+            "Uncommitted staged results",
+            f"Results are still staged and not part of the project:\n\n{staged}\n\n"
+            "Yes: keep them for recovery\n"
+            "No: discard them\n"
+            "Cancel: keep the window open",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply == QMessageBox.StandardButton.Cancel:
+            return False
+        if reply == QMessageBox.StandardButton.No:
+            self._discard_staged_run(reason="discarded while closing")
+        return True
+
     def closeEvent(self, event) -> None:  # noqa: N802
         # Headless smoke tests close windows without a user to answer the
         # modal Save/Discard/Cancel prompt; keep the production GUI guarded.
@@ -346,6 +377,9 @@ class MainWindow(QMainWindow):
             headless = QApplication.platformName().lower() in ("offscreen", "minimal")
         except Exception:  # noqa: BLE001
             headless = False
+        if not headless and not self._confirm_close_staged_results():
+            event.ignore()
+            return
         if not headless and not self._confirm_close_with_unsaved_changes():
             event.ignore()
             return
@@ -1538,6 +1572,40 @@ class MainWindow(QMainWindow):
         )
         add_action(smenu, "Abort", btn=self.btn_abort)
         smenu.addSeparator()
+        self.act_commit_results = add_action(
+            smenu,
+            "Commit staged results",
+            slot=self._on_commit_staged_results,
+            tip="Publish the last run as a new immutable result set and make it "
+            "the project's active run (old runs are kept)",
+        )
+        self.act_discard_results = add_action(
+            smenu,
+            "Discard staged results",
+            slot=self._on_discard_staged_results,
+            tip="Delete only the uncommitted staging folder; the active run "
+            "and all committed results stay untouched",
+        )
+        self.act_open_staging = add_action(
+            smenu,
+            "Open staged results folder",
+            slot=self._on_open_staged_results,
+            tip="Open the staging folder in Explorer",
+        )
+        self.act_run_history = add_action(
+            smenu,
+            "Run history…",
+            slot=self._on_show_run_history,
+            tip="List committed runs, inspect their manifests, and switch the "
+            "active result set without deleting older runs",
+        )
+        for _act in (
+            self.act_commit_results,
+            self.act_discard_results,
+            self.act_open_staging,
+        ):
+            _act.setEnabled(False)
+        smenu.addSeparator()
         add_action(
             smenu,
             "Simulation Status…",
@@ -2201,11 +2269,10 @@ class MainWindow(QMainWindow):
                 or "[exit code" in low
             ) and getattr(self, "_allow_auto_results", False):
                 try:
-                    self.sparam_viewer.set_work_dir(self._project_work_dir())
+                    # During a run this is the staging folder; never write the
+                    # staging paths into the project JSON here.
+                    self.sparam_viewer.set_work_dir(self._result_data_root())
                     self._auto_load_sparams_if_empty()
-                    # remember the run's artifacts in the project JSON so a
-                    # re-opened project restores the viewers directly
-                    self._record_results()
                 except Exception as e:  # noqa: BLE001
                     print("sparam viewer refresh failed:", e)
             # NF2FF summary → refresh the antenna pattern viewer
@@ -2657,9 +2724,8 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_show_sparams(self) -> None:
-        # scope the browser/auto-load to the CURRENT project's results, and
-        # prefer the file recorded in the project JSON
-        self.sparam_viewer.set_work_dir(self._project_work_dir())
+        # scope the browser/auto-load to the active run of the current project
+        self.sparam_viewer.set_work_dir(self._result_data_root())
         recorded = self._existing_path((self.project.results or {}).get("sparams"))
         if recorded is not None and self.sparam_viewer.network is None:
             try:
@@ -2683,7 +2749,7 @@ class MainWindow(QMainWindow):
         from app.ui.sparam_viewer import find_latest_sparam_files
 
         try:
-            files = find_latest_sparam_files(self._project_work_dir())
+            files = find_latest_sparam_files(self._result_data_root())
         except Exception:  # noqa: BLE001
             files = []
         if not files:
@@ -2694,7 +2760,7 @@ class MainWindow(QMainWindow):
             self._log(f"Could not auto-load S-params: {e}")
 
     def _on_popout_sparams(self) -> None:
-        self.sparam_viewer.set_work_dir(self._project_work_dir())
+        self.sparam_viewer.set_work_dir(self._result_data_root())
         recorded = self._existing_path((self.project.results or {}).get("sparams"))
         if recorded is not None and self.sparam_viewer.network is None:
             try:
@@ -2722,11 +2788,13 @@ class MainWindow(QMainWindow):
             )
             return
         proj_dir = self._project_work_dir()
+        data_dir = self._result_data_root()
         target = next(
             (
                 c
                 for c in (
                     self._existing_path((self.project.results or {}).get("nf2ff")),
+                    self._existing_path(data_dir / "nf2ff" / "nf2ff.json"),
                     self._existing_path(proj_dir / "nf2ff" / "nf2ff.json"),
                     self._existing_path(proj_dir / "simulation" / "nf2ff" / "nf2ff.json"),
                 )
@@ -2865,7 +2933,7 @@ class MainWindow(QMainWindow):
         if viewer is None:
             return
         try:
-            work = self._project_work_dir()
+            work = self._result_data_root()
             unit = self.project.mesh.unit_to_meters() if self.project else 1e-3
             prims = list(self.primitives or [])
             same = (
@@ -2901,7 +2969,7 @@ class MainWindow(QMainWindow):
     def _on_export_vtk(self) -> None:
         """Convert the project's field dumps to VTK and show them."""
         try:
-            self.vtk_viewer.set_work_dir(self._project_work_dir())
+            self.vtk_viewer.set_work_dir(self._result_data_root())
             self.vtk_viewer.set_geometry(
                 self.primitives,
                 unit_m=self.project.mesh.unit_to_meters() if self.project else 1e-3,
@@ -3765,24 +3833,45 @@ class MainWindow(QMainWindow):
             self._log(f"Result viewers cleared ({reason})")
 
     def _discard_result_state(self, reason: str) -> None:
-        """Forget old results before a new run / new project.
+        """Clear the viewers before a new run, but keep committed results.
 
-        Files stay on disk (the user may still open them explicitly), but the
-        viewers and the project's recorded result paths are cleared.  Without
-        this an aborted run kept showing the previous S-parameters, and the
-        "missing results" branch even auto-loaded the newest old file.
+        The active run pointed to by ``project.results`` is intentionally not
+        cleared: a failed/aborted new run must leave the last good result
+        intact.  Only the staging folder and the viewer contents are
+        transient.
         """
         self._allow_auto_results = False
         self._allow_auto_nf2ff = False
-        self.project.results = {}
         self._last_sim_report_text = ""
         self._clear_result_viewers(reason, include_mesh=False)
+
+    def _confirm_replace_staged_run(self) -> bool:
+        """A new run replaces only an *uncommitted* staging folder."""
+        staged = self._staged_run_dir
+        if staged is None or not Path(staged).is_dir():
+            return True
+        reply = QMessageBox.question(
+            self,
+            "Uncommitted staged results",
+            "A previous run is still staged and has not been committed.\n\n"
+            "Discard it and start the new run? The active committed run is "
+            "not affected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
+        self._discard_staged_run(reason="replaced by a new run")
+        return True
 
     def _on_new(self) -> None:
         self.project = Project.new_default("untitled")
         self.project.results = {}
         self.primitives = []
         self._current_file_path = None
+        self._staged_run_dir = None
+        self._staged_run_status = ""
+        self._project_store_obj = None
         # forget the previous project's mesh signature: a new project starts
         # empty and must not reuse a leftover work/untitled/csx.xml
         self._mesh_sig = None
@@ -3802,6 +3891,7 @@ class MainWindow(QMainWindow):
         self._refresh_tree()
         self._update_window_title()
         self._mark_project_saved()
+        self._update_run_actions()
         self._log("New project created (generic — not patch-specific)")
 
     def _on_open(self) -> None:
@@ -3816,6 +3906,9 @@ class MainWindow(QMainWindow):
         """Load a project file and restore the viewers from its last results."""
         try:
             self._current_file_path = Path(path)
+            self._staged_run_dir = None
+            self._staged_run_status = ""
+            self._project_store_obj = None
             self._mesh_sig = None  # different project -> loaded CSX is unknown
             self.project = Project.load(path)
             # Layout rule (see _project_work_dir): the JSON sits one level above
@@ -3889,6 +3982,12 @@ class MainWindow(QMainWindow):
                 print("recent projects update failed:", e)
             self._load_last_results()
             self._mark_project_saved()
+            self._update_run_actions()
+            try:
+                if QApplication.platformName().lower() not in ("offscreen", "minimal"):
+                    self._recover_staged_runs()
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as e:
             import traceback
 
@@ -3989,6 +4088,339 @@ class MainWindow(QMainWindow):
             return Path(self._current_file_path)
         work = self._project_work_dir()
         return work.parent / f"{work.name}.fcsim.json"
+
+    # ------------------------------------------------- transactional storage
+    def _project_store(self) -> ProjectStore:
+        """Store for the current project data folder (staging/runs/meshes)."""
+        root = self._project_work_dir()
+        if self._project_store_obj is None or self._project_store_obj.root != root:
+            self._project_store_obj = ProjectStore(root)
+        return self._project_store_obj
+
+    def _active_run_dir(self) -> Path | None:
+        """Committed run the project JSON points at (if it still exists)."""
+        try:
+            run = self._project_store().active_run_dir(self.project.results)
+        except Exception:  # noqa: BLE001
+            return None
+        if run is None:
+            return None
+        return run if self._path_within(run, self._project_work_dir()) else None
+
+    def _result_data_root(self) -> Path:
+        """Folder whose results the viewers should show.
+
+        Staged results (if any) win while they are being inspected; after a
+        commit/discard the committed active run or the legacy root is used.
+        """
+        staged = self._staged_run_dir
+        if staged is not None and Path(staged).is_dir():
+            return Path(staged)
+        return self._active_run_dir() or self._project_work_dir()
+
+    def _fresh_staged_run(self) -> Path:
+        """Create the staging folder for a Build/Run; old runs are untouched."""
+        if self._staged_run_dir is not None and Path(self._staged_run_dir).exists():
+            raise RuntimeError(
+                "There are staged results that have not been committed or "
+                "discarded yet."
+            )
+        staging = self._project_store().new_staging("run")
+        self._staged_run_dir = staging
+        self._staged_run_status = "running"
+        self._update_run_actions()
+        return staging
+
+    def _run_metadata(self) -> dict:
+        return {
+            "project_id": str(self.project.project_id or ""),
+            "project_name": str(self.project.name or ""),
+            "status": str(self._staged_run_status or "complete"),
+            "source": str(self._staged_run_dir or ""),
+        }
+
+    def _result_paths_for_run(
+        self, root: Path, run_dir: Path, status: str = "complete"
+    ) -> dict:
+        """Result record for a committed run folder (relative active pointer)."""
+        root = Path(root)
+        run_dir = Path(run_dir)
+        rec: dict = {
+            # Keep absolute in memory; Project.save() turns it into a path
+            # relative to the project JSON (like every other results entry).
+            "active_run": str(run_dir),
+            "run_id": run_dir.name,
+            "status": str(status or "complete"),
+            "project_dir": str(root),
+            "sim_dir": str(run_dir),
+            "time": datetime.now().isoformat(timespec="seconds"),
+        }
+        csx = run_dir / "csx.xml"
+        if csx.exists():
+            rec["csx_xml"] = str(csx)
+        sparams = self._find_sparams_files(root, run_dir)
+        if sparams:
+            rec["sparams"] = str(sparams[-1])
+        nf2ff = run_dir / "nf2ff" / "nf2ff.json"
+        if nf2ff.exists():
+            rec["nf2ff"] = str(nf2ff)
+        return rec
+
+    def _set_active_run_results(self, run_dir: Path, status: str = "complete") -> None:
+        """Point the project at a committed run and refresh the result paths."""
+        self.project.results = self._result_paths_for_run(
+            self._project_work_dir(), Path(run_dir), status=status
+        )
+
+    def _update_run_actions(self) -> None:
+        """Enable/disable the explicit staging actions."""
+        staged = self._staged_run_dir
+        has_staged = bool(staged is not None and Path(staged).is_dir())
+        busy = bool(
+            self.runner.is_running() or getattr(self, "_multi_plans", None) is not None
+        )
+        for name in ("act_commit_results", "act_discard_results", "act_open_staging"):
+            action = getattr(self, name, None)
+            if action is not None:
+                action.setEnabled(has_staged and not busy)
+        if has_staged:
+            self.statusBar().showMessage(
+                "Staged run ready — Simulation → Commit staged results"
+            )
+        elif self._active_run_dir() is not None:
+            self.statusBar().showMessage("Ready (committed run active)")
+        else:
+            self.statusBar().showMessage("Ready")
+
+    def _discard_staged_run(self, *, reason: str = "discarded") -> None:
+        """Delete only the staging folder; committed runs stay untouched."""
+        staging = self._staged_run_dir
+        self._staged_run_dir = None
+        self._staged_run_status = ""
+        if staging is not None and Path(staging).exists():
+            try:
+                self._project_store().discard(staging)
+                self._log(f"Staged results {reason}: {staging}")
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not remove staged results {staging}: {e}")
+        self._update_run_actions()
+
+    def _commit_staged_run(self) -> Path | None:
+        """Publish staging as a new immutable run and make it the active run."""
+        staging = self._staged_run_dir
+        if staging is None or not Path(staging).is_dir():
+            QMessageBox.information(
+                self, "Commit results", "There are no staged results to commit."
+            )
+            return None
+        if self._current_file_path is None:
+            self._log(
+                "Commit results: save the project first so the run has a home."
+            )
+            self._on_save_as()
+            return None
+        status = str(self._staged_run_status or "complete")
+        try:
+            run_dir = self._project_store().commit(
+                staging,
+                kind="run",
+                metadata=self._run_metadata(),
+            )
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Commit results failed", str(e))
+            self._log(f"Commit results failed: {e}")
+            return None
+        self._staged_run_dir = None
+        self._staged_run_status = ""
+        self._set_active_run_results(run_dir, status=status)
+        # Committing is an explicit save of the result pointer + definition.
+        self.project.primitives = list(self.primitives)
+        try:
+            self.project.save(self._current_file_path)
+            self._ensure_project_dir()
+            self._mark_project_saved()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"WARNING: project JSON could not be saved after commit: {e}")
+        self._log(f"Committed run: {run_dir} (active)")
+        self._update_run_actions()
+        self._load_last_results()
+        return run_dir
+
+    def _on_commit_staged_results(self) -> None:
+        if self.runner.is_running() or getattr(self, "_multi_plans", None) is not None:
+            QMessageBox.warning(self, "Busy", "A simulation is still running.")
+            return
+        if self._staged_run_dir is None or not Path(self._staged_run_dir).is_dir():
+            return
+        if self._staged_run_status == "failed":
+            reply = QMessageBox.question(
+                self,
+                "Commit failed run?",
+                "The staged run is marked as failed/aborted.\n\n"
+                "Commit it anyway for later inspection? The active result set "
+                "will be replaced in the project pointer.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        if self._current_file_path is None:
+            self._log(
+                "Commit results: the project has no file yet — choose Save As first."
+            )
+            self._on_save_as()
+            return
+        self._commit_staged_run()
+
+    def _on_discard_staged_results(self) -> None:
+        if self.runner.is_running() or getattr(self, "_multi_plans", None) is not None:
+            QMessageBox.warning(self, "Busy", "A simulation is still running.")
+            return
+        if self._staged_run_dir is None:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Discard staged results",
+            f"Delete the uncommitted staging folder?\n\n{self._staged_run_dir}\n\n"
+            "Committed runs and the active project results are not touched.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._discard_staged_run(reason="discarded by the user")
+        self._load_last_results()
+
+    def _on_open_staged_results(self) -> None:
+        staged = self._staged_run_dir
+        if staged is None or not Path(staged).exists():
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(staged)))
+
+    def _on_show_run_history(self) -> None:
+        """List immutable runs; switch the active run without deleting any."""
+        import json
+
+        store = self._project_store()
+        runs = store.list_runs()
+        if not runs:
+            QMessageBox.information(
+                self,
+                "Run history",
+                "No committed runs yet. Run a simulation and use "
+                "'Commit staged results'.",
+            )
+            return
+        active = self._active_run_dir()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Run history")
+        dlg.resize(620, 380)
+        layout = QVBoxLayout(dlg)
+        listing = QListWidget()
+        for run in runs:
+            manifest: dict = {}
+            try:
+                manifest = json.loads(
+                    (run / "manifest.json").read_text(encoding="utf-8")
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            status = str(manifest.get("status") or "?")
+            created = str(manifest.get("created") or "")[:19].replace("T", " ")
+            mark = "● " if active is not None and run == active else "  "
+            item = QListWidgetItem(
+                f"{mark}{run.name}  [{status}]  {created}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, str(run))
+            item.setToolTip(str(run))
+            listing.addItem(item)
+            if active is not None and run == active:
+                listing.setCurrentItem(item)
+        layout.addWidget(listing, 1)
+        row = QHBoxLayout()
+        btn_active = QPushButton("Set as active")
+        btn_open = QPushButton("Open folder")
+        btn_close = QPushButton("Close")
+        row.addWidget(btn_active)
+        row.addWidget(btn_open)
+        row.addStretch(1)
+        row.addWidget(btn_close)
+        layout.addLayout(row)
+
+        def _selected() -> Path | None:
+            item = listing.currentItem()
+            if item is None:
+                return None
+            raw = item.data(Qt.ItemDataRole.UserRole)
+            return Path(str(raw)) if raw else None
+
+        def _set_active() -> None:
+            run = _selected()
+            if run is None or not run.is_dir():
+                return
+            manifest: dict = {}
+            try:
+                manifest = json.loads(
+                    (run / "manifest.json").read_text(encoding="utf-8")
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            self._set_active_run_results(
+                run, status=str(manifest.get("status") or "complete")
+            )
+            self.project.primitives = list(self.primitives)
+            try:
+                if self._current_file_path:
+                    self.project.save(self._current_file_path)
+                    self._mark_project_saved()
+            except Exception as e:  # noqa: BLE001
+                self._log(f"WARNING: could not save active run pointer: {e}")
+            self._load_last_results()
+            self._update_run_actions()
+            self._log(f"Active run switched to {run.name}")
+            dlg.accept()
+
+        def _open() -> None:
+            run = _selected()
+            if run is not None:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(run)))
+
+        btn_active.clicked.connect(_set_active)
+        btn_open.clicked.connect(_open)
+        btn_close.clicked.connect(dlg.reject)
+        dlg.exec()
+
+    def _recover_staged_runs(self) -> None:
+        """Offer to keep or discard staging folders left by an earlier session."""
+        try:
+            stale = [
+                p
+                for p in self._project_store().list_staging()
+                if self._staged_run_dir is None or p != self._staged_run_dir
+            ]
+        except Exception:  # noqa: BLE001
+            return
+        if not stale:
+            return
+        # Do not delete automatically: a crashed solver run may be the only
+        # copy of a diagnosis.  Ask once; "Keep" leaves it in staging.
+        names = ", ".join(p.name for p in stale[:4])
+        if len(stale) > 4:
+            names += ", …"
+        reply = QMessageBox.question(
+            self,
+            "Uncommitted staged results",
+            f"Staging folder(s) from an earlier session were found:\n{names}\n\n"
+            "Keep them for recovery? (No = discard them.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply == QMessageBox.StandardButton.No:
+            for p in stale:
+                try:
+                    self._project_store().discard(p)
+                except Exception as e:  # noqa: BLE001
+                    self._log(f"Could not discard stale staging {p}: {e}")
 
     def _backup_project_before_run(self) -> Path | None:
         """Copy the current project JSON to ``<stem>.fcsim.json.bak``.
@@ -4093,10 +4525,14 @@ class MainWindow(QMainWindow):
         ``Project.name`` (e.g. "untitled") must never pull in another project's
         data when the real results were deleted.
         """
-        dirs = [Path(project_dir) / "sparams"]
+        # An explicit sim_dir is the active committed run (or the staging
+        # folder during a run) and must win over legacy files in the root.
+        dirs = []
         if sim_dir is not None:
-            dirs.append(Path(sim_dir))
-        dirs.append(Path(project_dir) / "simulation")
+            # A committed run keeps its S-params in <run>/sparams; the legacy
+            # simulation folder keeps them directly in <sim>/.
+            dirs.extend([Path(sim_dir) / "sparams", Path(sim_dir)])
+        dirs.extend([Path(project_dir) / "sparams", Path(project_dir) / "simulation"])
         for d in dirs:
             for pat in ("sparams.s*p", "sparams.json"):
                 hits = sorted(d.glob(pat))
@@ -4112,21 +4548,33 @@ class MainWindow(QMainWindow):
         """
         project_dir = Path(project_dir) if project_dir else self._project_work_dir()
         sim_dir = project_dir / "simulation"  # legacy layout
+        active = self._active_run_dir()
+        if active is not None:
+            sim_dir = active
         out: dict[str, Any] = {
             "project_dir": str(project_dir),
             "sim_dir": str(sim_dir),
         }
-        csx = project_dir / "csx.xml"
-        if not csx.exists():
-            csx = sim_dir / "csx.xml"
-        if csx.exists():
-            out["csx_xml"] = str(csx)
+        if active is not None:
+            out["active_run"] = str(active)
+            out["run_id"] = active.name
+        # A run's CSX lives in its own folder; a Build Mesh may also write the
+        # project-root csx.xml.  Keep them separate so a rebuild cannot make
+        # an older committed run look like the current one.
+        run_csx = sim_dir / "csx.xml"
+        if run_csx.exists():
+            out["csx_xml"] = str(run_csx)
+        mesh_csx = project_dir / "csx.xml"
+        if mesh_csx.exists() and (not run_csx.exists() or mesh_csx != run_csx):
+            out["mesh_xml"] = str(mesh_csx)
+        if "csx_xml" not in out and mesh_csx.exists():
+            out["csx_xml"] = str(mesh_csx)
         sparams = self._find_sparams_files(project_dir, sim_dir)
         if sparams:
             out["sparams"] = str(sparams[-1])
-        nf2ff = project_dir / "nf2ff" / "nf2ff.json"
+        nf2ff = sim_dir / "nf2ff" / "nf2ff.json"
         if not nf2ff.exists():
-            nf2ff = sim_dir / "nf2ff" / "nf2ff.json"
+            nf2ff = project_dir / "nf2ff" / "nf2ff.json"
         if nf2ff.exists():
             out["nf2ff"] = str(nf2ff)
         return out
@@ -4408,7 +4856,9 @@ class MainWindow(QMainWindow):
             )
             rec = {}
         project_dir = expected_dir
-        sim_dir = project_dir / "simulation"
+        active_run = self._active_run_dir()
+        data_dir = active_run or project_dir
+        sim_dir = active_run or project_dir / "simulation"
         loaded: list[str] = []
         cleared: list[str] = []
 
@@ -4427,7 +4877,7 @@ class MainWindow(QMainWindow):
             cleared.append("mesh")
 
         # --- S-param Viewer: recorded file, else newest of THIS project -----
-        self.sparam_viewer.set_work_dir(project_dir)
+        self.sparam_viewer.set_work_dir(data_dir)
         recorded = self._existing_path(rec.get("sparams"))
         if recorded is not None and not self._path_within(recorded, project_dir):
             self._log(f"Ignoring S-params outside the project folder: {recorded}")
@@ -4459,6 +4909,7 @@ class MainWindow(QMainWindow):
                 c
                 for c in (
                     self._existing_path(rec.get("nf2ff")),
+                    self._existing_path(data_dir / "nf2ff" / "nf2ff.json"),
                     self._existing_path(project_dir / "nf2ff" / "nf2ff.json"),
                     self._existing_path(sim_dir / "nf2ff" / "nf2ff.json"),
                 )
@@ -4479,7 +4930,7 @@ class MainWindow(QMainWindow):
             cleared.append("NF2FF")
 
         # --- Field Viewer (VTK): newest exported dump of THIS project -------
-        self.vtk_viewer.set_work_dir(project_dir)
+        self.vtk_viewer.set_work_dir(data_dir)
         try:
             # The work-dir fallback geometry may be stale or absent; the opened
             # project owns the authoritative primitive list.
@@ -4489,7 +4940,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as e:  # noqa: BLE001 - never block a project load
             self._log(f"Field Viewer geometry update failed: {e}")
-        series = self._find_field_series(project_dir)
+        series = self._find_field_series(data_dir)
         ok = False
         if series is not None:
             try:
@@ -4523,6 +4974,12 @@ class MainWindow(QMainWindow):
             self._update_window_title()
             self._mark_project_saved()
             self._log(f"Saved {saved}")
+            if self._staged_run_dir is not None:
+                self._log(
+                    "Staged results were not committed — use Simulation → "
+                    "Commit staged results when they are ready."
+                )
+            self._update_run_actions()
             return
         # No known file yet — behave like Save As
         self._on_save_as()
@@ -4551,6 +5008,13 @@ class MainWindow(QMainWindow):
     def _on_save_as(self) -> None:
         self._sync_project_from_form()
         self.project.primitives = list(self.primitives)
+        if self.runner.is_running():
+            QMessageBox.warning(
+                self,
+                "Save As",
+                "A simulation is running. Abort it before saving under a new name.",
+            )
+            return
         initial = str(
             self._current_file_path
             if self._current_file_path
@@ -4564,26 +5028,95 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        self._current_file_path = Path(path)
-        # From now on the project has a real name; Save As may ask before
-        # overwriting an existing file.
-        project_name = Path(path).name
+        new_path = Path(path)
+        if self._current_file_path is not None and self._same_path(
+            new_path, self._current_file_path
+        ):
+            self._on_save()
+            return
+
+        project_name = new_path.name
         for suffix in (".fcsim.json", ".json"):
             if project_name.endswith(suffix):
                 project_name = project_name[: -len(suffix)]
                 break
+        new_root = new_path.parent / (project_name or "project")
+        old_store = self._project_store()
+        staged = self._staged_run_dir
+        new_results: dict = {}
+        published: Path | None = None
+        old_staging = staged
+        status = str(self._staged_run_status or "complete")
+        import uuid
+
+        new_project_id = uuid.uuid4().hex
+        if staged is not None and Path(staged).is_dir():
+            try:
+                new_store = ProjectStore(new_root)
+                metadata = self._run_metadata()
+                metadata["project_id"] = new_project_id
+                metadata["project_name"] = project_name or "project"
+                published = new_store.publish_copy(
+                    staged, kind="run", metadata=metadata
+                )
+                new_results = self._result_paths_for_run(
+                    new_root, published, status
+                )
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.critical(
+                    self, "Save As failed", f"Could not copy staged results:\n{e}"
+                )
+                self._log(f"Save As: staged result copy failed: {e}")
+                return
+        else:
+            new_store = None
+
+        # Only now touch the open project: the old project file and its data
+        # folder are left exactly as they were.
+        self._current_file_path = new_path
         self.project.name = project_name or self.project.name
-        saved = self.project.save(path)
+        self.project.project_id = new_project_id
+        self._project_store_obj = new_store
+        self.project.results = new_results
+        try:
+            saved = self.project.save(new_path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Save As failed", str(e))
+            self._log(f"Save As failed: {e}")
+            return
         self._ensure_project_dir()
+        if old_staging is not None and Path(old_staging).exists():
+            try:
+                old_store.discard(old_staging)
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Could not discard old staging {old_staging}: {e}")
+        self._staged_run_dir = None
+        self._staged_run_status = ""
         self._update_window_title()
         self._mark_project_saved()
-        self._log(f"Saved {saved}")
+        self._log(
+            f"Saved As {saved}"
+            + (
+                f" — staged run copied as {published}"
+                if published is not None
+                else " — new project starts without results (no staged run)"
+            )
+        )
         try:
             self.settings.remember_project(saved)
             self.settings.save()
             self._refresh_recent_projects()
         except Exception as e:  # noqa: BLE001
             print("recent projects update failed:", e)
+        if published is not None:
+            self._load_last_results()
+        else:
+            # A definition-only Save As must not pick up legacy result files
+            # that happen to exist in the new folder.
+            self._clear_result_viewers("save as (no staged results)")
+            self._mesh_sig = None
+            self.sparam_viewer.set_work_dir(self._project_work_dir())
+        self._update_run_actions()
 
     def _object_names_for_dialog(self) -> list[str]:
         names: list[str] = []
@@ -7466,10 +7999,18 @@ class MainWindow(QMainWindow):
             self._log(f"Mesh Viewer critical cells failed: {e}")
         # A new/aborted project must not pick up old S-params or NF2FF files
         # from a reused work folder just because the mesh is rebuilt.
-        self._record_results(
-            save=False,
-            only=None if self._allow_auto_results else {"csx_xml"},
-        )
+        # If a committed run is active, only note the interactive mesh in a
+        # separate ``mesh_xml`` entry: the run's csx.xml stays authoritative.
+        if self._active_run_dir() is not None:
+            self.project.results = dict(self.project.results or {})
+            mesh_xml = self._project_work_dir() / "csx.xml"
+            if mesh_xml.exists():
+                self.project.results["mesh_xml"] = str(mesh_xml)
+        else:
+            self._record_results(
+                save=False,
+                only=None if self._allow_auto_results else {"csx_xml"},
+            )
         return text
 
     def _prepare_run_state(self, work: Path) -> None:
@@ -7490,21 +8031,19 @@ class MainWindow(QMainWindow):
             )
 
     def _generate_script(self, work: Path) -> Path:
-        """Save the project JSON outside ``work`` and write ``work/project_run.py``.
+        """Write ``work/project_run.py`` without touching the project file.
 
-        The project file is always the sibling ``<work>.fcsim.json`` (one level
-        above the data folder), never ``<work>/project.fcsim.json``.  Hand-edits
-        of the previous script are detected via the pristine
+        The run gets its own snapshot (``project_copy.json``) inside the
+        staging folder.  The user's project JSON is only written by an explicit
+        Save / Commit, so starting a run cannot modify the saved project.
+        Hand-edits of the previous script are detected via the pristine
         project_run.py.lastgen copy and backed up to project_run_edited.py.
         """
         project_path = self._project_file_path()
-        project_path.parent.mkdir(parents=True, exist_ok=True)
-        project_path = self.project.save(project_path)
-        if not self._current_file_path:
-            self._current_file_path = Path(project_path)
-            self._update_window_title()
         previous = _read_text(work / "project_run.py")
-        script = generate_run_script(self.project, project_path, work, primitives=self.primitives)
+        script = generate_run_script(
+            self.project, project_path, work, primitives=self.primitives
+        )
         self._note_script_backup(work, previous)
         return script
 
@@ -7583,9 +8122,16 @@ class MainWindow(QMainWindow):
         return current is not None and lastgen is not None and current != lastgen
 
     def _run_script_for(self, work: Path) -> Path:
-        """Regenerate project_run.py, or keep hand-edits when the user wants that."""
+        """Regenerate project_run.py, or keep hand-edits when the user wants that.
+
+        The Script… editor edits the project-level ``project_run.py``.  A new
+        run always regenerates into its staging folder; if the project script
+        was hand-edited, the user is asked and (on "No") the edited file is
+        copied into the run staging folder unchanged.
+        """
+        project_script = self._project_work_dir() / "project_run.py"
         script_path = work / "project_run.py"
-        if self._script_has_edits(work):
+        if self._script_has_edits(self._project_work_dir()) and project_script.exists():
             answer = QMessageBox.question(
                 self,
                 "Edited script",
@@ -7597,8 +8143,27 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes,
             )
             if answer == QMessageBox.StandardButton.No:
+                # The project-level script has WORK_DIR pointing at the
+                # project root; retarget it to this run's staging folder so an
+                # edited script cannot write into the committed data folder.
+                try:
+                    text = project_script.read_text(encoding="utf-8")
+                    text = text.replace(
+                        str(self._project_work_dir()), str(work)
+                    )
+                    script_path.write_text(text, encoding="utf-8", newline="\n")
+                except OSError:
+                    pass
                 self._log(f"Running your edited script as-is: {script_path}")
                 return script_path
+            try:
+                import shutil
+
+                backup = self._project_work_dir() / "project_run_edited.py"
+                shutil.copy2(project_script, backup)
+                self._log(f"Edited script backed up: {backup}")
+            except OSError:
+                pass
         script = self._generate_script(work)
         self._log(f"Generated script: {script}")
         return script
@@ -7609,12 +8174,18 @@ class MainWindow(QMainWindow):
         if self.runner.is_running() or self._multi_plans is not None:
             QMessageBox.warning(self, "Busy", "A simulation is already running.")
             return
+        if not self._confirm_replace_staged_run():
+            return
         self._discard_result_state("new simulation")
         self._begin_run_log("Run Simulation")
-        self._run_step("Preparing run (project, work dir, geometry)")
-        work = self._project_work_dir()
-        self._backup_project_before_run()
-        self._clean_project_data(work)
+        self._run_step("Preparing run (staging folder, geometry)")
+        try:
+            work = self._fresh_staged_run()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Run preparation failed", str(e))
+            self._log(f"Run preparation failed: {e}")
+            self._end_run_log("Run preparation failed")
+            return
         self._prepare_run_state(work)
         f0 = self.project.mesh.target_frequency or 2.45e9
         fc = max(1e6, 0.5 * abs(self.project.mesh.stop_frequency - self.project.mesh.start_frequency))
@@ -7633,6 +8204,7 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001 — e.g. locked old simulation folder
             QMessageBox.critical(self, "Run preparation failed", str(e))
             self._log(f"Run preparation failed: {e}")
+            self._discard_staged_run(reason="run preparation failed")
             self._end_run_log("Run preparation failed")
             return
         self._log(
@@ -7649,10 +8221,13 @@ class MainWindow(QMainWindow):
         try:
             # _log is thread-safe (queue only) — do not pass Signal.emit
             self.runner.start(script, log_cb=self._log)
+            self._update_run_actions()
             self._log("Simulation started")
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Run failed", str(e))
             self._log(f"Run failed: {e}")
+            self._staged_run_status = "failed"
+            self._update_run_actions()
             self._end_run_log("Run failed to start")
 
         # poll for finished sim and open S-param viewer (GUI thread only)
@@ -7698,7 +8273,7 @@ class MainWindow(QMainWindow):
                     # The file belongs to THIS run (fresh timestamp).  Load it
                     # even when the solver crashed, but mark it clearly as
                     # untrusted instead of claiming that no S-params exist.
-                    self.sparam_viewer.set_work_dir(self._project_work_dir())
+                    self.sparam_viewer.set_work_dir(work)
                     try:
                         self.sparam_viewer.load_path(found)
                         self._allow_auto_results = True
@@ -7715,8 +8290,7 @@ class MainWindow(QMainWindow):
                                 f"(exit {exit_code}); loaded as UNTRUSTED: {found}"
                             )
                         else:
-                            self._record_results(save=False)
-                            self._log(f"S-param results ready: {found}")
+                            self._log(f"S-param results ready (staged): {found}")
                     except Exception as e:  # noqa: BLE001
                         self.sparam_viewer.clear()
                         self._allow_auto_results = False
@@ -7757,6 +8331,19 @@ class MainWindow(QMainWindow):
                         "successfully. See the simulation status/report for details.\n\n"
                         f"Log: {log_path}",
                     )
+                if run_ok and found:
+                    self._staged_run_status = "complete"
+                elif found:
+                    self._staged_run_status = "failed"
+                else:
+                    self._staged_run_status = "failed"
+                self._update_run_actions()
+                if self._staged_run_dir is not None:
+                    self._log(
+                        f"Results are STAGED at {self._staged_run_dir} — use "
+                        "Simulation → Commit staged results to make them the "
+                        "active project result (old runs are kept)."
+                    )
                 self._publish_sim_report(
                     work, exit_code, log_path, include_sparams=bool(found)
                 )
@@ -7787,12 +8374,18 @@ class MainWindow(QMainWindow):
             self._log("Run All Ports: fewer than 2 ports — running the normal simulation")
             self._on_run()
             return
+        if not self._confirm_replace_staged_run():
+            return
         self._discard_result_state("new simulation (all ports)")
         self._begin_run_log("Run All Ports")
-        self._run_step("Preparing run (project, work dir, geometry)")
-        work = self._project_work_dir()
-        self._backup_project_before_run()
-        self._clean_project_data(work)
+        self._run_step("Preparing run (staging folder, geometry)")
+        try:
+            work = self._fresh_staged_run()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Run preparation failed", str(e))
+            self._log(f"Run preparation failed: {e}")
+            self._end_run_log("Run preparation failed")
+            return
         self._prepare_run_state(work)
         from app.simulation.multirun import plan_port_runs
 
@@ -7802,6 +8395,7 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Multi-run setup failed", str(e))
             self._log(f"Multi-run setup failed: {e}")
+            self._discard_staged_run(reason="multi-run setup failed")
             self._end_run_log("Run All Ports failed to start")
             return
         self._multi_plans = plans
@@ -7828,10 +8422,13 @@ class MainWindow(QMainWindow):
                 plan.script_path,
                 log_cb=lambda line, _n=plan.port_name: self._log(f"[{_n}] {line}"),
             )
+            self._update_run_actions()
         except Exception as e:  # noqa: BLE001
             self._log(f"Multi-run start failed ({plan.port_name}): {e}")
             QMessageBox.critical(self, "Run failed", str(e))
             self._multi_plans = None
+            self._staged_run_status = "failed"
+            self._update_run_actions()
             self._end_run_log("Run All Ports failed to start")
             return
         if self._multi_timer is None:
@@ -7863,11 +8460,14 @@ class MainWindow(QMainWindow):
 
         plans = self._multi_plans or []
         self._multi_plans = None
-        work = self._project_work_dir()
+        work = self._staged_run_dir or self._project_work_dir()
         if getattr(self, "_abort_requested", False):
             self._log(
-                "Run All Ports aborted by the user — partial results are not merged"
+                "Run All Ports aborted by the user — partial results remain in "
+                f"staging: {work}"
             )
+            self._staged_run_status = "failed"
+            self._update_run_actions()
             self.sparam_viewer.clear()
             self._allow_auto_results = False
             self._end_run_log("Run All Ports aborted")
@@ -7878,6 +8478,8 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             self._log(f"Multi-run merge failed: {e}")
             QMessageBox.warning(self, "Merge failed", str(e))
+            self._staged_run_status = "failed"
+            self._update_run_actions()
             self.sparam_viewer.clear()
             self._allow_auto_results = False
             self._end_run_log("Run All Ports failed while merging")
@@ -7891,7 +8493,7 @@ class MainWindow(QMainWindow):
         for line in summarise_table(result["table"]):
             self._log(line)
         self._log(f"Merged outputs: {result['written']}")
-        self._record_results()
+        self._staged_run_status = "partial" if result["missing"] else "complete"
         try:
             found = self._find_sparams_files(work)
             if found:
@@ -7900,13 +8502,19 @@ class MainWindow(QMainWindow):
                 self._allow_auto_results = True
                 if self.sparam_tab_index >= 0:
                     self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
-                self._log(f"S-param results ready: {found[-1]}")
+                self._log(f"S-param results ready (staged): {found[-1]}")
             else:
                 self.sparam_viewer.clear()
                 self._allow_auto_results = False
         except Exception as e:  # noqa: BLE001 — merge succeeded, viewer is best-effort
             self._allow_auto_results = False
             self._log(f"S-param viewer update failed: {e}")
+        self._update_run_actions()
+        if self._staged_run_dir is not None:
+            self._log(
+                f"Merged S-matrix is STAGED at {self._staged_run_dir} — use "
+                "Simulation → Commit staged results (old runs are kept)."
+            )
         self._publish_sim_report(
             work, getattr(self.runner, "last_exit", None),
             getattr(self.runner, "log_path", None),

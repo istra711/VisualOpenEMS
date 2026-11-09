@@ -75,6 +75,7 @@ def main() -> int:
     settings.work_dir = str(tmp)
     win = MainWindow(settings)
     win.project.name = "mrtest"
+    win._current_file_path = tmp / "mrtest.fcsim.json"
     win.primitives = [
         {
             "kind": "box",
@@ -108,12 +109,20 @@ def main() -> int:
     assert len(fake.started) == 2, fake.started
 
     work = tmp / "mrtest"
-    merged = work / "sparams" / "sparams.json"
-    assert merged.exists(), f"merged sparams.json missing under {work}"
+    staging = win._staged_run_dir
+    assert staging is not None and staging.is_dir(), "multi-run did not stay staged"
+    merged = staging / "sparams" / "sparams.json"
+    assert merged.exists(), f"merged sparams.json missing under {staging}"
     table = json.loads(merged.read_text(encoding="utf-8"))
     for key in ("S11", "S21", "S12", "S22"):
         assert key in table, (key, list(table))
-    assert (work / "sparams" / "sparams.s2p").exists(), "complete .s2p not written"
+    assert (staging / "sparams" / "sparams.s2p").exists(), "complete .s2p not written"
+
+    # Nothing is active until the user explicitly commits.
+    assert not (win.project.results or {}).get("active_run")
+    run = win._commit_staged_run()
+    assert run is not None and (run / "sparams" / "sparams.s2p").is_file()
+    assert (win.project.results or {}).get("active_run")
 
     win.close()
     print("MULTIRUN SMOKE OK")

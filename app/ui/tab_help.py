@@ -430,14 +430,16 @@ Solver Parameters… (Simulation menu)
   • Threads (numThreads), EndCriteria (dB) and NrTS stay here.
 
 Run script (toolbar: Script…)
-  • Run Simulation writes work/<project>/project_run.py (plus project_copy.json,
-    geometry_primitives.json) — that file is what actually runs openEMS.
-  • Script… opens it for viewing/editing: Save, Revert, Regenerate from project.
-  • Apply in this window (or in Mesh Parameters) also refreshes an existing
-    script, so the editor always shows the current project state.
-  • Run regenerates the script; hand-edits are copied to project_run_edited.py and
-    you are asked whether to regenerate or run your edited script as-is.
-  • Run an edited script by hand:  <simulation python> work/<project>/project_run.py
+  • Run Simulation writes project_run.py + project_copy.json +
+    geometry_primitives.json into a fresh staging folder
+    (work/<project>/staging/run-…/). The saved project JSON is not modified by
+    starting a run.
+  • Script… edits the project-level work/<project>/project_run.py: Save, Revert,
+    Regenerate from project.
+  • Run regenerates the script in staging; if the project-level script was
+    hand-edited you are asked whether to regenerate or copy/run the edited file.
+  • Run an edited script by hand as usual; the staging copy is the authoritative
+    script of that run.
 
 Progress (status bar)
   • During a run the status bar shows TWO bars + a TS/energy label parsed from
@@ -452,9 +454,22 @@ Progress (status bar)
 
 Run All Ports (Simulation menu → Ctrl+Shift+R)
   • One FDTD run per port (each port excited once) → the complete S-matrix for
-    multi-port structures. Runs land in work/<project>/multi/port<n>/ and are
-    merged into work/<project>/sparams/sparams.json + .sNp. Needs ≥ 2 ports
-    (fewer falls back to a normal single run).
+    multi-port structures. Runs land in the staging folder
+    (staging/run-…/multi/port<n>/) and are merged into
+    staging/run-…/sparams/sparams.json + .sNp. Needs ≥ 2 ports (fewer falls
+    back to a normal single run).
+  • Staged results are not part of the project until "Commit staged results".
+
+Results: staging, commit, history
+  • Simulation → Commit staged results publishes the staged run under
+    <project>/runs/<run-id>/ and makes it the active result. Old runs are kept.
+  • Simulation → Discard staged results deletes only the staging folder.
+  • Simulation → Run history lists committed runs, opens their folders and
+    switches the active result set without deleting older runs.
+  • Save As creates a new project: staged results are copied into the new
+    project, the old project file/data folder stay untouched.
+  • The project JSON is written only by Save / Commit (plus explicit dialogs),
+    never as a side effect of starting a run or building a mesh.
 """,
     "Mesh Parameters": """MESH PARAMETERS — standalone window (Ctrl+Shift+M)
 
