@@ -875,15 +875,7 @@ Patchfläche.*
 
 *Field Viewer: 3D-Feldverteilung über dem Dual-Feed-SDARS-Patch.*
 
-![Vivaldi-Feld 1](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi1.jpg)
-
-*Field Viewer: Feld-Snapshot der Vivaldi-Antenne in der 3D-Szene.*
-
-![Vivaldi-Feld 2](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi3.jpg)
-
-*Field Viewer: weiterer Vivaldi-Zeitschritt aus der Wiedergabe.*
-
-![Vivaldi-Feld 3](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi4.jpg)
+![Vivaldi-Feld 1](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi4.jpg)
 
 *Field Viewer: Vivaldi-Feldschnitt mit Antennenstruktur und Feldbetrag.*
 

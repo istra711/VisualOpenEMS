@@ -864,15 +864,7 @@ patch area.*
 
 *Field Viewer: 3D field distribution over the dual-feed SDARS patch antenna.*
 
-![Vivaldi field 1](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi1.jpg)
-
-*Field Viewer: Vivaldi antenna field snapshot in the 3D scene.*
-
-![Vivaldi field 2](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi3.jpg)
-
-*Field Viewer: another Vivaldi field step from the playback series.*
-
-![Vivaldi field 3](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi4.jpg)
+![Vivaldi field 1](images/VisualopenEMS_GUI_3D-Field-Viewer_Vivaldi4.jpg)
 
 *Field Viewer: Vivaldi field slice with the antenna structure and field
 magnitude together.*
