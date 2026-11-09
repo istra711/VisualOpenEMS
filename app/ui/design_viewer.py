@@ -184,6 +184,12 @@ class Design3DViewer(VtkFieldViewer):
         )
         top.addWidget(self.btn_appcsxcad)
         top.addStretch(1)
+        self.lbl_project = QLabel("Project: Untitled")
+        self.lbl_project.setToolTip("Currently open VisualopenEMS project")
+        _pf = self.lbl_project.font()
+        _pf.setBold(True)
+        self.lbl_project.setFont(_pf)
+        top.addWidget(self.lbl_project)
         self._root_layout.addLayout(top)
 
         # Side panel -----------------------------------------------------
@@ -2245,18 +2251,26 @@ class DesignViewerWindow(QMainWindow):
     def __init__(self, source: Design3DViewer) -> None:
         super().__init__(None)
         self.source: Design3DViewer | None = source
+        self.project_name = getattr(source, "project_name", "Untitled")
         self.viewer = Design3DViewer(work_dir=source.work_dir)
+        self.viewer.set_project_name(self.project_name)
         self.viewer.btn_popout.setVisible(False)
         self.viewer.open_appcsxcad_requested.connect(
             lambda: self.source.open_appcsxcad_requested.emit()
             if self.source is not None
             else None
         )
-        self.setWindowTitle("3D Design - pop-out")
         self.resize(1120, 820)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setCentralWidget(self.viewer)
         self._copy_from(source)
+        self.set_project_name(self.project_name)
+
+    def set_project_name(self, name: str) -> None:
+        self.project_name = str(name or "").strip() or "Untitled"
+        self.setWindowTitle(f"3D Design — {self.project_name}")
+        if self.viewer is not None:
+            self.viewer.set_project_name(self.project_name)
 
     def _copy_from(self, source: Design3DViewer) -> None:
         self.viewer.chk_geom.setChecked(source.chk_geom.isChecked())

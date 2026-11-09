@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Project name in every viewer**: the Mesh Viewer, 3D Design, S-Params,
+  Antenna and Field Viewer headers show `Project: <name>`, and their pop-out
+  window titles carry the same name. It updates automatically after New, Open
+  and Save As.
+
 ## [0.11.0] - 2026-11-09
 
 ### Added

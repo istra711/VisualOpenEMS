@@ -82,6 +82,10 @@ Schritt-für-Schritt: **[docs/FREECAD_PORTS_DE.md](FREECAD_PORTS_DE.md)**
 
 **Hauptfenster beim Start.** Tabs Geometry / Mesh Viewer / S-Params / Antenna / Field Viewer, links der Projektbaum, in der Mitte die Import- und Materialbereiche, unten Log und Mesh-Report.
 
+Jeder Viewer-Kopf zeigt **Project: &lt;Name&gt;**; auch die Pop-out-Titel von
+Mesh Viewer, 3D Design, S-Params, Antenna und Field Viewer enthalten den
+aktuellen Projektnamen. Er folgt New / Open / Save As automatisch.
+
 
 ```text
 C:\Users\istra\Documents\claude_ps\FreeCAD_OpenEMS_GUI

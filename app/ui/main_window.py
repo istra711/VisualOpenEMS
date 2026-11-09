@@ -172,6 +172,28 @@ class MainWindow(QMainWindow):
         path = getattr(self, "_current_file_path", None)
         suffix = f"  —  {Path(path).name}" if path else ""
         self.setWindowTitle(f"VisualopenEMS — {name}{suffix}")
+        self._update_viewer_project_names(name)
+
+    def _update_viewer_project_names(self, name: str | None = None) -> None:
+        """Push the current project name into every embedded/pop-out viewer."""
+        label = str(
+            name
+            if name is not None
+            else getattr(self.project, "name", "Untitled") or "Untitled"
+        ).strip() or "Untitled"
+        for attr in (
+            "mesh_viewer",
+            "design_viewer",
+            "sparam_viewer",
+            "antenna_viewer",
+            "vtk_viewer",
+        ):
+            viewer = getattr(self, attr, None)
+            if viewer is not None and hasattr(viewer, "set_project_name"):
+                try:
+                    viewer.set_project_name(label)
+                except Exception as e:  # noqa: BLE001 - labels must not block
+                    print(f"{attr} project label update failed:", e)
 
     def _screen_avail(self):
         screen = self.screen()
@@ -2933,7 +2955,11 @@ class MainWindow(QMainWindow):
         if viewer is None:
             return
         try:
-            work = self._result_data_root()
+            work = (
+                self._result_data_root()
+                if hasattr(self, "_result_data_root")
+                else self._project_work_dir()
+            )
             unit = self.project.mesh.unit_to_meters() if self.project else 1e-3
             prims = list(self.primitives or [])
             same = (

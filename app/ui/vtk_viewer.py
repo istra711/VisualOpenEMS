@@ -576,23 +576,34 @@ class FieldViewerWindow(QMainWindow):
     def __init__(self, source: "VtkFieldViewer") -> None:
         super().__init__(None)
         self.source: VtkFieldViewer | None = source
+        self.project_name = getattr(source, "project_name", "Untitled")
+        self._field_suffix = ""
         self.viewer = VtkFieldViewer(work_dir=source.work_dir)
+        self.viewer.set_project_name(self.project_name)
         self.viewer.btn_popout.setVisible(False)  # no nested pop-outs
         self.viewer.on_axes_changed = self._on_viewer_axes_changed
         self.viewer.on_view_changed = self._on_viewer_view_changed
         self.viewer.on_vectors_changed = self._on_viewer_vectors_changed
         self.viewer.on_streamlines_changed = self._on_viewer_streamlines_changed
         self.viewer.on_color_scale_changed = self._on_viewer_color_scale_changed
-        self.setWindowTitle("Field Viewer - pop-out")
         self.resize(1000, 780)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setCentralWidget(self.viewer)
 
         if source._current_path is not None:
             # the title tells which field this window shows (no frame number)
-            self.setWindowTitle(f"Field Viewer - {_field_kind(source._current_path)}")
+            self._field_suffix = f" - {_field_kind(source._current_path)}"
             self.viewer.load(source._current_path)
         self.viewer._copy_state_from(source)
+        self.set_project_name(self.project_name)
+
+    def set_project_name(self, name: str) -> None:
+        self.project_name = str(name or "").strip() or "Untitled"
+        self.setWindowTitle(
+            f"Field Viewer — {self.project_name}{self._field_suffix}"
+        )
+        if self.viewer is not None:
+            self.viewer.set_project_name(self.project_name)
 
     def _on_viewer_axes_changed(self, options: dict) -> None:
         """Axes changed in the pop-out: mirror to the tab view + persist."""
@@ -657,6 +668,7 @@ class VtkFieldViewer(QWidget):
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.work_dir = Path(work_dir) if work_dir else None
+        self.project_name = "Untitled"
         self._vtk = None
         self._iren = None
         self._renderer = None
@@ -859,6 +871,12 @@ class VtkFieldViewer(QWidget):
         )
         bar.addWidget(self.lbl_field)
         bar.addStretch(1)
+        self.lbl_project = QLabel("Project: Untitled")
+        self.lbl_project.setToolTip("Currently open VisualopenEMS project")
+        _pf = self.lbl_project.font()
+        _pf.setBold(True)
+        self.lbl_project.setFont(_pf)
+        bar.addWidget(self.lbl_project)
 
 
         bar_view = QHBoxLayout()
@@ -1949,6 +1967,15 @@ class VtkFieldViewer(QWidget):
                 ca.InsertCellPoint(idx)
         pd.SetPolys(ca)
         return pd
+
+    def set_project_name(self, name: str) -> None:
+        """Show the current project name here and in an open pop-out."""
+        self.project_name = str(name or "").strip() or "Untitled"
+        if hasattr(self, "lbl_project"):
+            self.lbl_project.setText(f"Project: {self.project_name}")
+        win = getattr(self, "_popout_win", None)
+        if win is not None and hasattr(win, "set_project_name"):
+            win.set_project_name(self.project_name)
 
     def set_work_dir(self, work_dir: Path | None) -> None:
         new_dir = Path(work_dir) if work_dir else None

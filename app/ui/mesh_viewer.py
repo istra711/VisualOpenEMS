@@ -503,6 +503,7 @@ class MeshGeometryViewer(QWidget):
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.work_dir = Path(work_dir) if work_dir else None
+        self.project_name = "Untitled"
         self._csx = None
         self._project = None  # app.models.project.Project | None
         self._primitives: list[dict] = []
@@ -645,6 +646,12 @@ class MeshGeometryViewer(QWidget):
         ):
             bar.addWidget(w)
         bar.addStretch(1)
+        self.lbl_project = QLabel("Project: Untitled")
+        self.lbl_project.setToolTip("Currently open VisualopenEMS project")
+        _pf = self.lbl_project.font()
+        _pf.setBold(True)
+        self.lbl_project.setFont(_pf)
+        bar.addWidget(self.lbl_project)
         root.addLayout(bar)
 
         # These view switches live in the plot's right-click menu.  Keep the
@@ -1801,10 +1808,11 @@ class MeshGeometryViewer(QWidget):
     def _on_popout(self) -> None:
         """Open a large detached window with the current scene."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Mesh Viewer — pop-out")
+        dlg.setWindowTitle(f"Mesh Viewer — {self.project_name}")
         dlg.resize(1200, 800)
         lay = QVBoxLayout(dlg)
         host = MeshGeometryViewer(work_dir=self.work_dir, parent=dlg)
+        host.set_project_name(self.project_name)
         host.set_project_context(
             project=self._project,
             primitives=self._primitives,
@@ -1933,6 +1941,12 @@ class MeshGeometryViewer(QWidget):
         for c in (self.canvas_slice, self.canvas_cells):
             if c is not None:
                 c.draw_idle()
+
+    def set_project_name(self, name: str) -> None:
+        """Show the current project name in this viewer."""
+        self.project_name = str(name or "").strip() or "Untitled"
+        if hasattr(self, "lbl_project"):
+            self.lbl_project.setText(f"Project: {self.project_name}")
 
     def set_project_context(
         self,

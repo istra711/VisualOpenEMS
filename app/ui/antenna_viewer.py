@@ -228,6 +228,7 @@ class AntennaGraphWindow(QMainWindow):
     def __init__(self, viewer: "AntennaPatternViewer") -> None:
         super().__init__(None)
         self.viewer: AntennaPatternViewer | None = viewer
+        self.project_name = "Untitled"
         self.setWindowTitle("Antenna Pattern — pop-out")
         self.resize(900, 720)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -240,6 +241,7 @@ class AntennaGraphWindow(QMainWindow):
         bar = QHBoxLayout()
         self.lbl_title = QLabel("Pop-out: antenna pattern")
         self.lbl_title.setStyleSheet("font-weight: bold;")
+        self.set_project_name(viewer.project_name if viewer is not None else "Untitled")
         bar.addWidget(self.lbl_title)
         bar.addStretch(1)
         bar.addWidget(QLabel("Plot"))
@@ -284,6 +286,12 @@ class AntennaGraphWindow(QMainWindow):
         self.cmb_plot.currentTextChanged.connect(self._on_plot_changed)
         self.cmb_freq.currentIndexChanged.connect(self._on_freq_changed)
         self.cmb_cmap.currentTextChanged.connect(self._on_cmap_changed)
+
+    def set_project_name(self, name: str) -> None:
+        self.project_name = str(name or "").strip() or "Untitled"
+        self.setWindowTitle(f"Antenna Pattern — {self.project_name}")
+        if hasattr(self, "lbl_title"):
+            self.lbl_title.setText(f"Project: {self.project_name} — antenna pattern")
 
     def _on_plot_changed(self, text: str) -> None:
         v = self.viewer
@@ -391,6 +399,7 @@ class AntennaPatternViewer(QWidget):
     ) -> None:
         super().__init__(parent)
         self.work_dir = Path(work_dir) if work_dir else None
+        self.project_name = "Untitled"
         self.data: dict | None = None
         self.data_path: Path | None = None
         # 3D presentation state (quality is normally set from AppSettings)
@@ -465,6 +474,12 @@ class AntennaPatternViewer(QWidget):
         bar.addWidget(self.lbl_cmap)
         bar.addWidget(self.cmb_cmap)
         bar.addStretch(1)
+        self.lbl_project = QLabel("Project: Untitled")
+        self.lbl_project.setToolTip("Currently open VisualopenEMS project")
+        _pf = self.lbl_project.font()
+        _pf.setBold(True)
+        self.lbl_project.setFont(_pf)
+        bar.addWidget(self.lbl_project)
         root.addLayout(bar)
 
         self._plot_split = QSplitter(Qt.Orientation.Horizontal)
@@ -1066,8 +1081,17 @@ class AntennaPatternViewer(QWidget):
             QMessageBox.warning(self, "Export failed", str(exc))
 
     # ----- data loading -------------------------------------------------
+    def set_project_name(self, name: str) -> None:
+        """Show the current project name here and in an open pop-out."""
+        self.project_name = str(name or "").strip() or "Untitled"
+        if hasattr(self, "lbl_project"):
+            self.lbl_project.setText(f"Project: {self.project_name}")
+        win = getattr(self, "_graph_win", None)
+        if win is not None and hasattr(win, "set_project_name"):
+            win.set_project_name(self.project_name)
+
     def set_work_dir(self, work_dir: Path) -> None:
-        """Remember the work dir — without filling the file list.
+        """Remember the work dir - without filling the file list.
 
         The list is only populated by "Scan work dir" (or by opening a file
         explicitly), so switching projects does not auto-list unrelated data.

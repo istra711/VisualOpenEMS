@@ -114,6 +114,9 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   writes a ParaView collection (`<dump>.pvd`) with the physical time (TD) or
   frequency (FD) of every step, so ParaView plays the whole series from one file
 - All viewers support export to PNG
+- **Project context** — every viewer header and pop-out title (Mesh Viewer, 3D
+  Design, S-Params, Antenna, Field Viewer) shows the name of the current project
+  and follows New / Open / Save As automatically
 
 ### Workflow Automation
 
