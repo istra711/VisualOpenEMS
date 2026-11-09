@@ -286,7 +286,7 @@ separate, movable window with **all** simulation parameters — two tabs:
 
 | Tab | Contents |
 |-----|----------|
-| **Simulation-Parameter** | Computed (read-only), excitation & convergence (end criteria, NrTS), boundary conditions ×6 + PML, air margin, mesh overrides, patch geometry |
+| **Simulation-Parameter** | Computed (read-only), excitation & convergence (end criteria, NrTS), boundary conditions ×6 + PML, **all sides equal** (PEC/PMC/MUR/PML + Apply to all six), air margin, mesh overrides, patch geometry |
 | **NF2FF-Parameter** | Enable far-field (NF2FF), **evaluation frequencies** (mode: *Auto (S11 minimum)* / *N points (mesh range)* / *Frequency list*), θ/φ steps, Fit/Edit NF2FF box |
 
 **Evaluation frequencies** (NF2FF tab) select at how many frequencies the
@@ -431,6 +431,12 @@ preview and Help → "Mesh repair (critical cells)…").
 
 **Save…** → e.g. `work\my_antenna\antenna.fcsim.json`
 
+The project JSON is written atomically. Starting a run or building a mesh does
+not modify the saved project; simulation results stay in a project-local
+`staging/` folder until **Simulation → Commit staged results** is chosen.
+**Save As** creates a new project and leaves the old project file, data folder
+and committed runs untouched.
+
 ### 5.6 Domain size (black frame in the mesh viewer)
 
 ![Domain and boxes](images/mesh_viewer_overview.png)
@@ -469,14 +475,24 @@ warning) — the mesh viewer outlines such primitives in red and writes
 2. **Run Simulation**
    - Log panel: openEMS running, max_timesteps, end_criteria
    - A warning for `max_timesteps < 150000` is possible
-3. **Script…** (Simulation menu) — view and edit `project_run.py`
-   - The script is what openEMS actually runs (paths, mesh, ports, export)
+   - The run writes into `work\<project_name>\staging\run-…\`; the previously
+     active result is not touched
+3. **Simulation → Commit staged results**
+   - Publishes the staged run to `work\<project_name>\runs\<run-id>\` and makes
+     it the active result. Older runs stay on disk.
+   - **Discard staged results** deletes only the staging folder.
+   - **Run history…** lists committed runs and can switch the active run.
+4. **Script…** (Simulation menu) — view and edit the project-level `project_run.py`
+   - The generated staging script is what openEMS actually runs (paths, mesh,
+     ports, export)
    - **Save** / **Revert** / **Regenerate from project**
    - **Run Simulation** regenerates the script; your own changes are backed up to
      `project_run_edited.py` first — the GUI asks whether to regenerate or run
      your edited script as-is
-   - Manual: `<python> work\<project_name>\project_run.py`
-4. Result files under `work\<project_name>\` (among others `project_run.py`, meshes, S-params)
+   - Manual: `<python> work\<project_name>\staging\run-…\project_run.py`
+5. Result files: active run under `work\<project_name>\runs\<run-id>\`
+   (`project_run.py`, `csx.xml`, `sparams\`, `fields\`, `nf2ff\`) plus the
+   `manifest.json`
 
 ![Script editor](images/dialog_script_editor.png)
 
@@ -526,12 +542,15 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
    - S11 / S21, dB, phase
    - Marker: frequency, S, Γ, Z/Y, VSWR, RL
    - Smith chart: Z and Y markers
+   - **Export…** / right-click → Export S-parameters: Touchstone (.sNp),
+     CSV (frequency + every Sij as dB/phase/real/imaginary) and ASCII table;
+     the default name follows the currently loaded S-parameter file
 2. **Pop-out S-Graph** — plot in a separate window
 3. **Antenna** tab / **Simulation → Antenna Pattern Viewer** — NF2FF far field:
    3D polar gain plot, 2D polar cuts (E/H plane), directivity/gain/η vs
-   frequency; **Pop-out Antenna Graph** = separate window; field dumps remain
-   under `work/<project>/fields/` (S-parameters in
-   `work/<project>/sparams/`, NF2FF in `work/<project>/nf2ff/`).
+   frequency; **Pop-out Antenna Graph** = separate window; the active run keeps
+   field dumps under `work/<project>/runs/<run-id>/fields/` (S-parameters in
+   `.../sparams/`, NF2FF in `.../nf2ff/`).
    **Polarization…** (button in the Antenna tab) shows quantities derived from
    the same NF2FF result — no new run: **axial ratio** (dB, RHCP/LHCP sense,
    tilt; linear → "linear") and **phase center** (Δx/Δy/Δz in mm plus the RMS
@@ -770,13 +789,20 @@ from *Settings*). The "Video…" dialog offers both formats; GIF only needs
 Pillow, MP4 needs imageio-ffmpeg. GIF is 256-colour and gets large for long
 series.
 
-### 12.5 Network data — Touchstone
+### 12.5 Network data — Touchstone, CSV, ASCII
 
 The S-Params viewer writes **Touchstone** (`.s1p`, `.s2p`, …) — the standard both
-CST and openEMS read. One FDTD run measures **one** column of the S-matrix; the
-Touchstone file is only written once the matrix is complete (partial matrices
+CST and openEMS read — plus **CSV** and **ASCII** tables via **Export…** or the
+plot's right-click menu. CSV/ASCII contain the frequency and every Sij as
+dB / phase / real / imaginary. The suggested file name follows the currently
+loaded file (`reference_analytic.s2p` → `reference_analytic.csv` or
+`reference_analytic.s2p`).
+
+One FDTD run measures **one** column of the S-matrix; the automatically written
+Touchstone file is only created once the matrix is complete (partial matrices
 stay in `sparams.json`). A 2-port therefore needs both excitations (switch
-`excite_port`, results are merged).
+`excite_port`, results are merged). A manual export writes missing cells as 0
+and adds a warning comment to the file.
 
 ### 12.6 Images
 
@@ -789,6 +815,7 @@ Every viewer (S-Params, Antenna, Field Viewer) exports **PNG**.
 | Geometry | STEP (mm) | out | CAD, CST, FreeCAD |
 | Grid lines | grid JSON (mm) | out | CST FDTD (Mesh.SetLines) |
 | S-parameters | Touchstone `.sNp` | out / in | CST, VNA, scikit-rf |
+| S-parameters | CSV / ASCII | out | Excel, MATLAB, scripts |
 | E/H field volumes | VTK `.vtr` + `.pvd` | out | ParaView |
 | Full model (CSX) | CSX XML | out | AppCSXCAD |
 

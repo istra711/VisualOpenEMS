@@ -288,7 +288,7 @@ zwei Tabs:
 
 | Tab | Inhalt |
 |-----|--------|
-| **Simulation-Parameter** | Computed (read-only), Excitation & convergence (End criteria, NrTS), Boundary conditions ×6 + PML, Air margin, Mesh-Overrides, Patch-Geometrie |
+| **Simulation-Parameter** | Computed (read-only), Excitation & convergence (End criteria, NrTS), Boundary conditions ×6 + PML, **All sides equal** (PEC/PMC/MUR/PML + Apply to all six), Air margin, Mesh-Overrides, Patch-Geometrie |
 | **NF2FF-Parameter** | Enable far-field (NF2FF), **Evaluation frequencies** (Mode: *Auto (S11 minimum)* / *N points (mesh range)* / *Frequency list*), θ/φ-Steps, Fit/Edit NF2FF-Box |
 
 **Evaluation frequencies** (NF2FF-Tab) legen fest, an wie vielen Frequenzen
@@ -437,6 +437,12 @@ Reparatur-Dialog und Help → „Mesh repair (critical cells)…").
 
 **Save…** → z. B. `work\meine_antenne\antenne.fcsim.json`
 
+Das Projekt-JSON wird atomar geschrieben. Ein Run oder Build Mesh verändert die
+gespeicherte Projektdatei nicht; Simulationsergebnisse bleiben im
+projektlokalen `staging/`-Ordner, bis **Simulation → Commit staged results**
+gewählt wird. **Save As** legt ein neues Projekt an und lässt die alte
+Projektdatei, den alten Datenordner und alle alten Runs unangetastet.
+
 ### 5.6 Domain-Größe (schwarzer Rahmen im Mesh Viewer)
 
 ![Domain und Boxen](images/mesh_viewer_overview.png)
@@ -475,14 +481,24 @@ Warning) — der Mesh Viewer umrahmt solche Primitive rot und schreibt
 2. **Run Simulation**
    - Log-Panel: openEMS läuft, max_timesteps, end_criteria
    - Warnung bei `max_timesteps < 150000` möglich
-3. **Script…** (Simulation-Menü) — `project_run.py` ansehen und bearbeiten
-   - Das Skript ist das, was openEMS wirklich ausführt (Pfade, Mesh, Ports, Export)
+   - Der Lauf schreibt nach `work\<Projektname>\staging\run-…\`; das bisher
+     aktive Ergebnis bleibt unberührt
+3. **Simulation → Commit staged results**
+   - Übernimmt den gestagten Lauf nach `work\<Projektname>\runs\<run-id>\` und
+     macht ihn zum aktiven Ergebnis. Ältere Runs bleiben erhalten.
+   - **Discard staged results** löscht nur den Staging-Ordner.
+   - **Run history…** listet committete Runs und schaltet den aktiven Run um.
+4. **Script…** (Simulation-Menü) — `project_run.py` ansehen und bearbeiten
+   - Das generierte Staging-Skript ist das, was openEMS wirklich ausführt (Pfade,
+     Mesh, Ports, Export)
    - **Save** / **Revert** / **Regenerate from project**
    - **Run Simulation** erzeugt das Skript neu; eigene Änderungen werden vorher nach
      `project_run_edited.py` gesichert — die GUI fragt, ob neu erzeugt oder dein
      bearbeitetes Skript so wie es ist ausgeführt werden soll
-   - Manuell: `<python> work\<Projektname>\project_run.py`
-4. Ergebnis-Dateien unter `work\<Projektname>\` (u. a. `project_run.py`, Meshes, S-Params)
+   - Manuell: `<python> work\<Projektname>\staging\run-…\project_run.py`
+5. Ergebnis-Dateien des aktiven Runs unter `work\<Projektname>\runs\<run-id>\`
+   (`project_run.py`, `csx.xml`, `sparams\`, `fields\`, `nf2ff\`) plus
+   `manifest.json`
 
 ![Script-Editor](images/dialog_script_editor.png)
 
@@ -533,12 +549,15 @@ bzw. nachdem der Solver gelaufen ist:
    - S11 / S21, dB, Phase
    - Marker: Frequenz, S, Γ, Z/Y, VSWR, RL
    - Smith-Chart: Z- und Y-Marker
+   - **Export…** / Rechtsklick → Export S-parameters: Touchstone (.sNp),
+     CSV (Frequenz + jedes Sij als dB/Phase/Real/Imaginär) und ASCII-Tabelle;
+     der Dateiname folgt der aktuell geladenen S-Parameter-Datei
 2. **Pop-out S-Graph** — Plot in Extra-Fenster
 3. **Antenna**-Tab / **Simulation → Antenna Pattern Viewer** — NF2FF-Fernfeld:
    3D-Polar des Gewinns, 2D-Polarschnitte (E/H-Ebene), Direktivität/Gain/η
-   über Frequenz; **Pop-out Antenna Graph** = Extra-Fenster; Feld-Dumps
-   weiterhin unter `work/<projekt>/fields/` (S-Parameter in
-   `work/<projekt>/sparams/`, NF2FF in `work/<projekt>/nf2ff/`).
+   über Frequenz; **Pop-out Antenna Graph** = Extra-Fenster; der aktive Run
+   hält Feld-Dumps unter `work/<projekt>/runs/<run-id>/fields/` (S-Parameter in
+   `.../sparams/`, NF2FF in `.../nf2ff/`).
    **Polarization…** (Button im Antenna-Tab) zeigt Größen aus demselben
    NF2FF-Ergebnis — ohne neuen Lauf: **Axial Ratio** (dB, Drehsinn
    RHCP/LHCP, Tilt; linear → „linear") und **Phase Center** (Δx/Δy/Δz in mm
@@ -781,12 +800,18 @@ AppCSXCAD oder ParaView — nützlich zur Kontrolle und zur Übergabe des Modell
 nur Pillow, MP4 imageio-ffmpeg. GIF ist 256-farbig und wird bei langen Serien
 groß.
 
-### 12.5 Netzwerkdaten — Touchstone
+### 12.5 Netzwerkdaten - Touchstone, CSV, ASCII
 
-Der S-Params-Viewer schreibt **Touchstone** (`.s1p`, `.s2p`, …) — den Standard,
-den CST und openEMS beide lesen. Ein FDTD-Lauf misst **eine** Spalte der
-S-Matrix; die Touchstone-Datei entsteht erst, wenn die Matrix vollständig ist
-(Teilmatrizen stehen nur in `sparams.json`). Für ein 2-Tor sind also beide
+Der S-Params-Viewer schreibt **Touchstone** (`.s1p`, `.s2p`, …) - den Standard,
+den CST und openEMS beide lesen - sowie **CSV** und **ASCII-Tabellen** über
+**Export…** oder das Rechtsklick-Menü im Plot. CSV/ASCII enthalten die Frequenz
+und jedes Sij als dB / Phase / Realteil / Imaginärteil. Der vorgeschlagene
+Dateiname folgt der aktuell geladenen Datei (`reference_analytic.s2p` →
+`reference_analytic.csv` bzw. `reference_analytic.s2p`).
+
+Ein FDTD-Lauf misst **eine** Spalte der S-Matrix; die automatisch geschriebene
+Touchstone-Datei entsteht erst, wenn die Matrix vollständig ist (Teilmatrizen
+stehen nur in `sparams.json`). Für ein 2-Tor sind also beide
 Erregungen nötig (`excite_port` umschalten, Ergebnisse werden zusammengeführt).
 
 ### 12.6 Bilder
@@ -800,6 +825,7 @@ Jeder Viewer (S-Params, Antenna, Field Viewer) exportiert **PNG**.
 | Geometrie | STEP (mm) | raus | CAD, CST, FreeCAD |
 | Gitterlinien | grid JSON (mm) | raus | CST-FDTD (Mesh.SetLines) |
 | S-Parameter | Touchstone `.sNp` | raus / rein | CST, VNA, scikit-rf |
+| S-Parameter | CSV / ASCII | raus | Excel, MATLAB, Skripte |
 | E/H-Feldvolumen | VTK `.vtr` + `.pvd` | raus | ParaView |
 | Vollmodell (CSX) | CSX XML | raus | AppCSXCAD |
 

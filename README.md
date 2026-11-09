@@ -80,13 +80,15 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 
 - FDTD via openEMS Python bindings (`FDTD` / `CSXCAD`)
 - Configurable frequency range, excitation (Gaussian pulse f0/fc), boundary conditions (PML / Mur / periodic / PEC / PMC), air margin, and timestep limits
+- **Boundary “all sides equal”**: set all six faces to PEC, PMC, MUR or PML in one action; individual faces stay editable
+- **Transactional runs**: a run is written to a project-local `staging/` folder, then explicitly committed to an immutable `runs/<id>/` folder; older runs are retained and the project JSON is only written by Save/Commit
 - Multi-threaded solver control (auto or manual thread count)
 - Field dumps (Et/Hz time-domain, Ef/Hf frequency-domain) on configurable grids
 - NF2FF (Near-Field to Far-Field) box with automatic positioning
 
 ### Post-Processing
 
-- **S-Parameter Viewer** — Touchstone import, Smith chart, |S| dB, phase, VSWR; interactive markers with right-click smart functions (trace min/max, nearest peak/valley, -3 dB points, band center, delta marker from the selected reference); marker list selection highlights the plot, markers are saved in the project JSON, and marker rows can copy their value/frequency; closing the GUI with unsaved marker/settings changes asks Save/Discard/Cancel; auto-opens after simulation
+- **S-Parameter Viewer** — Touchstone/JSON import, Smith chart, |S| dB, phase, VSWR; interactive markers with right-click smart functions (trace min/max, nearest peak/valley, -3 dB points, band center, delta marker from the selected reference); marker list selection highlights the plot, markers are saved in the project JSON, and marker rows can copy their value/frequency; closing the GUI with unsaved marker/settings changes asks Save/Discard/Cancel; auto-opens after simulation. **Export…** writes Touchstone (.sNp), CSV (frequency + every Sij as dB/phase/real/imaginary) and ASCII tables; the suggested file name follows the currently loaded file.
 - **Antenna Viewer** — 3D gain pattern (axes labelled x/y/z), E/H cuts (Az/El), directivity, gain, radiation efficiency; HPBW and front-to-back analysis; **axial ratio** and **phase center** from the stored `E_theta`/`E_phi` (no re-run), including an **AR-vs-θ cut** at a selectable azimuth; pop-out plot windows
 - **NF2FF Summary** — gain/directivity/efficiency plot per frequency
 - **3D Design** — embedded read-only VTK view of the current project geometry
@@ -193,6 +195,8 @@ VisualopenEMS/
 │   ├── simulation/
 │   │   ├── runner.py              # Simulation process management
 │   │   └── script_gen.py          # Project → project_run.py code generation
+│   ├── storage/
+│   │   └── run_store.py           # Staging, immutable runs, atomic commit
 │   ├── postproc/
 │   │   ├── fields.py              # Field dump post-processing
 │   │   ├── nf2ff.py               # NF2FF far-field computation
@@ -302,8 +306,10 @@ python app\main.py
 2. **Add Port…** — define lumped/waveguide ports
 3. **Add Assignment…** — assign materials to objects
 4. **Build Mesh** (Ctrl+M) — generate the FDTD mesh
-5. **Run Simulation** (Ctrl+R) — execute the FDTD solver
-6. View results in the **S-Params**, **Antenna**, and **Fields** tabs
+5. **Run Simulation** (Ctrl+R) — execute the FDTD solver into a staging folder
+6. **Simulation → Commit staged results** — publish the run as the active result
+7. View results in the **S-Params**, **Antenna**, and **Fields** tabs; old
+   committed runs remain available under **Simulation → Run history…**
 
 ---
 
@@ -516,17 +522,32 @@ Projects are stored as `.fcsim.json` — a human-readable JSON file:
   },
   "boundary": {...},
   "sim": {...},
-  "primitives": [...]
+  "primitives": [...],
+  "project_id": "…",
+  "storage_layout": 2,
+  "results": {
+    "active_run": "MyProject/runs/20261109-…",
+    "status": "complete"
+  }
 }
 ```
 
-**Backward compatibility:** unknown keys in older project files are silently ignored; missing keys fall back to defaults. On save, the file is rewritten in the current format.
+**Backward compatibility:** unknown keys in older project files are silently ignored; missing keys fall back to defaults. Old flat result layouts are still read. On save, the file is rewritten atomically (temporary file + replace).
+
+**Run storage:** a data folder contains `staging/` (uncommitted runs),
+`runs/<run-id>/` (immutable committed runs with `manifest.json`) and optional
+`meshes/`. The project JSON only points at the active run; older runs remain on
+disk and can be selected from **Simulation → Run history…**.
 
 ---
 
 ## Script Editor
 
-Every simulation generates `work/<project>/project_run.py` — a standalone, reproducible script.
+Every simulation generates a standalone, reproducible
+`project_run.py` in its staging folder
+(`work/<project>/staging/run-…/`). The Script… editor edits the project-level
+template `work/<project>/project_run.py`; starting a run copies or regenerates
+it into staging.
 
 **Simulation → Script…** opens a modeless editor with:
 
@@ -534,11 +555,14 @@ Every simulation generates `work/<project>/project_run.py` — a standalone, rep
 - **Revert** — restore last saved state
 - **Regenerate from project** — rebuild from GUI state (backs up your edits to `project_run_edited.py`)
 
-Run the script directly:
+Run a generated script directly:
 
 ```powershell
-python work\my_antenna\project_run.py
+python work\my_antenna\staging\run-…\project_run.py
 ```
+
+After **Commit staged results**, the script is kept in
+`work/<project>/runs/<run-id>/project_run.py` for reproducibility.
 
 ---
 

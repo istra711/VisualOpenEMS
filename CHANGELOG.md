@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-09
+
 ### Added
 
 - **Boundary “all sides equal”**: Simulation Parameters → Boundary conditions
@@ -2896,7 +2898,8 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.9]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.9
 [0.5.10]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.10
 [0.6.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.6.0
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.11.0
 [0.10.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.10.0
 [0.9.2]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.9.2
 [0.9.1]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.9.1
