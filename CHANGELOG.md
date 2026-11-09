@@ -78,6 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **English runtime label**: the solver progress bar showed the German word
+  “Laufzeit” in the otherwise English UI; it now reads **Runtime**.
 - **Graded refinement at polygon metal edges**: the metal-interface mesh
   refinement only inspected a polygon's bounding box, so L-shaped / notched
   traces got no refinement at their real inner metal/dielectric edges. It now

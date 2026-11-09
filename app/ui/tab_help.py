@@ -447,7 +447,7 @@ Progress (status bar)
   • During a run the status bar shows TWO bars + a TS/energy label parsed from
     the openEMS output, plus elapsed time and "converged" / "max TS reached".
     - TS bar: timesteps done / max timesteps.
-    - Bottom right: current engine wall-clock runtime (`Laufzeit …`) and
+    - Bottom right: current engine wall-clock runtime (`Runtime …`) and
       remaining estimate (`ETA ~…`) from the engine's live s/TS.
     – Energy bar: residual-energy convergence toward the end criterion
       (EndCriteria, e.g. 1e-5 → -50 dB) — the run's actual stopping condition,

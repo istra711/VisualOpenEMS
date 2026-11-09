@@ -140,7 +140,7 @@ class EngineProgress:
 
     def elapsed_text(self) -> str:
         """Current wall-clock runtime reported by the engine."""
-        return f"Laufzeit {self.elapsed}" if self.elapsed else ""
+        return f"Runtime {self.elapsed}" if self.elapsed else ""
 
     def eta_seconds(self) -> float | None:
         """Estimated remaining wall-clock seconds from the engine's s/TS."""
