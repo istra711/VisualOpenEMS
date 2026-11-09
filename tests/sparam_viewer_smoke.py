@@ -59,9 +59,20 @@ def main() -> int:
     if not viewer.btn_export.isEnabled():
         print("FAIL: export button disabled with a loaded network")
         return 13
+    if viewer._export_basename() != touch.stem:
+        print(
+            "FAIL: export must use the current file stem:",
+            viewer._export_basename(),
+            "!=",
+            touch.stem,
+        )
+        return 13
     empty_viewer = SParamViewer(work_dir=work)
     if empty_viewer.btn_export.isEnabled():
         print("FAIL: export button enabled without data")
+        return 13
+    if empty_viewer._export_basename() != "sparams":
+        print("FAIL: fallback export basename is not 'sparams'")
         return 13
     test_net = rf.Network(
         f=[1e9, 2e9],

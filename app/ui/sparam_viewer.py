@@ -755,6 +755,17 @@ class SParamViewer(QWidget):
             return self.work_dir
         return Path.cwd()
 
+    def _export_basename(self) -> str:
+        """Default export name: the currently loaded file's stem.
+
+        ``work/.../reference_analytic.s2p`` -> ``reference_analytic`` for CSV /
+        ASCII, and ``reference_analytic.sNp`` for Touchstone.  Falls back to
+        ``sparams`` when no file is loaded.
+        """
+        if self.network_path is not None and self.network_path.stem:
+            return self.network_path.stem
+        return "sparams"
+
     def _on_export(self) -> None:
         if self.network is None:
             QMessageBox.information(
@@ -795,7 +806,7 @@ class SParamViewer(QWidget):
         if self.network is None:
             return
         n = max(1, int(self.network.nports))
-        default = self._export_default_dir() / f"sparams.s{n}p"
+        default = self._export_default_dir() / f"{self._export_basename()}.s{n}p"
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Touchstone",
@@ -821,7 +832,7 @@ class SParamViewer(QWidget):
     def _export_csv(self) -> None:
         if self.network is None:
             return
-        default = self._export_default_dir() / "sparams.csv"
+        default = self._export_default_dir() / f"{self._export_basename()}.csv"
         path, _ = QFileDialog.getSaveFileName(
             self, "Export S-parameters (CSV)", str(default), "CSV (*.csv);;All (*.*)"
         )
@@ -837,7 +848,7 @@ class SParamViewer(QWidget):
     def _export_ascii(self) -> None:
         if self.network is None:
             return
-        default = self._export_default_dir() / "sparams.txt"
+        default = self._export_default_dir() / f"{self._export_basename()}.txt"
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export S-parameters (ASCII)",
