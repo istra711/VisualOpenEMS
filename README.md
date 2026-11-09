@@ -1,9 +1,15 @@
 # VisualopenEMS
 
-![Vivaldi antenna field visualization](docs/images/VisualopenEMS_GUI_Vivaldi_Field.gif)
-
-*Animated 3D field visualization of a Vivaldi antenna in the Field Viewer
-(`Et` field playback).*
+<table>
+<tr>
+<td width="50%"><img src="docs/images/VisualopenEMS_GUI_Vivaldi_Field.gif" alt="Vivaldi antenna field visualization" width="100%"></td>
+<td width="50%"><img src="docs/images/anim_beam_steer.gif" alt="Beam steering animation" width="100%"></td>
+</tr>
+<tr>
+<td><em>Animated 3D field visualization of a Vivaldi antenna in the Field Viewer (Et field playback).</em></td>
+<td><em>Beam steering at 77 GHz: animated 3D gain pattern and E-plane cut while the beam is steered.</em></td>
+</tr>
+</table>
 
 > **⚠️ Pre-Alpha — Work in Progress**
 >
