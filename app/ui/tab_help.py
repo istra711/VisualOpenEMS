@@ -320,6 +320,9 @@ Tips
     **Project / Geometry** panel, pick a log tab, auto-scroll, Save log…,
     Pop out log…. In the text the entries Copy / Select All are above them.
     The same menu is on the status bar at the bottom edge.
+  • During a run **every** output line gets the elapsed-time stamp
+    (`[@ 1h50m02s]`); openEMS progress lines keep their own stamp. The
+    “Timestamps” button adds wall-clock time to non-engine log messages.
   • Check that the mesh lines pass through ports and thin substrates (cell size there).
   • Very large air margins shrink useful resolution — see Simulation Parameters.
   • The viewer holds the last built CSX — rebuild after geometry or mesh changes.

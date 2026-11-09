@@ -6,6 +6,7 @@ from datetime import datetime
 
 from app.runlog import (
     format_elapsed,
+    format_engine_elapsed,
     format_run_end,
     format_run_start,
     format_run_step,
@@ -22,6 +23,12 @@ def test_format_elapsed_minutes_hours() -> None:
     assert format_elapsed(83.4) == "1 m 23.4 s"
     assert format_elapsed(60) == "1 m 00.0 s"
     assert format_elapsed(3723.4) == "1 h 02 m 03.4 s"
+
+
+def test_engine_elapsed_prefix() -> None:
+    assert format_engine_elapsed(4) == "[@ 4s]"
+    assert format_engine_elapsed(631) == "[@ 10m31s]"
+    assert format_engine_elapsed(6602) == "[@ 1h50m02s]"
 
 
 def test_start_banner() -> None:

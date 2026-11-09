@@ -55,7 +55,12 @@ from PySide6.QtWidgets import (
 
 from app.freecad_io.importer import load_geometry_file, overall_bounds
 from app.models.project import GeomAssignment, PortDef, Project
-from app.runlog import format_run_end, format_run_start, format_run_step
+from app.runlog import (
+    format_engine_elapsed,
+    format_run_end,
+    format_run_start,
+    format_run_step,
+)
 from app.settings import AppSettings
 from app.storage.run_store import ProjectStore
 from app.simulation.progress import EngineProgress
@@ -2160,12 +2165,40 @@ class MainWindow(QMainWindow):
 
         show_tab_help(self, self._current_tab_title())
 
+    def _stamp_run_log_msg(self, msg: str) -> str:
+        """Prefix run output with the openEMS elapsed-time timestamp.
+
+        openEMS prefixes its progress lines itself, but warnings, post-processing
+        summaries and port reports arrive without ``[@ …]``.  During an active
+        run every ordinary line gets the same elapsed-time stamp.
+        """
+        t0 = getattr(self, "_run_t0", None)
+        if t0 is None or not isinstance(msg, str):
+            return msg
+        prefix = format_engine_elapsed(time.monotonic() - t0)
+        out: list[str] = []
+        for line in msg.splitlines() or [""]:
+            stripped = line.lstrip()
+            if (
+                not line
+                or stripped.startswith("[@")
+                or stripped.startswith("###")
+                or stripped.startswith("---")
+            ):
+                out.append(line)
+            else:
+                out.append(f"{prefix} {line}")
+        return "\n".join(out)
+
     @QtCore.Slot(str)
     def _log(self, msg: str) -> None:
         """Safe log entry — always hop to GUI thread via queue."""
         try:
             if not isinstance(msg, str):
                 msg = str(msg)
+            # Stamp at enqueue time: the run may finish before the GUI drains
+            # the queue, and post-processing lines must keep the run elapsed.
+            msg = self._stamp_run_log_msg(msg)
             # Always queue: worker threads may call this; QTimer drains on GUI thread.
             self._log_queue.put(msg)
         except Exception as e:  # noqa: BLE001 — never let log UI kill the app
@@ -2301,7 +2334,14 @@ class MainWindow(QMainWindow):
             if getattr(self, "_log_timestamps", False):
                 stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
                 lines = msg.splitlines() or [""]
-                msg = "\n".join(f"[{stamp}] {line}" if line else f"[{stamp}]" for line in lines)
+                # Run lines already carry openEMS's elapsed [@ ...] stamp;
+                # do not add a second timestamp in front of it.
+                msg = "\n".join(
+                    f"[{stamp}] {line}"
+                    if line and not line.lstrip().startswith("[@")
+                    else line
+                    for line in lines
+                )
             self.log_view.appendPlainText(msg)
             if getattr(self, "_log_autoscroll", True):
                 sb = self.log_view.verticalScrollBar()

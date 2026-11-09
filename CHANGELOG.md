@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Consistent run-log timestamps**: every line emitted during a run now gets
+  the openEMS-style elapsed stamp (`[@ 1h50m02s]`), including solver warnings,
+  post-processing messages and port summaries. Lines that already carry an
+  `[@ …]` stamp are not double-stamped. The “Timestamps” toggle still adds
+  wall-clock time to non-engine messages.
 - **Project name in every viewer**: the Mesh Viewer, 3D Design, S-Params,
   Antenna and Field Viewer headers show `Project: <name>`, and their pop-out
   window titles carry the same name. It updates automatically after New, Open

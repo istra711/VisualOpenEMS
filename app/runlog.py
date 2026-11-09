@@ -34,6 +34,22 @@ def format_run_end(elapsed: float, when: datetime | None = None) -> str:
     return RUN_END_BANNER.format(clock=clock, elapsed=format_elapsed(elapsed))
 
 
+def format_engine_elapsed(seconds: float) -> str:
+    """openEMS-style elapsed prefix, e.g. ``[@ 1h50m02s]``.
+
+    Used to stamp lines that openEMS itself did not prefix (warnings,
+    post-processing, port summaries) with the run's elapsed time.
+    """
+    total = max(0, int(float(seconds)))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"[@ {hours}h{minutes:02d}m{secs:02d}s]"
+    if minutes:
+        return f"[@ {minutes}m{secs:02d}s]"
+    return f"[@ {secs}s]"
+
+
 def format_run_step(name: str, elapsed: float | None = None) -> str:
     """Marked step line: ``--- [+1 m 23.4 s] Step: <name> ---``.
 
