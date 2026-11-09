@@ -1,9 +1,9 @@
 # VisualopenEMS
 
-![Vivaldi antenna field visualization](docs/images/VisualopenEMS_GUI_Vivaldi_Field.jpg)
+![Vivaldi antenna field visualization](docs/images/VisualopenEMS_GUI_Vivaldi_Field.gif)
 
-*3D field visualization of a Vivaldi antenna in the Field Viewer — one frame
-from the animated `Et` field playback.*
+*Animated 3D field visualization of a Vivaldi antenna in the Field Viewer
+(`Et` field playback).*
 
 > **⚠️ Pre-Alpha — Work in Progress**
 >
