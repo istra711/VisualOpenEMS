@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Progress bar no longer reports “converged” after a non-converged run**:
+  the parser treated the app's own finding line
+  `energy_vs_criteria: energy reached … but the end criteria was not met`
+  as an engine convergence message. The status bar now only says “converged”
+  for a real end-criteria hit; otherwise it shows “max TS reached” and the
+  energy remains e.g. `-2.0 dB / -50 dB`. App report lines are no longer fed
+  into the engine progress parser.
+
 ### Added
 
 - **Project name in every viewer**: the Mesh Viewer, 3D Design, S-Params,

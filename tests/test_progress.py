@@ -79,6 +79,21 @@ def test_end_criteria_warning_is_not_converged():
     assert "max TS reached" in p.text()
 
 
+def test_report_energy_vs_criteria_is_not_converged():
+    # The app's findings block also contains "end criteria" and "reached".
+    # It must never turn the progress bar into "converged".
+    p = EngineProgress()
+    p.feed(_MAX_LINE)
+    p.feed(_MID_LINE)
+    p.feed(
+        "[WARNING] energy_vs_criteria: energy reached -2.0 dB, the requested "
+        "end criteria (-50 dB) was not met"
+    )
+    assert p.end_criteria_hit is False
+    assert p.stopped_before_criteria is False
+    assert "converged" not in p.text()
+
+
 def test_end_criteria_reached_is_converged():
     p = EngineProgress()
     p.feed(_MAX_LINE)

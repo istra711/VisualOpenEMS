@@ -2256,6 +2256,10 @@ class MainWindow(QMainWindow):
         regexes line by line.
         """
         low = msg.lower()
+        # Do not parse the app's own findings block ("[WARNING]
+        # energy_vs_criteria: ... reached ... not met") as engine progress.
+        if low.lstrip().startswith(("[warning]", "[info]", "[error]", "[debug]")):
+            return
         if "timestep" not in low and "criteria" not in low and "energy" not in low:
             return
         for raw in msg.splitlines():

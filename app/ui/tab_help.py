@@ -446,6 +446,8 @@ Run script (toolbar: Script…)
 Progress (status bar)
   • During a run the status bar shows TWO bars + a TS/energy label parsed from
     the openEMS output, plus elapsed time and "converged" / "max TS reached".
+    "Converged" appears only when the engine actually reached the configured
+    end criterion; a warning/report that says it was not met does not count.
     - TS bar: timesteps done / max timesteps.
     - Bottom right: current engine wall-clock runtime (`Runtime …`) and
       remaining estimate (`ETA ~…`) from the engine's live s/TS.

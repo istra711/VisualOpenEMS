@@ -95,11 +95,22 @@ class EngineProgress:
 
         if _RE_CRITERIA.search(line):
             low = line.lower()
-            if "before" in low:
+            # The run reports can also contain "end criteria" (e.g.
+            # "energy reached -2 dB, requested -50 dB was not met").  Only an
+            # affirmative engine line may mark the run as converged.
+            max_ts_before = (
+                "max" in low
+                and "timestep" in low
+                and "before" in low
+            )
+            not_met = "not met" in low or "not reached" in low or "was not" in low
+            if max_ts_before:
                 if not self.stopped_before_criteria:
                     self.stopped_before_criteria = True
                     changed = True
-            elif "reached" in low:
+            elif not_met:
+                pass
+            elif "reached" in low and "end" in low:
                 if not self.end_criteria_hit:
                     self.end_criteria_hit = True
                     changed = True
