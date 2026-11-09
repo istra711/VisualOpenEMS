@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Graded refinement at polygon metal edges**: the metal-interface mesh
+  refinement only inspected a polygon's bounding box, so L-shaped / notched
+  traces got no refinement at their real inner metal/dielectric edges. It now
+  walks the polygon outline (orientation-aware) and places graded lines on the
+  dielectric side of every axis-aligned edge, including re-entrant corners.
 - **Unused material properties in the CSX**: only materials referenced by a
   primitive now get a CSX property. Imported CST projects carry a full material
   library, so openEMS used to warn "No primitives found in property: copper!"

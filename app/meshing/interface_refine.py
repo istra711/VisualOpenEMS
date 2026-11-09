@@ -30,18 +30,86 @@ MIN_GROWTH = 1.2
 MAX_GROWTH = 5.0
 
 
+#: cyclic in-plane axes for a polygon normal (see polygon_geometry.py)
+_AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
+def _polygon_points(info) -> tuple[list[tuple[float, float]], int, int, int]:
+    """``(points, normal_idx, in_plane_0, in_plane_1)`` or empty on failure."""
+    normal = _AXIS_INDEX.get(str(getattr(info, "poly_axis", "") or "").lower())
+    raw = getattr(info, "poly_points", ()) or ()
+    if normal is None or len(raw) < 3:
+        return [], 0, 0, 0
+    pts: list[tuple[float, float]] = []
+    for p in raw:
+        try:
+            pts.append((float(p[0]), float(p[1])))
+        except (TypeError, ValueError, IndexError):
+            return [], 0, 0, 0
+    return pts, normal, (normal + 1) % 3, (normal + 2) % 3
+
+
+def polygon_metal_sides(info, axis_idx: int) -> list[tuple[float, int]]:
+    """In-plane interface sides of a polygon metal outline.
+
+    A polygon is meshed through its real outline, not only through its AABB.
+    For an L-shaped trace the two arms meet at a re-entrant corner: the bbox
+    has no face there, so the metal refinement used to miss exactly the inner
+    metal/dielectric edges.  This walks the outline and emits the outside side
+    of every axis-aligned edge.
+
+    The polygon orientation (signed area) tells us which side is metal:
+    CCW -> interior is left of each directed edge, CW -> right.
+    """
+    pts, normal, c0, c1 = _polygon_points(info)
+    if not pts or axis_idx not in (c0, c1):
+        return []
+    if str(getattr(info, "kind", "") or "").lower().find("metal") < 0:
+        return []
+
+    area2 = 0.0
+    for i, (u0, v0) in enumerate(pts):
+        u1, v1 = pts[(i + 1) % len(pts)]
+        area2 += u0 * v1 - u1 * v0
+    orient = 1 if area2 >= 0.0 else -1  # +1 = CCW, -1 = CW
+
+    out: list[tuple[float, int]] = []
+    eps = 1e-9
+    for i, (u0, v0) in enumerate(pts):
+        u1, v1 = pts[(i + 1) % len(pts)]
+        if axis_idx == c0:
+            # Vertical edge in the (c0,c1) plane -> transition along c0.
+            if abs(u1 - u0) > eps:
+                continue
+            if abs(v1 - v0) <= eps:
+                continue
+            direction = (1 if v1 > v0 else -1) * orient
+            out.append((u0, int(direction)))
+        else:
+            # Horizontal edge -> transition along c1.
+            if abs(v1 - v0) > eps:
+                continue
+            if abs(u1 - u0) <= eps:
+                continue
+            direction = -(1 if u1 > u0 else -1) * orient
+            out.append((v0, int(direction)))
+    return out
+
+
 def metal_face_sides(infos: Iterable[Any], axis_idx: int) -> list[tuple[float, int]]:
     """Return ``(position, direction)`` of the non-metal side of every metal face.
 
     ``direction`` is +1 for the region above the face, -1 for below. A
     zero-thickness metal sheet (patch / ground plane) refines on both sides;
-    a solid metal box only outside (never into the metal).
+    a solid metal box only outside (never into the metal).  Polygons also
+    contribute their real in-plane edges (not just the AABB).
     """
     out: list[tuple[float, int]] = []
     for info in infos:
         kind = str(getattr(info, "kind", "") or "").lower()
         if "metal" not in kind:
             continue
+        out.extend(polygon_metal_sides(info, axis_idx))
         try:
             a = float(info.start[axis_idx])
             b = float(info.stop[axis_idx])
@@ -121,6 +189,7 @@ def interface_refine_lines(
     arr = np.sort(np.asarray(lines, dtype=float))
     if arr.size < 2:
         return []
+    base = arr.copy()
     growth = min(max(float(growth), MIN_GROWTH), MAX_GROWTH)
     sizes = np.diff(arr)
     smallest = float(sizes.min()) if sizes.size else 0.0
@@ -131,6 +200,16 @@ def interface_refine_lines(
     added: list[float] = []
     for pos, direction in interfaces:
         x = float(pos)
+        # easyMesh aligns solid boxes, but a polygon sheet's outline may lie
+        # *inside* an existing cell (e.g. the re-entrant edges of an L-trace).
+        # The interface itself must be a grid line; otherwise the metal edge is
+        # not represented by the mesh at all and no grading can start there.
+        tol = 1e-9 * max(1.0, abs(x))
+        if arr[0] + tol < x < arr[-1] - tol and not np.any(
+            np.abs(arr - x) < tol
+        ):
+            added.append(x)
+            arr = np.sort(np.concatenate([arr, np.asarray([x], dtype=float)]))
         step = fine_val
         for _ in range(MAX_CELLS_OUTWARD):
             if direction > 0:
@@ -166,7 +245,9 @@ def interface_refine_lines(
             break
 
     # drop lines colliding with existing ones or with each other
-    merged = [float(v) for v in arr]
+    # (``arr`` may have been extended above with interface lines; those are
+    # new lines and must stay in the result, so collide against ``base``.)
+    merged = [float(v) for v in base]
     keep: list[float] = []
     for v in sorted(added):
         tol = 1e-9 * max(1.0, abs(v))
