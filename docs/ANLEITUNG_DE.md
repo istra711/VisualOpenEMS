@@ -546,12 +546,12 @@ bzw. nachdem der Solver gelaufen ist:
 
 ![S-Params](images/sparams_viewer.png)
 
-**S-Params.** Smith-Chart, |S| dB, Phase, VSWR; Marker per Klick, „Go to S-min“ springt auf das Resonanzminimum, „Pop out“ löst den Plot in ein eigenes Fenster.
+**S-Params.** Smith-Chart, |S| dB, Phase, VSWR; Marker per Klick, „Go to S-min“ springt auf das Resonanzminimum, „Pop out“ löst den Plot in ein eigenes Fenster. Die Markerliste zeigt für jede markierte Frequenz die Werte aller angehakten Traces und aktualisiert sich beim An-/Abhaken.
 
 
 1. **S-Params Viewer**
    - S11 / S21, dB, Phase
-   - Marker: Frequenz, S, Γ, Z/Y, VSWR, RL
+   - Marker: Frequenz plus S, Γ, Z/Y, VSWR, RL für jeden angehakten Trace
    - Smith-Chart: Z- und Y-Marker
    - **Export…** / Rechtsklick → Export S-parameters: Touchstone (.sNp),
      CSV (Frequenz + jedes Sij als dB/Phase/Real/Imaginär) und ASCII-Tabelle;

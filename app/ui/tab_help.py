@@ -890,9 +890,13 @@ After a successful Run
     The marker list names the function (e.g. "S21 max", "S11 -3dB low",
     "S11 valley"); delta rows show the reference/target frequency, Δf and
     the dB difference only.
+  • Every marker lists its value for **all ticked traces** at that frequency
+    (one list row per trace, including "no data" for empty matrix cells).
+    Ticking another trace adds its rows; unticking one removes them.
   • Cursor / markers show frequency + value. Click a marker row to highlight
     that marker in the plot; right-click a marker row for Copy marker value,
-    Copy frequency or Delete marker (Clear markers removes all). Markers and
+    Copy frequency or Delete marker (deletes the marker for all traces;
+    Clear markers removes all). Markers and
     their tags/delta references are saved in the project JSON (closing the GUI
     with unsaved marker/settings changes asks Save / Discard / Cancel). The
     analysis dialog and pop-out graph are also in the plot's right-click menu.

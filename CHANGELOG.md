@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   percentage can move backwards during a run. The energy progress bar now
   keeps a vertical marker at its highest reached value; the marker resets for
   each new run.
+- **Marker values for every selected S-parameter**: the S-parameter viewer's
+  marker list now shows one value row per ticked trace at each marker
+  frequency (including `no data` for empty cells). Ticking or unticking a
+  trace rebuilds the list immediately; deleting a row still deletes the whole
+  marker for all traces.
 - **Native Linux preparation**: executable and install-path discovery for
   FreeCAD, openEMS, AppCSXCAD and the simulation Python is centralized in
   `app/platform_tools.py`. Fresh settings now use native Linux paths instead of

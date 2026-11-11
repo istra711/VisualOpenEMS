@@ -12,6 +12,7 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app.ui.sparam_viewer import SParamViewer, find_latest_sparam_files, load_network_from_path
@@ -154,6 +155,70 @@ def main() -> int:
         print("FAIL: not all transmission traces drawn")
         return 12
     print("multi-trace presets OK")
+
+    # Every marker lists a value row for every ticked trace; adding/removing a
+    # trace rebuilds the list, and deleting any trace row deletes the marker.
+    viewer.cmb_trace_set.setCurrentText("Transmission (Sij)")
+    tr_keys = viewer._checked_traces()
+    viewer._clear_markers()
+    f_mid = float(viewer.network.f[len(viewer.network.f) // 2])
+    viewer._add_marker_at_freq(f_mid)
+    if viewer.marker_list.count() != len(tr_keys):
+        print(
+            "FAIL: marker list must have one row per selected trace:",
+            viewer.marker_list.count(),
+            "!=",
+            len(tr_keys),
+        )
+        return 14
+    marker_rows = [
+        viewer.marker_list.item(i).text() for i in range(viewer.marker_list.count())
+    ]
+    missing_rows = [key for key in tr_keys if not any(key in row for row in marker_rows)]
+    if missing_rows:
+        print("FAIL: marker list misses selected traces:", missing_rows)
+        return 14
+    viewer.cmb_marker_style.setCurrentText("Z")
+    z_rows = [
+        viewer.marker_list.item(i).text() for i in range(viewer.marker_list.count())
+    ]
+    if not all("Z=" in row for row in z_rows):
+        print("FAIL: marker style not applied to every trace row")
+        return 14
+    viewer.cmb_marker_style.setCurrentText("dB")
+
+    def _trace_item(name: str):
+        for i in range(viewer.trace_list.count()):
+            item = viewer.trace_list.item(i)
+            if item.text() == name:
+                return item
+        return None
+
+    removed = tr_keys[0]
+    item = _trace_item(removed)
+    if item is None:
+        print("FAIL: trace item missing:", removed)
+        return 14
+    item.setCheckState(Qt.CheckState.Unchecked)
+    if viewer.marker_list.count() != len(tr_keys) - 1:
+        print("FAIL: marker list did not drop a deselected trace")
+        return 14
+    if any(
+        removed in viewer.marker_list.item(i).text()
+        for i in range(viewer.marker_list.count())
+    ):
+        print("FAIL: deselected trace remains in marker list:", removed)
+        return 14
+    item.setCheckState(Qt.CheckState.Checked)
+    if viewer.marker_list.count() != len(tr_keys):
+        print("FAIL: marker list did not re-add a selected trace")
+        return 14
+    viewer._delete_marker_at(1)  # any trace row deletes the whole marker
+    if viewer.markers or viewer.marker_list.count():
+        print("FAIL: deleting a trace row must remove the marker")
+        return 14
+    print("multi-trace marker values + selection updates OK")
+
     viewer.cmb_trace_set.setCurrentText("Single trace")
 
     # Unsimulated S-matrix cells (NaN in sparams.json, zeros in Touchstone)
@@ -242,9 +307,7 @@ def main() -> int:
     print("marker styles OK:", len(SParamViewer.MARKER_STYLES), "styles")
 
     # right-click delete: custom context menu + _delete_marker_at
-    from PySide6.QtCore import Qt as _Qt
-
-    if viewer.marker_list.contextMenuPolicy() != _Qt.ContextMenuPolicy.CustomContextMenu:
+    if viewer.marker_list.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu:
         print("FAIL: marker list has no custom context menu")
         return 8
     n_before = len(viewer.markers)

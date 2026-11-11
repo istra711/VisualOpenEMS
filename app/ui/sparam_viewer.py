@@ -305,8 +305,8 @@ class SParamViewer(QWidget):
         self.cmb_plot.addItems(self.PLOT_TYPES)
         self.cmb_port = QComboBox()
         self.cmb_port.setToolTip(
-            "Primary trace for markers / cursor / analysis.\n"
-            "Use the Trace list on the left or the preset to overlay more."
+            "Primary trace for marker placement / cursor / analysis.\n"
+            "The marker list shows every ticked trace at the marker frequency."
         )
         self.cmb_trace_set = QComboBox()
         self.cmb_trace_set.addItems(self.TRACE_PRESETS)
@@ -361,7 +361,8 @@ class SParamViewer(QWidget):
         self.trace_list.setMaximumHeight(155)
         self.trace_list.setToolTip(
             "Tick several S-parameters to draw them in one plot.\n"
-            "The bold/current entry (Primary) drives markers and cursor."
+            "The bold/current entry (Primary) drives marker placement and\n"
+            "cursor/analysis; the marker list shows values for every ticked trace."
         )
         lv.addWidget(self.trace_list)
         marker_bar = QHBoxLayout()
@@ -376,6 +377,10 @@ class SParamViewer(QWidget):
         marker_bar.addStretch(1)
         lv.addLayout(marker_bar)
         self.marker_list = QListWidget()
+        self.marker_list.setToolTip(
+            "One row per marker frequency and ticked trace.\n"
+            "Ticking/unticking a trace updates these values automatically."
+        )
         lv.addWidget(self.marker_list)
         fmt_row = QHBoxLayout()
         fmt_row.addWidget(QLabel("Marker style"))
@@ -1125,7 +1130,7 @@ class SParamViewer(QWidget):
     def _delta_marker_text(
         self,
         key: str,
-        s: np.ndarray,
+        s: np.ndarray | None,
         f_target: float,
         f_ref: float,
         z0: float,
@@ -1133,6 +1138,9 @@ class SParamViewer(QWidget):
         """One list row with frequencies and the dB difference only."""
         idx_t = int(np.argmin(np.abs(self.network.f - f_target)))
         idx_r = int(np.argmin(np.abs(self.network.f - f_ref)))
+        head = f"Δ {self.network.f[idx_t]/1e9:.4f} GHz {key}"
+        if s is None or idx_t >= len(s) or idx_r >= len(s):
+            return f"{head}  no data"
         val = complex(s[idx_t])
         ref = complex(s[idx_r])
         if not (
@@ -1141,15 +1149,16 @@ class SParamViewer(QWidget):
             and math.isfinite(ref.real)
             and math.isfinite(ref.imag)
         ):
-            return f"Δ marker {self.network.f[idx_t]/1e9:.4f} GHz  no data"
+            return f"{head}  no data"
         df = (float(self.network.f[idx_t]) - float(self.network.f[idx_r])) / 1e9
         mag_t, mag_r = abs(val), abs(ref)
         d_db = 20.0 * math.log10(max(mag_t, 1e-15) / max(mag_r, 1e-15))
-        head = (
-            f"Δ {self.network.f[idx_t]/1e9:.4f} GHz "
-            f"(ref {self.network.f[idx_r]/1e9:.4f})"
-        )
-        parts = [head, f"Δf {df * 1000.0:+.3g} MHz", f"Δ|S| {d_db:+.3f} dB"]
+        parts = [
+            head,
+            f"Δf {df * 1000.0:+.3g} MHz",
+            f"Δ|S| {d_db:+.3f} dB",
+            f"(ref {self.network.f[idx_r]/1e9:.4f} GHz)",
+        ]
         return "  ".join(parts)
 
     def _goto_min(self) -> None:
@@ -1495,44 +1504,74 @@ class SParamViewer(QWidget):
         self._refresh_markers()  # list rows follow the selected style
 
     def _refresh_markers(self) -> None:
+        """Rebuild one row per marker * selected trace (same marker frequency).
+
+        The marker is a frequency, not a trace: every ticked S-parameter gets a
+        value row for it.  Selecting/deselecting a trace updates this list on
+        the next redraw, including explicit ``no data`` rows for empty cells.
+        """
+        current = self.marker_list.currentItem()
+        current_key = (
+            current.data(Qt.ItemDataRole.UserRole + 1) if current is not None else None
+        )
         self.marker_list.blockSignals(True)
         try:
             self.marker_list.clear()
             if self.network is None:
                 self._selected_marker = None
                 return
-            key = self.cmb_port.currentText() if self.cmb_port.count() else "S11"
-            s = self._trace(key)
-            if s is None:
-                return
+            keys = self._checked_traces()
+            if not keys:
+                primary = self.cmb_port.currentText() if self.cmb_port.count() else ""
+                keys = [primary] if primary else ["S11"]
             z0 = self._z0_from_network()
             self._marker_z0 = z0
             for f in self.markers:
                 idx = int(np.argmin(np.abs(self.network.f - f)))
-                val = complex(s[idx]) if idx < len(s) else complex("nan")
                 f_ghz = float(self.network.f[idx]) / 1e9
                 ref_f = self._delta_refs.get(float(f))
-                if ref_f is not None:
-                    text = self._delta_marker_text(
-                        key, s, float(f), float(ref_f), z0
-                    )
-                else:
-                    text = self._marker_list_text(key, val, f_ghz, z0)
                 tag = self._marker_tags.get(float(f))
-                if tag:
-                    text = f"{tag}  |  {text}"
-                self.marker_list.addItem(QListWidgetItem(text))
-                self.marker_list.item(self.marker_list.count() - 1).setData(
-                    Qt.ItemDataRole.UserRole, float(self.network.f[idx])
-                )
-            # Keep the selected marker row visible after a rebuild.
+                for key in keys:
+                    s = self._trace(key)
+                    has_data = s is not None and self._trace_has_data(s)
+                    if ref_f is not None:
+                        text = self._delta_marker_text(
+                            key, s if has_data else None, float(f), float(ref_f), z0
+                        )
+                    else:
+                        val = (
+                            complex(s[idx])
+                            if has_data and idx < len(s)
+                            else complex("nan")
+                        )
+                        text = self._marker_list_text(key, val, f_ghz, z0)
+                    if tag:
+                        text = f"{tag}  |  {text}"
+                    item = QListWidgetItem(text)
+                    item.setData(Qt.ItemDataRole.UserRole, float(self.network.f[idx]))
+                    item.setData(Qt.ItemDataRole.UserRole + 1, key)
+                    self.marker_list.addItem(item)
+            # Keep the selected marker row visible after a rebuild.  All trace
+            # rows of a marker share the same frequency, so the first match is
+            # enough to keep the plot highlight.
             if self._selected_marker is not None and self.markers:
-                nearest = min(
-                    range(len(self.markers)),
-                    key=lambda i: abs(self.markers[i] - self._selected_marker),
-                )
-                if abs(self.markers[nearest] - self._selected_marker) < 1.0:
-                    self.marker_list.setCurrentRow(nearest)
+                candidates: list[int] = []
+                for row in range(self.marker_list.count()):
+                    item = self.marker_list.item(row)
+                    raw = item.data(Qt.ItemDataRole.UserRole) if item else None
+                    if raw is not None and abs(float(raw) - self._selected_marker) < 1.0:
+                        candidates.append(row)
+                selected_row = None
+                if current_key:
+                    for row in candidates:
+                        item = self.marker_list.item(row)
+                        if item.data(Qt.ItemDataRole.UserRole + 1) == current_key:
+                            selected_row = row
+                            break
+                if selected_row is None and candidates:
+                    selected_row = candidates[0]
+                if selected_row is not None:
+                    self.marker_list.setCurrentRow(selected_row)
                 else:
                     self._selected_marker = None
         finally:
@@ -1573,27 +1612,36 @@ class SParamViewer(QWidget):
         QApplication.clipboard().setText(f"{float(raw) / 1e9:.9g} GHz")
 
     def _delete_marker_at(self, row: int) -> None:
-        """Remove marker `row` (index in markers == row in marker_list)."""
-        if 0 <= row < len(self.markers):
-            f = self.markers[row]
-            # Remove delta markers that referenced this marker, and the delta
-            # link when the deleted marker itself was a delta.
-            dependents = [
-                mf for mf, rf in self._delta_refs.items() if abs(rf - f) < 1.0
-            ]
-            for mf in dependents + [f]:
-                self._marker_tags.pop(float(mf), None)
-                self._delta_refs.pop(float(mf), None)
-                if mf in self.markers:
-                    self.markers.remove(mf)
-            if self._selected_marker is not None and (
-                self._selected_marker in dependents
-                or abs(f - self._selected_marker) < 1.0
-            ):
-                self._selected_marker = None
-            self._refresh_markers()
-            self._redraw()
-            self.markers_changed.emit()
+        """Remove the marker shown by a marker-list row (all its trace rows)."""
+        item = self.marker_list.item(row)
+        if item is None:
+            return
+        raw = item.data(Qt.ItemDataRole.UserRole)
+        if raw is None:
+            return
+        f_row = float(raw)
+        matches = [mf for mf in self.markers if abs(mf - f_row) < 1.0]
+        if not matches:
+            return
+        f = matches[0]
+        # Remove delta markers that referenced this marker, and the delta
+        # link when the deleted marker itself was a delta.
+        dependents = [
+            mf for mf, rf in self._delta_refs.items() if abs(rf - f) < 1.0
+        ]
+        for mf in dependents + [f]:
+            self._marker_tags.pop(float(mf), None)
+            self._delta_refs.pop(float(mf), None)
+            if mf in self.markers:
+                self.markers.remove(mf)
+        if self._selected_marker is not None and (
+            self._selected_marker in dependents
+            or abs(f - self._selected_marker) < 1.0
+        ):
+            self._selected_marker = None
+        self._refresh_markers()
+        self._redraw()
+        self.markers_changed.emit()
 
     # ----- pop-out graph window ------------------------------------------
     @property

@@ -158,6 +158,24 @@ def main() -> int:
     assert viewer.marker_state() == state
     print("  marker state project JSON round-trip OK")
 
+    # Multi-trace marker rows: an untouched matrix cell must say "no data"
+    # instead of a misleading -300 dB value.
+    ntwk = _network()
+    ntwk.s[:, 0, 1] = 0.0
+    ntwk.s[:, 1, 0] = 0.0
+    viewer.network = ntwk
+    viewer._populate_ports()
+    viewer._set_checked_traces(["S11", "S12"], "Custom")
+    viewer.cmb_plot.setCurrentText("|S| dB")
+    viewer._redraw()
+    viewer._clear_markers()
+    viewer._add_marker_at_freq(2.0e9)
+    assert viewer.marker_list.count() == 2, viewer.marker_list.count()
+    rows = [viewer.marker_list.item(i).text() for i in range(2)]
+    assert any("S11" in row and "no data" not in row for row in rows), rows
+    assert any("S12" in row and "no data" in row for row in rows), rows
+    print("  multi-trace marker rows + empty-cell no data OK")
+
     print("S-PARAM SMART MARKERS SMOKE PASS")
     return 0
 

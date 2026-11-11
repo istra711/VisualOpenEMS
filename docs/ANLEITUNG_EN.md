@@ -539,12 +539,12 @@ Two reports answer "is this run trustworthy?" — before and after the solver ra
 
 ![S-parameters](images/sparams_viewer.png)
 
-**S-parameters.** Smith chart, |S| dB, phase, VSWR; click markers, "Go to S-min" jumps to the resonance dip, "Pop out" detaches the plot into its own window.
+**S-parameters.** Smith chart, |S| dB, phase, VSWR; click markers, "Go to S-min" jumps to the resonance dip, "Pop out" detaches the plot into its own window. The marker list shows every ticked trace at the marker frequency and updates when traces are ticked or unticked.
 
 
 1. **S-Params Viewer**
    - S11 / S21, dB, phase
-   - Marker: frequency, S, Γ, Z/Y, VSWR, RL
+   - Marker: frequency plus S, Γ, Z/Y, VSWR, RL for every ticked trace
    - Smith chart: Z and Y markers
    - **Export…** / right-click → Export S-parameters: Touchstone (.sNp),
      CSV (frequency + every Sij as dB/phase/real/imaginary) and ASCII table;
