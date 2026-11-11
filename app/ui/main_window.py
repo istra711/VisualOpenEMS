@@ -70,6 +70,7 @@ from app.csxcad_builder.primitives import patch_antenna_primitives
 from app.csxcad_builder.quantize import f32 as _f32
 from app.freecad_io.freecad_mesh import tessellate_cad_to_meshes
 from app.ui.object_display import DisplayOptionsWidget, normalize_display
+from app.ui.peak_progress import PeakHoldProgressBar
 from app.ui.tab_help import show_tab_help
 
 # Tree kinds the context menu / geometry menu can duplicate (geom and nf2ff
@@ -1122,7 +1123,7 @@ class MainWindow(QMainWindow):
         # Second bar: residual-energy convergence toward the end criteria — the
         # run's actual stopping condition, which the timestep count alone misses.
         # 0% = energy at start (0 dB), 100% = end criterion reached (min. energy).
-        self.progress_energy = QProgressBar()
+        self.progress_energy = PeakHoldProgressBar()
         self.progress_energy.setRange(0, 100)
         self.progress_energy.setValue(0)
         self.progress_energy.setFixedWidth(150)
@@ -1130,7 +1131,8 @@ class MainWindow(QMainWindow):
         self.progress_energy.setVisible(False)
         self.progress_energy.setToolTip(
             "Residual-energy convergence: 0% = energy at start (0 dB), "
-            "100% = end criteria reached (minimum energy in dB)"
+            "100% = end criteria reached (minimum energy in dB).\n"
+            "The marker shows the highest value reached (peak hold)."
         )
         self.lbl_engine = QLabel("")
         self.lbl_engine.setVisible(False)
@@ -2258,6 +2260,7 @@ class MainWindow(QMainWindow):
             bar.setValue(0)
             bar.setFormat("")
             bar.setVisible(False)
+        self.progress_energy.reset_peak()
         self.lbl_engine.setText("")
         self.lbl_engine.setVisible(False)
         self.lbl_runtime.setText("")

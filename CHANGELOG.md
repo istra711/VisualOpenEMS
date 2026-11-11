@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Antenna and Field Viewer headers show `Project: <name>`, and their pop-out
   window titles carry the same name. It updates automatically after New, Open
   and Save As.
+- **Peak-hold marker on the energy bar**: the reported residual-energy
+  percentage can move backwards during a run. The energy progress bar now
+  keeps a vertical marker at its highest reached value; the marker resets for
+  each new run.
 - **Native Linux preparation**: executable and install-path discovery for
   FreeCAD, openEMS, AppCSXCAD and the simulation Python is centralized in
   `app/platform_tools.py`. Fresh settings now use native Linux paths instead of

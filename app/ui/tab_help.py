@@ -458,7 +458,9 @@ Progress (status bar)
       remaining estimate (`ETA ~…`) from the engine's live s/TS.
     – Energy bar: residual-energy convergence toward the end criterion
       (EndCriteria, e.g. 1e-5 → -50 dB) — the run's actual stopping condition,
-      which the timestep count alone does not decide.
+      which the timestep count alone does not decide. The vertical marker
+      shows the highest value reached (peak hold), because the live energy
+      percentage can move backwards during a run.
     Both reset on each run.
 
 Run All Ports (Simulation menu → Ctrl+Shift+R)

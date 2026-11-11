@@ -57,6 +57,18 @@ def main() -> int:
     assert win._engine_progress.target_db == 50.0, win._engine_progress.target_db
     assert win.progress_energy.value() == 52, win.progress_energy.value()
     assert win.progress_energy.format() == "E 52%", win.progress_energy.format()
+    assert win.progress_energy.peak == 52, win.progress_energy.peak
+
+    # Energy can briefly rise again (percentage moves backwards).  The bar
+    # follows it, but the peak-hold marker must stay at the maximum.
+    win._log(
+        "[@     11m00s] Timestep:       174000 || Speed:   45.8 MC/s "
+        "(3.593e-03 s/TS) || Energy: ~1e-8 (-20.00dB)"
+    )
+    win._drain_log_queue()
+    assert win.progress_energy.value() == 40, win.progress_energy.value()
+    assert win.progress_energy.peak == 52, win.progress_energy.peak
+    assert win.progress_energy.grab().size().width() == win.progress_energy.width()
 
     # Max timesteps without reaching the energy criterion: the TS bar is full
     # (all timesteps really ran) but turns red and is labelled "(max)"; the
@@ -82,6 +94,7 @@ def main() -> int:
     win._reset_engine_progress()
     assert win.progress.isHidden(), "reset must hide the bar"
     assert win.progress_energy.isHidden(), "reset must hide the energy bar"
+    assert win.progress_energy.peak is None, "peak hold must reset for a new run"
     assert win.progress.styleSheet() == ""
 
     win.close()
