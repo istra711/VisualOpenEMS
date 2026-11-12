@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on load. Optional name completion is controlled in **Settings → Geometry
   variables**. The project format gains `variables` and per-object
   `expressions`; older project files load unchanged.
+- **Variable equations**: values in the variables table may now reference other
+  variables, in any order, for example `PCB_x = trace_l + 2*offset_y`. The
+  original equation is preserved in the project file while the resolved number
+  is used by geometry, meshing, CSX and scripts. Unknown names, circular
+  references and non-finite results are rejected with a clear message.
 - **Consistent run-log timestamps**: every line emitted during a run now gets
   the openEMS-style elapsed stamp (`[@ 1h50m02s]`), including solver warnings,
   post-processing messages and port summaries. Lines that already carry an

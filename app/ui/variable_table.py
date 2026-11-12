@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.project import VariableDef
-from app.models.variables import validate_variable_defs
+from app.models.variables import rename_expression, resolve_variable_defs
 from app.numfmt import parse_number
 
 
@@ -55,9 +55,11 @@ class VariableTableDialog(QDialog):
         root = QVBoxLayout(self)
 
         intro = QLabel(
-            "Named values in the project's drawing unit. They can be used in "
-            "geometry fields instead of numbers, or in arithmetic such as "
-            "<b>L/2</b> or <b>sqrt(W*W + L*L)</b>. Names are case-insensitive."
+            "Named values in the project's drawing unit. Values may be plain "
+            "numbers or equations using other variables, such as "
+            "<b>trace_l + 2*offset_y</b>. They can be used in geometry fields "
+            "instead of numbers, or in arithmetic such as <b>L/2</b> or "
+            "<b>sqrt(W*W + L*L)</b>. Names are case-insensitive."
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
@@ -84,7 +86,7 @@ class VariableTableDialog(QDialog):
         self.ed_name = QLineEdit()
         self.ed_name.setPlaceholderText("e.g. L")
         self.ed_value = QLineEdit()
-        self.ed_value.setPlaceholderText("number in the drawing unit")
+        self.ed_value.setPlaceholderText("number or expression, e.g. L/2")
         self.ed_comment = QLineEdit()
         self.ed_comment.setPlaceholderText("optional note")
         for editor in (self.ed_name, self.ed_value, self.ed_comment):
@@ -106,8 +108,10 @@ class VariableTableDialog(QDialog):
         root.addLayout(row)
 
         self.hint = QLabel(
-            "Tip: the geometry editor shows the expression again when you edit "
-            "an object; changing a variable here updates every field that uses it."
+            "Tip: variable values may reference variables defined above or "
+            "below them. The geometry editor shows expressions again when you "
+            "edit an object; changing a variable here updates every field that "
+            "uses it."
         )
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("color: palette(mid);")
@@ -123,9 +127,15 @@ class VariableTableDialog(QDialog):
         self._definitions: list[VariableDef] = []
         self.renames: dict[str, str] = {}
         for variable in variables or []:
+            expression = str(getattr(variable, "expression", "") or "").strip()
+            if expression:
+                value_text = expression
+            else:
+                raw_value = getattr(variable, "value", 0.0)
+                value_text = str(raw_value if raw_value is not None else 0.0)
             self._append_row(
                 str(getattr(variable, "name", "") or ""),
-                str(getattr(variable, "value", 0.0) or 0.0),
+                value_text,
                 str(getattr(variable, "comment", "") or ""),
                 original=str(getattr(variable, "name", "") or ""),
             )
@@ -282,32 +292,14 @@ class VariableTableDialog(QDialog):
     # -- validation / result ---------------------------------------------
     def _accept(self) -> None:
         self._sync_editor()
-        definitions: list[VariableDef] = []
-        value_errors: list[str] = []
+        rows: list[tuple[int, str, str, str]] = []
         for row in range(self.table.rowCount()):
             name = self._cell_text(row, 0).strip()
             raw_value = self._cell_text(row, 1).strip()
             comment = self._cell_text(row, 2).strip()
             if not name and not raw_value and not comment:
                 continue
-            value = parse_number(raw_value)
-            if value is None:
-                value_errors.append(
-                    f"Variable '{name or f'row {row + 1}'}': value must be a number."
-                )
-                value = 0.0
-            definitions.append(
-                VariableDef(
-                    name=name,
-                    value=float(value),
-                    comment=comment,
-                )
-            )
-
-        errors = value_errors + validate_variable_defs(definitions)
-        if errors:
-            self._show_errors(errors)
-            return
+            rows.append((row, name, raw_value, comment))
 
         renames: dict[str, str] = {}
         for row, original in enumerate(self._row_originals):
@@ -315,6 +307,45 @@ class VariableTableDialog(QDialog):
             new = self._cell_text(row, 0).strip()
             if old and new and old != new:
                 renames[old] = new
+
+        definitions: list[VariableDef] = []
+        value_errors: list[str] = []
+        for row, name, raw_value, comment in rows:
+            if not raw_value:
+                value_errors.append(
+                    f"Variable '{name or f'row {row + 1}'}': "
+                    "enter a number or expression."
+                )
+                raw_value = "0"
+            plain_value = parse_number(raw_value)
+            expression = ""
+            if plain_value is None:
+                expression = rename_expression(raw_value, renames)
+                plain_value = 0.0
+            definitions.append(
+                VariableDef(
+                    name=name,
+                    value=float(plain_value),
+                    comment=comment,
+                    expression=expression,
+                )
+            )
+
+        values, errors = resolve_variable_defs(definitions)
+        errors = value_errors + errors
+        if errors:
+            self._show_errors(errors)
+            return
+
+        definitions = [
+            VariableDef(
+                name=definition.name,
+                value=values[definition.name],
+                comment=definition.comment,
+                expression=definition.expression,
+            )
+            for definition in definitions
+        ]
 
         if callable(self._validate):
             try:

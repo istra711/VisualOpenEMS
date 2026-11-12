@@ -78,6 +78,76 @@ def test_variable_validation_and_rename():
     }
 
 
+def test_variable_equations_resolve_forward_references():
+    import math
+
+    from app.models.project import VariableDef
+    from app.models.variables import (
+        resolve_variable_defs,
+        validate_variable_defs,
+        variable_values_from_defs,
+    )
+
+    defs = [
+        VariableDef("PCB_x", 0.0, expression="trace_l + 2*offset_y"),
+        VariableDef("trace_l", 100.0),
+        VariableDef("offset_y", 10.0),
+        VariableDef("half_x", 0.0, expression="PCB_x / 2"),
+        VariableDef(
+            "diagonal",
+            0.0,
+            expression="sqrt(trace_l**2 + (2*offset_y)**2)",
+        ),
+    ]
+    values, errors = resolve_variable_defs(defs)
+    assert errors == []
+    assert values["trace_l"] == 100.0
+    assert values["offset_y"] == 10.0
+    assert values["PCB_x"] == 120.0
+    assert values["half_x"] == 60.0
+    assert abs(values["diagonal"] - math.sqrt(10400.0)) < 1e-12
+    assert validate_variable_defs(defs) == []
+    assert variable_values_from_defs(defs) == values
+
+    cycle = [
+        VariableDef("A", 0.0, expression="B + 1"),
+        VariableDef("B", 0.0, expression="A + 1"),
+    ]
+    values, errors = resolve_variable_defs(cycle)
+    assert values == {}
+    assert len(errors) == 1 and "circular reference" in errors[0]
+
+    unknown = [VariableDef("A", 0.0, expression="Missing + 1")]
+    values, errors = resolve_variable_defs(unknown)
+    assert values == {}
+    assert errors and "unknown variable 'Missing'" in errors[0]
+
+
+def test_project_roundtrip_variable_equations():
+    from app.models.project import Project, VariableDef
+
+    project = Project.new_default("equations")
+    project.variables = [
+        VariableDef("trace_l", 100.0),
+        VariableDef("offset_y", 10.0),
+        VariableDef(
+            "PCB_x",
+            120.0,
+            "board edge",
+            expression="trace_l + 2*offset_y",
+        ),
+    ]
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "equations.fcsim.json"
+        project.save(path)
+        loaded = Project.load(path)
+
+    assert loaded.variables[2].name == "PCB_x"
+    assert loaded.variables[2].value == 120.0
+    assert loaded.variables[2].expression == "trace_l + 2*offset_y"
+    assert loaded.variable_values()["PCB_x"] == 120.0
+
+
 def test_resolve_primitive_keeps_expressions_and_updates_bounds():
     from app.models.variables import resolve_primitive
 

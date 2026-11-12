@@ -6806,7 +6806,7 @@ class MainWindow(QMainWindow):
         return counts
 
     def _variable_candidates(self, definitions, renames):
-        """Deep-copied geometry with definitions applied, plus validation errors.
+        """Deep-copied geometry, resolved definitions and validation errors.
 
         Renaming happens before evaluation, in one pass, so a name swap in the
         table follows the original variable identity.
@@ -6814,19 +6814,44 @@ class MainWindow(QMainWindow):
         import copy as _copy
 
         from app.models.variables import (
+            rename_expression,
             rename_expression_map,
             resolve_dump,
             resolve_nf2ff,
             resolve_port,
             resolve_primitive,
-            validate_variable_defs,
-            variable_values_from_defs,
+            resolve_variable_defs,
         )
 
-        errors = validate_variable_defs(definitions)
+        def _field(definition, name, default=""):
+            if isinstance(definition, dict):
+                return definition.get(name, default)
+            return getattr(definition, name, default)
+
+        def _set_field(definition, name, value):
+            if isinstance(definition, dict):
+                definition[name] = value
+            else:
+                setattr(definition, name, value)
+
+        effective_definitions = _copy.deepcopy(list(definitions))
+        if renames:
+            for definition in effective_definitions:
+                expression = str(_field(definition, "expression", "") or "").strip()
+                if expression:
+                    _set_field(
+                        definition,
+                        "expression",
+                        rename_expression(expression, renames),
+                    )
+
+        values, errors = resolve_variable_defs(effective_definitions)
         if errors:
-            return None, errors
-        values = variable_values_from_defs(definitions)
+            return None, errors, effective_definitions
+        for definition in effective_definitions:
+            name = str(_field(definition, "name", "") or "").strip()
+            if name in values:
+                _set_field(definition, "value", values[name])
 
         primitives: list[dict] = []
         for prim in self.primitives or []:
@@ -6865,18 +6890,22 @@ class MainWindow(QMainWindow):
         nf, nf_errors = resolve_nf2ff(nf, values)
         errors.extend(nf_errors)
 
-        return (primitives, ports, dumps, nf), errors
+        return (primitives, ports, dumps, nf), errors, effective_definitions
 
     def _validate_variable_update(self, definitions, renames) -> list[str]:
         """Variable-table callback: validate against every geometry expression."""
-        _candidates, errors = self._variable_candidates(definitions, renames)
+        _candidates, errors, _definitions = self._variable_candidates(
+            definitions, renames
+        )
         return errors
 
     def _apply_variable_update(self, definitions, renames) -> bool:
         """Apply a table edit and re-evaluate every expression-backed field."""
         import copy as _copy
 
-        candidates, errors = self._variable_candidates(definitions, renames)
+        candidates, errors, resolved_definitions = self._variable_candidates(
+            definitions, renames
+        )
         if candidates is None or errors:
             shown = errors[:12]
             text = "\n".join(f"• {e}" for e in shown)
@@ -6890,7 +6919,7 @@ class MainWindow(QMainWindow):
             return False
 
         primitives, ports, dumps, nf = candidates
-        self.project.variables = _copy.deepcopy(list(definitions))
+        self.project.variables = _copy.deepcopy(list(resolved_definitions))
         self.primitives = primitives
         self.project.primitives = list(primitives)
         self.project.ports = ports
@@ -6908,9 +6937,15 @@ class MainWindow(QMainWindow):
 
     def _resolve_loaded_variables(self) -> None:
         """Make numeric geometry match saved expressions without blocking load."""
-        if not any(self._expression_maps()):
+        has_variable_expressions = any(
+            str(getattr(variable, "expression", "") or "").strip()
+            for variable in self.project.variables
+        )
+        if not any(self._expression_maps()) and not has_variable_expressions:
             return
-        candidates, errors = self._variable_candidates(self.project.variables, {})
+        candidates, errors, resolved_definitions = self._variable_candidates(
+            self.project.variables, {}
+        )
         if candidates is None or errors:
             for error in errors[:8]:
                 self._log(f"Variable warning: {error}")
@@ -6920,6 +6955,7 @@ class MainWindow(QMainWindow):
                 )
             return
         primitives, ports, dumps, nf = candidates
+        self.project.variables = list(resolved_definitions)
         self.primitives = primitives
         self.project.primitives = list(primitives)
         self.project.ports = ports

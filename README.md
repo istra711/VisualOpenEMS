@@ -72,8 +72,11 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   on change/rename, and refuses unresolved expressions. Variable-name
   completion while typing is optional in **Settings → Geometry variables**.
   Names are case-insensitive; functions such as `sqrt`, `sin` and constants
-  such as `pi` are reserved. Expressions are stored next to the resolved
-  numeric values, so existing meshing, CSX and script code keep seeing numbers.
+  such as `pi` are reserved. Variable values may themselves be equations that
+  reference other variables, including variables defined later in the table
+  (for example `PCB_x = trace_l + 2*offset_y`); circular references and unknown
+  names are rejected. Expressions are stored next to the resolved numeric
+  values, so existing meshing, CSX and script code keep seeing numbers.
 - Port markings (`PORT_<name>_start` / `PORT_<name>_stop` points) are carried through from FCStd
 
 ### Mesh Generation

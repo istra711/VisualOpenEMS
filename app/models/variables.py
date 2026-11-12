@@ -106,44 +106,143 @@ def _def_value(defn: Any) -> float | None:
     return value
 
 
+def _def_raw_value(defn: Any) -> Any:
+    return defn.get("value") if isinstance(defn, Mapping) else getattr(defn, "value", None)
+
+
+def _def_expression(defn: Any) -> str:
+    """Expression text for a definition, falling back to its numeric value."""
+    raw = (
+        defn.get("expression")
+        if isinstance(defn, Mapping)
+        else getattr(defn, "expression", "")
+    )
+    text = str(raw or "").strip()
+    if text:
+        return text
+    value = _def_raw_value(defn)
+    if isinstance(value, bool):
+        return ""
+    return str(value if value is not None else "").strip()
+
+
+def _def_has_expression(defn: Any) -> bool:
+    raw = (
+        defn.get("expression")
+        if isinstance(defn, Mapping)
+        else getattr(defn, "expression", "")
+    )
+    return bool(str(raw or "").strip())
+
+
+def _def_invalid_numeric_value(defn: Any) -> bool:
+    value = _def_raw_value(defn)
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        try:
+            return not math.isfinite(float(value))
+        except (TypeError, ValueError, OverflowError):
+            return True
+    return False
+
+
 def _def_comment(defn: Any) -> str:
     raw = defn.get("comment") if isinstance(defn, Mapping) else getattr(defn, "comment", "")
     return str(raw or "").strip()
 
 
-def validate_variable_defs(definitions: Iterable[Any]) -> list[str]:
-    """Validate a complete table; returns one human-readable error per problem."""
+def resolve_variable_defs(
+    definitions: Iterable[Any],
+) -> tuple[dict[str, float], list[str]]:
+    """Evaluate a complete variable table, including equations.
+
+    Variable values may reference other variables, including definitions that
+    appear later in the table.  Names are case-insensitive.  The return value
+    is ``(canonical name -> resolved value, errors)``.  Cycles, unknown names,
+    invalid arithmetic and non-finite results are reported as user-facing
+    errors.
+    """
+    entries = list(definitions or [])
     errors: list[str] = []
     seen: dict[str, str] = {}
-    for index, defn in enumerate(definitions or []):
+    table: dict[str, tuple[str, str, Any, bool]] = {}
+
+    for index, defn in enumerate(entries):
         name = _def_name(defn)
         label = name or f"row {index + 1}"
         name_error = validate_variable_name(name)
         if name_error:
             errors.append(f"Variable '{label}': {name_error}.")
+            continue
+        key = name.casefold()
+        if key in seen:
+            errors.append(
+                f"Variable '{name}': the name is already used by "
+                f"'{seen[key]}' (names are case-insensitive)."
+            )
         else:
-            key = name.casefold()
-            if key in seen:
-                errors.append(
-                    f"Variable '{name}': the name is already used by "
-                    f"'{seen[key]}' (names are case-insensitive)."
-                )
-            else:
-                seen[key] = name
-        if _def_value(defn) is None:
-            errors.append(f"Variable '{label}': value must be a finite number.")
-    return errors
+            seen[key] = name
+        table[key] = (name, _def_expression(defn), defn, _def_has_expression(defn))
+
+    values: dict[str, float] = {}
+    state: dict[str, int] = {}
+
+    def _visit(key: str, stack: list[str]) -> bool:
+        status = state.get(key, 0)
+        if status == 2:
+            return True
+        if status == 3:
+            return False
+        if status == 1:
+            start = stack.index(key) if key in stack else 0
+            cycle = [table[item][0] for item in stack[start:]] + [table[key][0]]
+            errors.append(
+                f"Variable '{table[key][0]}': circular reference "
+                f"({' -> '.join(cycle)})."
+            )
+            return False
+
+        state[key] = 1
+        name, raw, defn, has_expression = table[key]
+        if not has_expression and _def_invalid_numeric_value(defn):
+            errors.append(f"Variable '{name}': value must be a finite number.")
+            state[key] = 3
+            return False
+
+        failed = False
+        for token in names_in_expression(raw):
+            ref_key = token.casefold()
+            if ref_key in table and not _visit(ref_key, stack + [key]):
+                failed = True
+        if failed:
+            state[key] = 3
+            return False
+
+        try:
+            value = evaluate_expression(raw, values, context=f"Variable '{name}'")
+        except VariableError as exc:
+            errors.append(str(exc))
+            state[key] = 3
+            return False
+
+        values[name] = value
+        state[key] = 2
+        return True
+
+    for key in table:
+        _visit(key, [])
+    return values, errors
+
+
+def validate_variable_defs(definitions: Iterable[Any]) -> list[str]:
+    """Validate a complete table; returns one human-readable error per problem."""
+    return resolve_variable_defs(definitions)[1]
 
 
 def variable_values_from_defs(definitions: Iterable[Any]) -> dict[str, float]:
-    """Name -> numeric value for valid entries (later duplicates win)."""
-    values: dict[str, float] = {}
-    for defn in definitions or []:
-        name = _def_name(defn)
-        value = _def_value(defn)
-        if name and value is not None and not validate_variable_name(name):
-            values[name] = value
-    return values
+    """Name -> resolved numeric value for valid entries (later duplicates win)."""
+    return resolve_variable_defs(definitions)[0]
 
 
 def canonical_variable_names(definitions: Iterable[Any]) -> dict[str, str]:

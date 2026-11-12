@@ -48,11 +48,18 @@ CELLS_PER_WAVELENGTH_BY_PRESET: dict[str, float] = {
 
 @dataclass
 class VariableDef:
-    """A named drawing-unit value used by geometry expressions."""
+    """A named drawing-unit value used by geometry expressions.
+
+    ``value`` is the resolved numeric value used by the geometry pipeline.
+    ``expression`` preserves the user-entered formula (for example
+    ``"trace_l + 2*offset_y"``) so the Variables dialog can show it again.
+    Plain numeric values leave ``expression`` empty.
+    """
 
     name: str
     value: float = 0.0
     comment: str = ""
+    expression: str = ""
 
 
 @dataclass
@@ -741,7 +748,7 @@ class Project:
         return None
 
     def variable_values(self) -> dict[str, float]:
-        """Valid named variables as ``{name: numeric value}``."""
+        """Resolved named variables as ``{name: numeric value}``."""
         from app.models.variables import variable_values_from_defs
 
         return variable_values_from_defs(self.variables)

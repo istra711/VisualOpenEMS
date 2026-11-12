@@ -170,6 +170,43 @@ def _test_variable_table() -> None:
         == ["trace_l", "trace_w", "var1"]
     )
 
+    # Variable values may be equations and are stored with their resolved value.
+    formula = VariableTableDialog(
+        variables=[VariableDef("trace_l", 100.0), VariableDef("offset_y", 10.0)]
+    )
+    formula._add_row()
+    formula.ed_name.setText("PCB_x")
+    formula.ed_value.setText("trace_l + 2*offset_y")
+    formula._accept()
+    formula_vars = formula.variables()
+    _assert([v.name for v in formula_vars] == ["trace_l", "offset_y", "PCB_x"])
+    _assert(formula_vars[2].value == 120.0, formula_vars[2])
+    _assert(
+        formula_vars[2].expression == "trace_l + 2*offset_y",
+        formula_vars[2].expression,
+    )
+
+    # Renaming a referenced variable updates the equation source text.
+    renamed = VariableTableDialog(
+        variables=[
+            VariableDef("trace_l", 100.0),
+            VariableDef("offset_y", 10.0),
+            VariableDef(
+                "PCB_x", 120.0, expression="trace_l + 2*offset_y"
+            ),
+        ]
+    )
+    renamed.table.selectRow(0)
+    renamed.ed_name.setText("trace_len")
+    renamed._accept()
+    renamed_vars = renamed.variables()
+    _assert([v.name for v in renamed_vars] == ["trace_len", "offset_y", "PCB_x"])
+    _assert(renamed_vars[2].value == 120.0, renamed_vars[2])
+    _assert(
+        renamed_vars[2].expression == "trace_len + 2*offset_y",
+        renamed_vars[2].expression,
+    )
+
     # MainWindow-style callback rejects unresolved expressions and keeps editing
     warned: list[str] = []
 
@@ -204,6 +241,8 @@ def _test_variable_table() -> None:
     blank_value.deleteLater()
     empty.deleteLater()
     custom.deleteLater()
+    formula.deleteLater()
+    renamed.deleteLater()
     table.deleteLater()
     app.processEvents()
     print("[table] edit/rename/validation OK")
@@ -317,7 +356,7 @@ def _test_main_window_apply_reload() -> None:
         "material": "copper",
         "start": [0.0, 0.0, 0.0],
         "stop": [1.0, 1.0, 1.0],
-        "expressions": {"stop.0": "L", "stop.1": "W/2"},
+        "expressions": {"stop.0": "L", "stop.1": "W/2", "stop.2": "PCB_x"},
     }
     win.primitives = [dict(prim)]
     win.project.primitives = [dict(prim)]
@@ -331,17 +370,28 @@ def _test_main_window_apply_reload() -> None:
     ]
 
     ok = win._apply_variable_update(
-        [VariableDef("L", 30.0), VariableDef("W", 10.0)], {}
+        [
+            VariableDef("L", 30.0),
+            VariableDef("W", 10.0),
+            VariableDef("PCB_x", 0.0, expression="L + 2*W"),
+        ],
+        {},
     )
     _assert(ok, "variable apply failed")
     _assert(win.primitives[0]["stop"][0] == 30.0, win.primitives[0])
     _assert(win.primitives[0]["stop"][1] == 5.0, win.primitives[0])
+    _assert(win.primitives[0]["stop"][2] == 50.0, win.primitives[0])
     _assert(win.project.primitives[0]["stop"][0] == 30.0)
     _assert(win.project.ports[0].stop[2] == 15.0, win.project.ports[0])
+    _assert(win.project.variables[2].value == 50.0, win.project.variables[2])
 
     # rename follows the expression source text as well as numeric fields
     ok = win._apply_variable_update(
-        [VariableDef("length", 30.0), VariableDef("W", 10.0)],
+        [
+            VariableDef("length", 30.0),
+            VariableDef("W", 10.0),
+            VariableDef("PCB_x", 50.0, expression="L + 2*W"),
+        ],
         {"L": "length"},
     )
     _assert(ok, "rename apply failed")
@@ -353,6 +403,11 @@ def _test_main_window_apply_reload() -> None:
         win.project.ports[0].expressions["stop.2"] == "length/2",
         win.project.ports[0].expressions,
     )
+    _assert(
+        win.project.variables[2].expression == "length + 2*W",
+        win.project.variables[2],
+    )
+    _assert(win.project.variables[2].value == 50.0, win.project.variables[2])
 
     # unresolved expression is refused and leaves the previous geometry alone
     warned: list[str] = []
@@ -376,20 +431,27 @@ def _test_main_window_apply_reload() -> None:
     _assert(not bad, "renaming to a missing variable must fail")
     _assert(bool(warned), "a rejected variable update must warn")
     _assert(win.primitives[0]["stop"][0] == 30.0)
+    _assert(win.primitives[0]["stop"][2] == 50.0)
 
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "vars.fcsim.json"
         win.project.save(path)
         loaded = Project.load(path)
-        _assert([v.name for v in loaded.variables] == ["length", "W"])
+        _assert(
+            [v.name for v in loaded.variables] == ["length", "W", "PCB_x"]
+        )
         # simulate stale numeric values and verify load-time resolution
         loaded.primitives[0]["stop"][0] = 999.0
+        loaded.primitives[0]["stop"][2] = 999.0
         loaded.ports[0].stop[2] = 999.0
+        loaded.variables[2].value = 999.0
         win.project = loaded
         win.primitives = [dict(p) for p in (loaded.primitives or [])]
         win._resolve_loaded_variables()
         _assert(win.primitives[0]["stop"][0] == 30.0, win.primitives[0])
+        _assert(win.primitives[0]["stop"][2] == 50.0, win.primitives[0])
         _assert(win.project.ports[0].stop[2] == 15.0, win.project.ports[0])
+        _assert(win.project.variables[2].value == 50.0, win.project.variables[2])
 
     win.close()
     win.deleteLater()
