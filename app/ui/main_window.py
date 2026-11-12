@@ -55,6 +55,13 @@ from PySide6.QtWidgets import (
 
 from app.freecad_io.importer import load_geometry_file, overall_bounds
 from app.models.project import GeomAssignment, PortDef, Project
+from app.models.port_width import (
+    AXES as PORT_WIDTH_AXES,
+    metal_name_at_port,
+    normalize_mode as normalize_port_width,
+    primitive_span,
+    rebuild_box as rebuild_port_width_box,
+)
 from app.runlog import (
     format_engine_elapsed,
     format_run_end,
@@ -7166,13 +7173,21 @@ class MainWindow(QMainWindow):
             mesh_dirs=str(pd.get("mesh_dirs") or "xyz"),
             direction=str(pd.get("direction") or "z"),
         )
-        dlg = PortDialog(self, port=seed, coord_system=self.project.mesh.coord_system)
+        dlg = PortDialog(
+            self,
+            port=seed,
+            coord_system=self.project.mesh.coord_system,
+            width_preview=self._port_width_preview,
+        )
         if dlg.exec() and dlg.result_port:
-            self.project.ports.append(dlg.result_port)
+            port = dlg.result_port
+            self._apply_port_width(port, previous=seed.lumped_width)
+            self.project.ports.append(port)
             self._refresh_ports()
+            self.mesh_viewer.set_ports(self.project.ports)
             self._log(
-                f"Port {dlg.result_port.name}: {dlg.result_port.type} "
-                f"{dlg.result_port.start}→{dlg.result_port.stop} R={dlg.result_port.resistance}"
+                f"Port {port.name}: {port.type}{self._port_width_text(port)} "
+                f"{port.start}→{port.stop} R={port.resistance}"
             )
 
     def _on_mesh_port_mode_changed(self, on: bool) -> None:
@@ -7218,96 +7233,214 @@ class MainWindow(QMainWindow):
                 text += f", at least {float(min_band):g} mm"
         self._log(f"Mesh editor: edge snapping {text}")
 
+    def _primitive_list(self) -> list:
+        return list(self.primitives or (self.project.primitives or []) or [])
+
     def _primitive_span(self, name: str, axis: str) -> tuple[float, float] | None:
         """Extent of the project primitive ``name`` along ``axis`` (None if unknown).
 
-        Used by "width = metal" to re-derive a lumped area port's width after the
-        mode was changed in the Port dialog.
+        Used by "width = metal" to (re-)derive a lumped area port's width after
+        the mode was changed in the Port dialog.
         """
         letter = str(axis or "").strip().lower()
-        if not name or letter not in ("x", "y", "z"):
+        if not name or letter not in PORT_WIDTH_AXES:
             return None
-        k = "xyz".index(letter)
-        prims = self.primitives or (self.project.primitives or [])
-        for pr in prims:
+        for pr in self._primitive_list():
             if str(pr.get("name") or "") != str(name):
                 continue
-            try:
-                lo = float(pr["start"][k])
-                hi = float(pr["stop"][k])
-            except (KeyError, TypeError, ValueError, IndexError):
-                return None
-            return (lo, hi) if hi >= lo else (hi, lo)
+            return primitive_span(pr, letter)
         return None
 
+    def _metal_primitive_names(self) -> set[str]:
+        """Names of primitives that the CSX builder treats as metal/PEC."""
+        kinds = {
+            str(getattr(mat, "name", "") or "").casefold(): str(
+                getattr(mat, "kind", "") or ""
+            ).casefold()
+            for mat in (self.project.materials or [])
+        }
+        roles = {
+            str(getattr(assign, "object_name", "") or ""): str(
+                getattr(assign, "role", "") or ""
+            ).casefold()
+            for assign in (self.project.assignments or [])
+        }
+        metal_like = {
+            "copper",
+            "pec",
+            "ground",
+            "aluminum",
+            "aluminium",
+            "gold",
+            "silver",
+            "metal",
+        }
+        names: set[str] = set()
+        for pr in self._primitive_list():
+            name = str(pr.get("name") or "")
+            if not name:
+                continue
+            material = str(pr.get("material") or "").strip()
+            kind = kinds.get(material.casefold(), "")
+            if kind:
+                is_metal = kind in ("pec", "conducting_sheet")
+            elif not material:
+                is_metal = roles.get(name, "") in ("pec", "conducting_sheet")
+            else:
+                lowered = material.casefold()
+                is_metal = (
+                    lowered in metal_like
+                    or "copper" in lowered
+                    or "ground" in lowered
+                    or "metal" in lowered
+                )
+            if is_metal:
+                names.add(name)
+        return names
+
+    def _port_width_span(
+        self, metal: str, start, stop, direction: str, mode: str
+    ) -> tuple[tuple[float, float] | None, str]:
+        """``(span, metal)`` for a width mode, resolving the metal if needed."""
+        span = self._primitive_span(metal, mode) if metal else None
+        if span is not None and span[1] - span[0] > 1e-9:
+            return span, metal
+        resolved = metal_name_at_port(
+            self._primitive_list(),
+            self._metal_primitive_names(),
+            start,
+            stop,
+            direction,
+            mode,
+        )
+        if resolved:
+            span = self._primitive_span(resolved, mode)
+            if span is not None and span[1] - span[0] > 1e-9:
+                return span, resolved
+        return span, metal
+
+    def _port_width_preview(
+        self, mode: str, start, stop, direction: str = "z", metal: str = ""
+    ):
+        """New Start/Stop for the Port dialog's live width preview."""
+        axis = str(direction or "z").strip().lower()
+        if axis not in PORT_WIDTH_AXES:
+            axis = "z"
+        width_mode = normalize_port_width(mode, axis)
+        span = None
+        resolved = str(metal or "")
+        if width_mode != "line":
+            span, resolved = self._port_width_span(
+                resolved, start, stop, axis, width_mode
+            )
+        box = rebuild_port_width_box(start, stop, axis, width_mode, span)
+        if box is None:
+            return None
+        return box[0], box[1], resolved
+
+    @staticmethod
+    def _drop_port_expressions(port, axes):
+        """Formulas for ``axes`` are dropped after a width rebuild overwrote them."""
+        expressions = getattr(port, "expressions", None)
+        if not isinstance(expressions, dict):
+            return expressions
+        dropped_axes = {int(index) for index in axes}
+        dropped = {f"start.{index}" for index in dropped_axes} | {
+            f"stop.{index}" for index in dropped_axes
+        }
+        return {key: value for key, value in expressions.items() if key not in dropped}
+
     def _apply_port_width(self, port, previous: str = "line") -> None:
-        """Match a lumped port's box to its width mode (only if the mode changed).
+        """Match a lumped port's box to its width mode.
 
         ``"line"`` collapses the two axes across the excitation direction to the
         middle of the box (a 1-D port); an axis letter widens it to the extent of
         the metal it was placed on and keeps the other transverse axis at the
-        middle (a zero-thickness sheet = area port). Boxes the user edited by
-        hand are left alone when the mode did not change.
+        middle (a zero-thickness sheet = area port).
+
+        The box is rebuilt when the mode changed and also when an area mode still
+        has a line box (old projects, manual entry).  A hand-edited non-zero
+        width is left alone.  Without a saved metal name the metal under Start is
+        looked up, so "as wide as the metal" also works for manual/imported
+        ports.
         """
         mode = str(getattr(port, "lumped_width", "line") or "line").strip().lower()
-        if mode in ("", "none", "-"):
-            mode = "line"
         if str(port.type) != "lumped":
             port.lumped_width = "line"
             return
         direction = str(port.direction or "z").strip().lower()
-        if direction not in ("x", "y", "z"):
+        if direction not in PORT_WIDTH_AXES:
             direction = "z"
-        di = "xyz".index(direction)
-        if mode in ("x", "y", "z") and mode == direction:
+        normalized = normalize_port_width(mode, direction)
+        if mode in PORT_WIDTH_AXES and mode == direction:
             self._log(
                 f"  Port {port.name}: width axis {mode.upper()} is the excitation "
                 "direction — using a line instead"
             )
-            mode = "line"
-        elif mode not in ("x", "y", "z", "line"):
+        elif mode not in PORT_WIDTH_AXES and mode != "line":
             self._log(f"  Port {port.name}: unknown width '{mode}' — using a line")
-            mode = "line"
-        port.lumped_width = mode
-        if mode == str(previous or "line").strip().lower():
-            return  # unchanged: do not touch a hand-edited box
+        port.lumped_width = normalized
+        previous_mode = normalize_port_width(previous, direction)
+        direction_index = PORT_WIDTH_AXES.index(direction)
 
-        def _drop_transverse_expressions() -> None:
-            """Width rebuilding overwrote these axes: drop their old formulas."""
-            expressions = getattr(port, "expressions", None)
-            if not isinstance(expressions, dict):
+        if normalized == "line":
+            if normalized == previous_mode:
+                return  # unchanged: do not touch a hand-edited box
+            box = rebuild_port_width_box(port.start, port.stop, direction, "line")
+            if box is None:
                 return
-            keep = {f"start.{di}", f"stop.{di}"}
-            port.expressions = {
-                key: value
-                for key, value in expressions.items()
-                if key in keep
-                or not (str(key).startswith("start.") or str(key).startswith("stop."))
-            }
-
-        if mode == "line":
-            for k in range(3):
-                if k == di:
-                    continue
-                mid = 0.5 * (float(port.start[k]) + float(port.stop[k]))
-                port.start[k] = port.stop[k] = mid
-            _drop_transverse_expressions()
-            return
-        wi = "xyz".index(mode)
-        span = self._primitive_span(str(getattr(port, "metal", "") or ""), mode)
-        if span is None:
-            self._log(
-                f"  Port {port.name}: metal '{getattr(port, 'metal', '') or '?'}' "
-                f"not found — keep the box, widen it along {mode.upper()} by hand"
+            port.start = list(box[0])
+            port.stop = list(box[1])
+            port.expressions = self._drop_port_expressions(
+                port, [index for index in range(3) if index != direction_index]
             )
-        else:
-            port.start[wi], port.stop[wi] = float(span[0]), float(span[1])
-        for k in range(3):
-            if k in (di, wi):
-                continue
-            mid = 0.5 * (float(port.start[k]) + float(port.stop[k]))
-            port.start[k] = port.stop[k] = mid
-        _drop_transverse_expressions()
+            return
+
+        width_index = PORT_WIDTH_AXES.index(normalized)
+        other_index = 3 - direction_index - width_index
+        span, metal = self._port_width_span(
+            str(getattr(port, "metal", "") or ""),
+            port.start,
+            port.stop,
+            direction,
+            normalized,
+        )
+        if span is not None and span[1] - span[0] > 1e-9:
+            current_width = abs(
+                float(port.stop[width_index]) - float(port.start[width_index])
+            )
+            if normalized != previous_mode or current_width <= 1e-9:
+                box = rebuild_port_width_box(
+                    port.start, port.stop, direction, normalized, span
+                )
+                if box is not None:
+                    port.start = list(box[0])
+                    port.stop = list(box[1])
+                    port.expressions = self._drop_port_expressions(
+                        port,
+                        [index for index in range(3) if index != direction_index],
+                    )
+                    if metal and metal != str(getattr(port, "metal", "") or ""):
+                        port.metal = metal
+                        self._log(
+                            f"  Port {port.name}: width taken from metal "
+                            f"'{metal}' along {normalized.upper()}"
+                        )
+            return
+
+        if normalized == previous_mode:
+            return
+        # No usable metal width: keep the chosen width axis but make a sheet
+        # towards the other in-plane axis (the old fallback behaviour).
+        port.start[other_index] = port.stop[other_index] = 0.5 * (
+            float(port.start[other_index]) + float(port.stop[other_index])
+        )
+        port.expressions = self._drop_port_expressions(port, [other_index])
+        self._log(
+            f"  Port {port.name}: metal '{getattr(port, 'metal', '') or '?'}' "
+            f"has no extent along {normalized.upper()} — keep the box, widen it "
+            "by hand"
+        )
 
     def _on_mesh_port_place(self, request) -> None:
         """A click in the Mesh Viewer's port mode: configure a port there.
@@ -7362,7 +7495,12 @@ class MainWindow(QMainWindow):
         )
         if req.get("warning"):
             self._log(f"  {req['warning']}")
-        dlg = PortDialog(self, port=seed, coord_system=self.project.mesh.coord_system)
+        dlg = PortDialog(
+            self,
+            port=seed,
+            coord_system=self.project.mesh.coord_system,
+            width_preview=self._port_width_preview,
+        )
         try:
             while dlg.exec():
                 port = dlg.result_port
@@ -7420,7 +7558,12 @@ class MainWindow(QMainWindow):
             return
         old = self.project.ports[idx]
         old_mode = str(getattr(old, "lumped_width", "line") or "line").lower()
-        dlg = PortDialog(self, port=old, coord_system=self.project.mesh.coord_system)
+        dlg = PortDialog(
+            self,
+            port=old,
+            coord_system=self.project.mesh.coord_system,
+            width_preview=self._port_width_preview,
+        )
         if dlg.exec() and dlg.result_port:
             new_port = dlg.result_port
             self._apply_port_width(new_port, previous=old_mode)
@@ -8090,14 +8233,24 @@ class MainWindow(QMainWindow):
             from app.ui.geometry_editors import PortDialog
 
             p = self.project.ports[idx]
-            dlg = PortDialog(self, port=p, coord_system=self.project.mesh.coord_system)
+            old_mode = str(getattr(p, "lumped_width", "line") or "line").lower()
+            dlg = PortDialog(
+                self,
+                port=p,
+                coord_system=self.project.mesh.coord_system,
+                width_preview=self._port_width_preview,
+            )
             if dlg.exec() and dlg.result_port:
-                self.project.ports[idx] = dlg.result_port
+                new_port = dlg.result_port
+                self._apply_port_width(new_port, previous=old_mode)
+                self.project.ports[idx] = new_port
                 self._refresh_ports()
+                self.mesh_viewer.set_ports(self.project.ports)
                 self._log(
-                    f"Port updated: {dlg.result_port.name} {dlg.result_port.type} "
-                    f"{dlg.result_port.start}→{dlg.result_port.stop} "
-                    f"R={dlg.result_port.resistance}"
+                    f"Port updated: {new_port.name} {new_port.type}"
+                    f"{self._port_width_text(new_port)} "
+                    f"{new_port.start}→{new_port.stop} "
+                    f"R={new_port.resistance}"
                 )
                 self._refresh_tree()
             return

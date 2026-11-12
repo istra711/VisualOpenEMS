@@ -727,11 +727,14 @@ Ports
   • **Width (lumped)** (only for lumped ports): "Line (no width)" = a 1-D port
     (Start/Stop differ only along Direction), or "Area - as wide as the metal
     (x/y/z)" = an area/sheet port widened to the metal the port was placed on
-    along that axis. Changing the mode rebuilds the box (line → collapses the
-    transverse axes to the middle, area → widens to the metal and flattens the
-    other transverse axis); an unchanged mode leaves your Start/Stop edits
-    alone. openEMS only sees the box, so the generated script needs no change:
-    the Resistance is the total box resistance (a 50 Ω wide port stays 50 Ω).
+    along that axis. Changing the mode rebuilds the box immediately in the
+    dialog (line → collapses the transverse axes to the middle, area → widens to
+    the metal and flattens the other transverse axis). Ports without a saved
+    metal (manual entry, old projects, imports) use the metal under Start, and an
+    area mode that is still a line is repaired on OK; a hand-edited non-zero
+    width is left alone. openEMS only sees the box, so the generated script
+    needs no change: the Resistance is the total box resistance (a 50 Ω wide
+    port stays 50 Ω).
   • **Active** (checkbox in the dialog, "Active on/off" button in the window):
     switch a port off without deleting it. An inactive port stays in the project
     (list/tree show "[off]", it is drawn grey/dashed in the Mesh Viewer) but is

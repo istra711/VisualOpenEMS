@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Automatic lumped-port width along X/Y**: choosing "Area - as wide as the
+  metal" now also widens manually entered, imported and old ports instead of
+  leaving a line (Start/Stop differed only along the excitation direction).
+  Every add/edit path applies the width, the metal under Start is resolved when
+  no primitive name was saved, and an area mode that still had a line box is
+  repaired on OK. The Port dialog shows the rebuilt Start/Stop immediately when
+  the width mode changes; a hand-edited non-zero width is kept.
 - **Peak-hold marker stays inside the progress bar**: the marker was mapped
   over the whole widget, but Windows styles reserve a text area to the right
   of the actual groove. It now uses the style's real progress rectangle with

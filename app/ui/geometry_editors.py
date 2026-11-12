@@ -199,12 +199,14 @@ class PortDialog(QDialog):
         port: PortDef | None = None,
         coord_system: str = "cartesian",
         variables: dict[str, float] | None = None,
+        width_preview=None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Port")
         self.resize(380, 500)
         self._coord_system = coord_system
         self._variables = _variables_for(parent, variables)
+        self._width_preview = width_preview
         p = port or PortDef(name="in1")
         self._expressions = dict(getattr(p, "expressions", {}) or {})
         self.result_port: PortDef | None = None
@@ -365,6 +367,7 @@ class PortDialog(QDialog):
             self.cmb_mesh.setToolTip("Mesh axis letters: x=ρ, y=φ, z")
         self.cmb_type.currentTextChanged.connect(self._on_type_changed)
         self._on_type_changed(self.cmb_type.currentText())
+        self.cmb_width.currentIndexChanged.connect(self._on_width_mode_changed)
 
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -372,6 +375,31 @@ class PortDialog(QDialog):
         form.addRow(bb)
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
+
+    def _on_width_mode_changed(self, _index: int = 0) -> None:
+        """Show the rebuilt box immediately when the width mode changes."""
+        if not callable(self._width_preview):
+            return
+        if str(self.cmb_type.currentText()) != "lumped":
+            return
+        mode = str(self.cmb_width.currentData() or "line").strip().lower()
+        start = [field.safe_value() for field in self.spn_start]
+        stop = [field.safe_value() for field in self.spn_stop]
+        result = self._width_preview(
+            mode, start, stop, self.cmb_dir.currentText(), self._seed_metal
+        )
+        if not result:
+            return
+        new_start, new_stop, metal = result
+        for fields, old_values, new_values in (
+            (self.spn_start, start, new_start),
+            (self.spn_stop, stop, new_stop),
+        ):
+            for field, old, new in zip(fields, old_values, new_values):
+                if abs(float(new) - float(old)) > 1e-9:
+                    field.setValue(float(new))
+        if metal:
+            self._seed_metal = str(metal)
 
     def _on_type_changed(self, kind: str) -> None:
         """Only lumped ports have a (lumped) width - MSL uses its own axes."""

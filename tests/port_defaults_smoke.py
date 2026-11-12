@@ -10,6 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# Import Qt before the app modules: on Windows some app imports load native
+# libraries whose DLLs clash when PySide6 is imported later.
+try:  # pragma: no cover - import-order guard for the smoke run
+    from PySide6.QtWidgets import QApplication as _QApplication  # noqa: F401
+except Exception:  # noqa: BLE001
+    pass
+
 
 def main() -> int:
     from app.freecad_io.port_marks import (
@@ -250,6 +257,66 @@ def main() -> int:
     win._drain_log_queue()
     assert "excitation direction" in win.log_view.toPlainText()
     print("lumped width 'line' / 'area = metal width': OK")
+
+    # 8b) Area mode with a line box (screenshot case): Start/Stop differ only
+    #     along z, the mode says "area along y", and the old/manual port has no
+    #     saved metal.  The metal under Start must be found and the line
+    #     widened to the strip even when the mode did not change.
+    win.primitives = [
+        {
+            "kind": "box",
+            "name": "strip",
+            "material": "copper",
+            "start": [0.0, 2.0, 1.0],
+            "stop": [10.0, 3.0, 1.035],
+        },
+        {
+            "kind": "box",
+            "name": "gnd",
+            "material": "copper",
+            "start": [0.0, 0.0, 0.0],
+            "stop": [10.0, 5.0, 0.035],
+        },
+    ]
+    stale = _PD2(
+        name="in4",
+        start=[4.25, 2.5, 1.0],
+        stop=[4.25, 2.5, 0.035],
+        direction="z",
+        lumped_width="y",
+        metal="",
+    )
+    win._apply_port_width(stale, previous="y")
+    assert abs(stale.start[1] - 2.0) < 1e-12, stale
+    assert abs(stale.stop[1] - 3.0) < 1e-12, stale
+    assert stale.start[0] == stale.stop[0] == 4.25, stale
+    assert stale.metal == "strip", stale.metal
+
+    # Manually entered port: the metal is resolved from Start and the dialog
+    # already shows the widened Start/Stop when "Area along y" is chosen.
+    manual = _PD2(
+        name="manual",
+        start=[4.25, 2.5, 1.0],
+        stop=[4.25, 2.5, 0.035],
+        direction="z",
+        lumped_width="line",
+    )
+    preview = win._port_width_preview("y", manual.start, manual.stop, "z", "")
+    assert preview is not None, "no preview for a resolvable metal"
+    assert abs(preview[0][1] - 2.0) < 1e-12, preview
+    assert abs(preview[1][1] - 3.0) < 1e-12, preview
+    assert preview[2] == "strip", preview[2]
+
+    live = PortDialog(win, port=manual, width_preview=win._port_width_preview)
+    assert live.cmb_width.currentData() == "line"
+    live.cmb_width.setCurrentIndex(live.cmb_width.findData("y"))
+    assert abs(live.spn_start[1].safe_value() - 2.0) < 1e-12, live.spn_start[1].text()
+    assert abs(live.spn_stop[1].safe_value() - 3.0) < 1e-12, live.spn_stop[1].text()
+    live._accept()
+    assert live.result_port is not None
+    assert live.result_port.metal == "strip", live.result_port.metal
+    assert abs(live.result_port.start[1] - 2.0) < 1e-12
+    print("automatic area width for manual/old ports: OK")
 
     # 9) "Reverse" option: dialog round-trip + list/tree marker
     plain = _PD2(name="r0", start=[0, 0, 1.0], stop=[0, 0, 0.0], direction="z")
