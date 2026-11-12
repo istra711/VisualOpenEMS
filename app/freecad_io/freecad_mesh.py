@@ -187,6 +187,34 @@ def _wire_points_2d(wire, axis_idx):
     return out
 
 
+def _planar_sheet_prim(face):
+    # A STEP shell often imports as a single planar face (copper trace or
+    # ground plane) with no volume.  PolyhedronReader silently ignores such
+    # open sheets; openEMS needs a CSPrimPolygon for a zero-thickness surface.
+    try:
+        if type(face.Surface).__name__ != "Plane":
+            return None
+        if len(face.Wires) != 1:  # AddPolygon cannot carry holes
+            return None
+        d = _unit_axis(face.Surface.Axis)
+        if d is None or not _axis_aligned(d):
+            return None
+        axis_idx = max(range(3), key=lambda k: abs((d.x, d.y, d.z)[k]))
+        pts = _wire_points_2d(face.OuterWire, axis_idx)
+        if not pts or len(pts) < 3:
+            return None
+        p = face.CenterOfMass
+        return {
+            "kind": "polygon",
+            "points": pts,
+            "axis": "xyz"[axis_idx],
+            "coord": float((p.x, p.y, p.z)[axis_idx]),
+            "length": 0.0,
+        }
+    except Exception:
+        return None
+
+
 def _analytic_prim(solid):
     # Native openEMS primitive (sphere/box/cylinder/polygon) or None.
     # Shape-based (works for parametric Part:: primitives AND imported STEP
@@ -196,10 +224,19 @@ def _analytic_prim(solid):
     try:
         faces = list(solid.Faces)
         bb = solid.BoundBox
+    except Exception:
+        return None
+    if not faces:
+        return None
+    if len(faces) == 1:
+        sheet = _planar_sheet_prim(faces[0])
+        if sheet is not None:
+            return sheet
+    try:
         vol = float(solid.Volume)
     except Exception:
         return None
-    if vol <= 0 or not faces:
+    if vol <= 0:
         return None
 
     # --- sphere: one spherical face, bbox == 2r cube ------------------------

@@ -22,25 +22,25 @@ def main() -> int:
     print("easyMesh from", easyMesh.__file__)
     assert "site-packages" in str(easyMesh.__file__), "expected site-packages easyMesh"
 
-    from app.csxcad_builder.triangle_mesh import add_triangle_mesh
+    from app.csxcad_builder.triangle_mesh import add_triangle_mesh, write_binary_stl
     from app.meshing.easy_wrapper import apply_boundary, enhance_csx, enhance_fdtd, generate_mesh
     from app.meshing.rules import compute_targets
     from app.models.project import BoundarySpec, MeshSpec
 
-    # write a tiny binary STL (one triangle) + use PolyhedronReader path
+    # A closed tetrahedron still exercises PolyhedronReader; a flat sheet
+    # would now be converted to a CSPrimPolygon by add_triangle_mesh.
     stl = ROOT / "work" / "poly_reader_test.stl"
     stl.parent.mkdir(parents=True, exist_ok=True)
-    # 80-byte header + 4-byte count + 50-byte tri
-    tri = np.array([[0, 0, 0], [10, 0, 0], [10, 10, 0]], dtype=np.float32)
-    n = np.array([0, 0, 1], dtype=np.float32)
-    with open(stl, "wb") as f:
-        f.write(b"smoke" + b"\x00" * 75)
-        f.write(np.array([1], dtype=np.uint32).tobytes())
-        f.write(n.tobytes())
-        f.write(tri[0].tobytes())
-        f.write(tri[1].tobytes())
-        f.write(tri[2].tobytes())
-        f.write(np.array([0], dtype=np.uint16).tobytes())
+    tris = np.array(
+        [
+            [[0, 0, 0], [10, 0, 0], [0, 10, 0]],
+            [[0, 0, 0], [0, 0, 10], [10, 0, 0]],
+            [[0, 0, 0], [0, 10, 0], [0, 0, 10]],
+            [[10, 0, 0], [0, 0, 10], [0, 10, 0]],
+        ],
+        dtype=np.float32,
+    )
+    write_binary_stl(stl, tris)
 
     mesh = MeshSpec(
         preset="low",

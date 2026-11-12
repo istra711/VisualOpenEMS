@@ -116,7 +116,13 @@ def build_csx_from_project(
                     stl_path=stl_path,
                     priority=assign.priority,
                 )
-                label = "axis-aligned box" if type(mesh_prim).__name__ == "CSPrimBox" else "triangle mesh"
+                prim_type = type(mesh_prim).__name__
+                if prim_type == "CSPrimBox":
+                    label = "axis-aligned box"
+                elif prim_type == "CSPrimPolygon":
+                    label = "planar sheet"
+                else:
+                    label = "triangle mesh"
                 result.objects_built.append(f"{name} ({label})")
             except Exception as e:  # noqa: BLE001
                 result.warnings.append(f"STL mesh failed for {name}: {e}")

@@ -41,6 +41,119 @@ def axis_aligned_box_bounds(
     return lo, hi
 
 
+def planar_sheet_polygon(
+    triangles: np.ndarray, *, tol: float = 1e-6
+) -> dict[str, Any] | None:
+    """AddPolygon parameters for one simple, axis-aligned planar sheet.
+
+    ``PolyhedronReader`` describes a *volume*: a sheet made of one or two
+    triangles has no inside, so openEMS silently drops it and reports
+    ``Unused primitive``.  A zero-thickness sheet is exactly what
+    ``CSPrimPolygon`` represents, and it does contribute PEC edges.
+
+    Only simple sheets are converted: all triangles coplanar on an x/y/z
+    plane, one connected component and one boundary loop (no holes).  Closed
+    solids, curved planes, non-axis-aligned faces and sheets with holes keep
+    their existing representation.
+    """
+    tris = np.asarray(triangles, dtype=float)
+    if tris.ndim != 3 or tris.shape[1:] != (3, 3) or len(tris) == 0:
+        return None
+
+    scale = max(1.0, float(np.max(np.abs(tris))))
+    plane_tol = max(float(tol), 1e-9 * scale)
+    cross = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    twice_area = np.linalg.norm(cross, axis=1)
+    keep = twice_area > 1e-12 * scale * scale
+    if not np.any(keep):
+        return None
+    tris = tris[keep]
+    cross = cross[keep]
+    twice_area = twice_area[keep]
+
+    normals = cross / twice_area[:, None]
+    ref = normals[0]
+    axis = int(np.argmax(np.abs(ref)))
+    if abs(abs(float(ref[axis])) - 1.0) > 1e-6:
+        return None
+    if not np.allclose(np.abs(normals @ ref), 1.0, rtol=0.0, atol=1e-6):
+        return None
+
+    vertices = tris.reshape(-1, 3)
+    if float(vertices[:, axis].max() - vertices[:, axis].min()) > plane_tol:
+        return None
+    coord = float(vertices[:, axis].mean())
+    dims = [(axis + 1) % 3, (axis + 2) % 3]
+    points_2d = vertices[:, dims]
+
+    # Quantized keys are used only for topology. Output keeps the original
+    # (already float32-aligned) coordinates so the polygon stays on the grid.
+    q = max(plane_tol, 1e-6)
+    keys = [tuple(int(v) for v in np.round(p / q)) for p in points_2d]
+    edge_count: dict[tuple[Any, Any], int] = {}
+    for i in range(0, len(keys), 3):
+        k0, k1, k2 = keys[i], keys[i + 1], keys[i + 2]
+        if len({k0, k1, k2}) < 3:
+            continue
+        for ka, kb in ((k0, k1), (k1, k2), (k2, k0)):
+            edge = (ka, kb) if ka <= kb else (kb, ka)
+            edge_count[edge] = edge_count.get(edge, 0) + 1
+    if not edge_count or any(n > 2 for n in edge_count.values()):
+        return None
+
+    boundary = [edge for edge, n in edge_count.items() if n == 1]
+    if len(boundary) < 3:
+        return None
+
+    point_by_key = {key: points_2d[i] for i, key in enumerate(keys)}
+    adjacency: dict[Any, list[Any]] = {}
+    for ka, kb in boundary:
+        adjacency.setdefault(ka, []).append(kb)
+        adjacency.setdefault(kb, []).append(ka)
+    if any(len(nbrs) != 2 for nbrs in adjacency.values()):
+        return None
+
+    start = next(iter(adjacency))
+    loop = [start]
+    previous = None
+    current = start
+    while True:
+        nxt = next((n for n in adjacency[current] if n != previous), None)
+        if nxt is None:
+            return None
+        if nxt == start:
+            break
+        if nxt in loop:
+            return None
+        loop.append(nxt)
+        previous, current = current, nxt
+        if len(loop) > len(adjacency):
+            return None
+    if len(loop) != len(adjacency):
+        return None  # holes or several disconnected sheets
+
+    points = [
+        [float(point_by_key[key][0]), float(point_by_key[key][1])] for key in loop
+    ]
+    cleaned: list[list[float]] = []
+    for point in points:
+        if (
+            not cleaned
+            or abs(point[0] - cleaned[-1][0]) > q
+            or abs(point[1] - cleaned[-1][1]) > q
+        ):
+            cleaned.append(point)
+    if (
+        len(cleaned) > 1
+        and abs(cleaned[0][0] - cleaned[-1][0]) <= q
+        and abs(cleaned[0][1] - cleaned[-1][1]) <= q
+    ):
+        cleaned.pop()
+    if len(cleaned) < 3:
+        return None
+    return {"axis": "xyz"[axis], "coord": coord, "points": cleaned}
+
+
 def _poly_from_triangles(
     prop: Any, triangles: np.ndarray, priority: int = 10, *, aligned: bool = True
 ) -> Any:
@@ -95,8 +208,9 @@ def add_triangle_mesh(
     """Attach a triangle mesh to a CSXCAD property without CSX.AddMesh.
 
     Axis-aligned box meshes are emitted as an openEMS box (identical metal
-    edges on the mesh lines); everything else goes through an STL file via
-    PolyhedronReader.
+    edges on the mesh lines), flat axis-aligned sheets as a CSPrimPolygon
+    (zero-thickness surfaces have no volume for PolyhedronReader), and every
+    other mesh through an STL file via PolyhedronReader.
 
     openEMS only simulates PolyhedronReader (file based) primitives — an
     in-memory AddPolyhedron is reported as "Unused primitive" and the geometry
@@ -137,6 +251,29 @@ def add_triangle_mesh(
                 stop=[f32(float(v)) for v in hi],
                 priority=priority,
             )
+
+    # 0b) Flat sheet -> openEMS polygon.  PolyhedronReader needs a closed
+    #     volume; an open sheet is silently reported as "Unused primitive"
+    #     and contributes no PEC edges.  CSPrimPolygon is the zero-thickness
+    #     sheet primitive the solver actually meshes.
+    if have_tris:
+        sheet = planar_sheet_polygon(np.asarray(tris))
+        if sheet is not None:
+            try:
+                prim = prop.AddPolygon(
+                    [
+                        [f32(p[0]) for p in sheet["points"]],
+                        [f32(p[1]) for p in sheet["points"]],
+                    ],
+                    sheet["axis"],
+                    f32(sheet["coord"]),
+                    priority=priority,
+                )
+                if prim is not None:
+                    print(f"mesh '{name}' is a planar sheet -> openEMS AddPolygon")
+                    return prim
+            except Exception as e:  # noqa: BLE001
+                print(f"planar sheet '{name}' -> AddPolygon failed: {e}")
 
     # 1) STL file via PolyhedronReader (what openEMS actually uses)
     stl_file = stl if (stl is not None and stl.suffix.lower() == ".stl") else None

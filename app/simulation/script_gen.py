@@ -612,7 +612,13 @@ def main() -> int:
                 align=bool(getattr(mesh, "align_coordinates", True)),
             )
             ntri = 0 if tris is None else len(tris)
-            kind_txt = "axis-aligned box" if type(mesh_prim).__name__ == "CSPrimBox" else "polyhedron"
+            prim_type = type(mesh_prim).__name__
+            if prim_type == "CSPrimBox":
+                kind_txt = "axis-aligned box"
+            elif prim_type == "CSPrimPolygon":
+                kind_txt = "planar sheet polygon"
+            else:
+                kind_txt = "polyhedron"
             print(f"Added mesh primitive '{name}' as openEMS {kind_txt} ({ntri} triangles)")
             if pr.get("edges2grid"):
                 dirs = pr.get("edges2grid", "xy")

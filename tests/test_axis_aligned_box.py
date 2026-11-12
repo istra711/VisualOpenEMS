@@ -85,6 +85,60 @@ def test_add_triangle_mesh_emits_box_for_axis_aligned_mesh():
     assert np.allclose(box[1], [2, 1, 0.5], atol=1e-6)
 
 
+def sheet_tris(lo, hi):
+    """Two triangles forming one flat axis-aligned rectangle."""
+    lo = np.asarray(lo, dtype=float)
+    hi = np.asarray(hi, dtype=float)
+    return np.array(
+        [
+            [[lo[0], lo[1], lo[2]], [hi[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]]],
+            [[lo[0], lo[1], lo[2]], [hi[0], hi[1], lo[2]], [lo[0], hi[1], lo[2]]],
+        ],
+        dtype=float,
+    )
+
+
+def test_planar_sheet_polygon_from_two_triangles():
+    from app.csxcad_builder.triangle_mesh import planar_sheet_polygon
+
+    sheet = planar_sheet_polygon(sheet_tris([-2, -1, 1.6], [2, 1, 1.6]))
+    assert sheet is not None
+    assert sheet["axis"] == "z"
+    assert abs(float(sheet["coord"]) - 1.6) < 1e-9
+    points = {tuple(round(v, 6) for v in p) for p in sheet["points"]}
+    assert points == {(-2.0, -1.0), (2.0, -1.0), (2.0, 1.0), (-2.0, 1.0)}
+
+
+def test_add_triangle_mesh_emits_polygon_for_flat_sheet():
+    from CSXCAD import ContinuousStructure
+
+    from app.csxcad_builder.triangle_mesh import add_triangle_mesh
+
+    csx = ContinuousStructure()
+    prop = csx.AddMetal("copper")
+    prim = add_triangle_mesh(
+        prop,
+        name="sheet",
+        triangles=sheet_tris([-2, -1, 1.6], [2, 1, 1.6]),
+        priority=7,
+    )
+    assert type(prim).__name__ == "CSPrimPolygon"
+    box = prim.GetBoundBox()
+    assert np.allclose(box[0], [-2, -1, 1.6], atol=1e-6)
+    assert np.allclose(box[1], [2, 1, 1.6], atol=1e-6)
+
+
+def test_planar_sheet_detection_rejects_closed_and_non_axis_planes():
+    from app.csxcad_builder.triangle_mesh import planar_sheet_polygon
+
+    # a closed solid is not a sheet
+    assert planar_sheet_polygon(box_tris([-2, -1, 0], [2, 1, 1])) is None
+    # a non-axis-aligned plane cannot be represented by CSPrimPolygon
+    rotated = sheet_tris([-2, -1, 0], [2, 1, 0])
+    rotated[:, :, 2] += 0.5 * rotated[:, :, 1]
+    assert planar_sheet_polygon(rotated) is None
+
+
 def test_add_triangle_mesh_keeps_stl_for_non_box(tmp_path):
     from CSXCAD import ContinuousStructure
 
@@ -108,7 +162,7 @@ def test_triangle_mesh_vertices_use_the_float32_grid():
 
     # a tessellation vertex that is neither a float32 nor a 0.1 um grid point
     x = 20.00006
-    flat = box_tris([x, 0, 1.6], [30, 4, 1.6])  # zero thickness -> stays a mesh
+    flat = sheet_tris([x, 0, 1.6], [30, 4, 1.6])
     csx = ContinuousStructure()
     prop = csx.AddMetal("copper")
     aligned = add_triangle_mesh(prop, name="aligned", triangles=flat, priority=7)

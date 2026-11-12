@@ -8,6 +8,7 @@ Builds an FCStd with a mix of solids and verifies _analytic_prim:
   Cone     -> NOT analytic (tessellated STL fallback)
   RotBox   -> kind=polygon (a 30-deg box is an extruded rotated rectangle:
               exact AddLinPoly geometry, better than STL)
+  Sheet    -> kind=polygon (planar zero-thickness face, no volume)
 and the GUI import path:
   - analytic + stl mixed primitives, one entry per object
   - NO auto assignments on import
@@ -28,6 +29,10 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Import Qt before app.freecad_io: on this Windows build the FreeCAD-related
+# package load and a late Qt load can conflict (access violation).
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.platform_tools import default_freecad_cmd
 
@@ -71,6 +76,10 @@ def _build_fcstd(fcstd: Path) -> None:
         "rb = d.addObject('Part::Box', 'RotBox')\n"
         "rb.Length = 10; rb.Width = 10; rb.Height = 2\n"
         "rb.Placement = App.Placement(App.Vector(100, 0, 0), App.Rotation(App.Vector(0, 0, 1), 30))\n"
+        # planar shell, the shape an imported STEP copper sheet has
+        "sh = d.addObject('Part::Feature', 'Sheet')\n"
+        "sw = Part.Wire(Part.makePolygon([App.Vector(0, 80, 1.6), App.Vector(20, 80, 1.6), App.Vector(20, 85, 1.6), App.Vector(0, 85, 1.6), App.Vector(0, 80, 1.6)]))\n"
+        "sh.Shape = Part.Face(sw)\n"
         "d.recompute()\n"
         f"d.saveAs(r'{fcstd.as_posix()}')\n"
         "print('MAKE_OK')\n"
@@ -102,7 +111,7 @@ def _test_detection(fcstd: Path, out_dir: Path) -> dict:
     assert not mesh_missing, f"analytic objects must not warn about meshes: {mesh_missing}"
 
     by = {o.name: o for o in res.objects}
-    expected = {"Box", "Cyl", "Sph", "TriPrism", "Cone", "RotBox"}
+    expected = {"Box", "Cyl", "Sph", "TriPrism", "Cone", "RotBox", "Sheet"}
     assert set(by) == expected, f"objects: {set(by)} != {expected}"
 
     # Box
@@ -146,7 +155,13 @@ def _test_detection(fcstd: Path, out_dir: Path) -> dict:
     rys = [pt[1] for pt in rp["points"]]
     assert 94.9 <= min(rxs) and max(rxs) <= 108.8, rxs
     assert -0.1 <= min(rys) and max(rys) <= 13.8, rys
-    print("[detection] OK: box/cylinder/sphere/polygon + cone stl fallback")
+    # Planar shell (imported STEP copper sheet) -> flat AddPolygon, not STL.
+    sh = by["Sheet"].primitive
+    assert sh and sh["kind"] == "polygon", f"Sheet -> {sh}"
+    assert sh["axis"] == "z" and _close(sh["coord"], 1.6, 1e-6), sh
+    assert _close(sh.get("length", 0.0), 0.0), sh
+    assert len(sh["points"]) == 4, sh
+    print("[detection] OK: box/cylinder/sphere/polygon/sheet + cone stl fallback")
     return by
 
 
@@ -171,9 +186,10 @@ def _test_gui_import(fcstd: Path) -> None:
         "TriPrism": "polygon",
         "Cone": "stl",
         "RotBox": "polygon",
+        "Sheet": "polygon",
     }
     assert kinds == expected, f"kinds mismatch: {kinds} != {expected}"
-    assert len(win.primitives) == 6, "exactly one primitive per object (no duplicates)"
+    assert len(win.primitives) == 7, "exactly one primitive per object (no duplicates)"
     # NO auto assignments
     assert list(win.project.assignments) == [], (
         "import must not create assignments: "
@@ -193,7 +209,7 @@ def _test_gui_import(fcstd: Path) -> None:
     sph["material"] = "dielectric"
     sph["priority"] = 42
     win._import_geometry_path(str(fcstd))
-    assert len(win.primitives) == 6, f"re-import duplicated: {len(win.primitives)}"
+    assert len(win.primitives) == 7, f"re-import duplicated: {len(win.primitives)}"
     sph2 = next(p for p in win.primitives if p["name"] == "Sph")
     assert sph2["material"] == "dielectric" and sph2["priority"] == 42, sph2
     print("[gui] re-import keeps manual material OK")
