@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 
 from app.models.project import VariableDef
 from app.models.variables import rename_expression, resolve_variable_defs
-from app.numfmt import parse_number
+from app.numfmt import format_number, parse_number
 
 
 class VariableTableDialog(QDialog):
@@ -46,8 +46,8 @@ class VariableTableDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Geometry variables")
-        self.resize(660, 470)
-        self.setMinimumSize(540, 380)
+        self.resize(760, 470)
+        self.setMinimumSize(620, 380)
         self._usage = {str(k).casefold(): int(v) for k, v in (usage or {}).items()}
         self._validate = validate
         self._row_originals: list[str] = []
@@ -64,8 +64,13 @@ class VariableTableDialog(QDialog):
         intro.setWordWrap(True)
         root.addWidget(intro)
 
-        self.table = QTableWidget(0, 3, self)
-        self.table.setHorizontalHeaderLabels(["Name", "Value", "Comment"])
+        self.table = QTableWidget(0, 4, self)
+        self.table.setHorizontalHeaderLabels(
+            ["Name", "Value", "Result", "Comment"]
+        )
+        self.table.horizontalHeaderItem(2).setToolTip(
+            "Resolved numeric value used by geometry fields."
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -75,10 +80,13 @@ class VariableTableDialog(QDialog):
             0, QHeaderView.ResizeMode.ResizeToContents
         )
         self.table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents
+            1, QHeaderView.ResizeMode.Stretch
         )
         self.table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
         )
         root.addWidget(self.table, 1)
 
@@ -108,10 +116,10 @@ class VariableTableDialog(QDialog):
         root.addLayout(row)
 
         self.hint = QLabel(
-            "Tip: variable values may reference variables defined above or "
-            "below them. The geometry editor shows expressions again when you "
-            "edit an object; changing a variable here updates every field that "
-            "uses it."
+            "Tip: the Result column shows the resolved numeric value. Variable "
+            "values may reference variables defined above or below them. The "
+            "geometry editor shows expressions again when you edit an object; "
+            "changing a variable here updates every field that uses it."
         )
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("color: palette(mid);")
@@ -151,6 +159,7 @@ class VariableTableDialog(QDialog):
         self.ed_comment.textChanged.connect(self._on_editor_changed)
         self.btn_add.clicked.connect(self._add_row)
         self.btn_remove.clicked.connect(self._remove_row)
+        self._refresh_results()
 
     # -- table <-> editor -------------------------------------------------
     def _append_row(
@@ -160,7 +169,8 @@ class VariableTableDialog(QDialog):
         self.table.insertRow(row)
         self.table.setItem(row, 0, QTableWidgetItem(name))
         self.table.setItem(row, 1, QTableWidgetItem(value))
-        self.table.setItem(row, 2, QTableWidgetItem(comment))
+        self.table.setItem(row, 2, QTableWidgetItem(""))
+        self.table.setItem(row, 3, QTableWidgetItem(comment))
         self._row_originals.append(str(original or ""))
         return row
 
@@ -196,7 +206,7 @@ class VariableTableDialog(QDialog):
         try:
             self.ed_name.setText(self._cell_text(row, 0))
             self.ed_value.setText(self._cell_text(row, 1))
-            self.ed_comment.setText(self._cell_text(row, 2))
+            self.ed_comment.setText(self._cell_text(row, 3))
         finally:
             self._loading = False
         self._update_usage(row)
@@ -209,8 +219,9 @@ class VariableTableDialog(QDialog):
             return
         self.table.item(row, 0).setText(self.ed_name.text())
         self.table.item(row, 1).setText(self.ed_value.text())
-        self.table.item(row, 2).setText(self.ed_comment.text())
+        self.table.item(row, 3).setText(self.ed_comment.text())
         self._update_usage(row)
+        self._refresh_results()
 
     def _cell_text(self, row: int, column: int) -> str:
         item = self.table.item(row, column)
@@ -222,7 +233,7 @@ class VariableTableDialog(QDialog):
     # -- add / remove -----------------------------------------------------
     def _row_is_empty(self, row: int) -> bool:
         return not any(
-            self._cell_text(row, column).strip() for column in range(3)
+            self._cell_text(row, column).strip() for column in (0, 1, 3)
         )
 
     def _next_default_name(self) -> str:
@@ -250,11 +261,13 @@ class VariableTableDialog(QDialog):
             self.table.item(row, 0).setText(name)
             self.table.item(row, 1).setText("0")
             self.table.item(row, 2).setText("")
+            self.table.item(row, 3).setText("")
         else:
             row = self._append_row(name, "0", "")
         self.table.selectRow(row)
         self.table.setCurrentCell(row, 0)
         self._load_row(row)
+        self._refresh_results()
         self.ed_name.setFocus()
         self.ed_name.selectAll()
 
@@ -267,11 +280,13 @@ class VariableTableDialog(QDialog):
         self._row_originals.pop(row)
         if self.table.rowCount() == 0:
             self._load_row(-1)
+            self._refresh_results()
             return
         next_row = min(row, self.table.rowCount() - 1)
         self.table.selectRow(next_row)
         self.table.setCurrentCell(next_row, 0)
         self._load_row(next_row)
+        self._refresh_results()
 
     def _update_usage(self, row: int) -> None:
         if row < 0 or row >= self.table.rowCount():
@@ -289,25 +304,32 @@ class VariableTableDialog(QDialog):
         else:
             self.lbl_usage.setText("Not used by any geometry field yet.")
 
-    # -- validation / result ---------------------------------------------
-    def _accept(self) -> None:
-        self._sync_editor()
+    # -- table data / results ---------------------------------------------
+    def _table_rows(self) -> list[tuple[int, str, str, str]]:
         rows: list[tuple[int, str, str, str]] = []
         for row in range(self.table.rowCount()):
             name = self._cell_text(row, 0).strip()
             raw_value = self._cell_text(row, 1).strip()
-            comment = self._cell_text(row, 2).strip()
+            comment = self._cell_text(row, 3).strip()
             if not name and not raw_value and not comment:
                 continue
             rows.append((row, name, raw_value, comment))
+        return rows
 
+    def _table_renames(self) -> dict[str, str]:
         renames: dict[str, str] = {}
         for row, original in enumerate(self._row_originals):
             old = str(original or "").strip()
             new = self._cell_text(row, 0).strip()
             if old and new and old != new:
                 renames[old] = new
+        return renames
 
+    def _definitions_from_rows(
+        self,
+        rows: list[tuple[int, str, str, str]],
+        renames: Mapping[str, str],
+    ) -> tuple[list[VariableDef], list[str]]:
         definitions: list[VariableDef] = []
         value_errors: list[str] = []
         for row, name, raw_value, comment in rows:
@@ -330,7 +352,38 @@ class VariableTableDialog(QDialog):
                     expression=expression,
                 )
             )
+        return definitions, value_errors
 
+    def _refresh_results(self) -> None:
+        rows = self._table_rows()
+        definitions, input_errors = self._definitions_from_rows(
+            rows, self._table_renames()
+        )
+        values, errors = resolve_variable_defs(definitions)
+        tooltip = "\n".join((input_errors + errors)[:4])
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 2)
+            if item is None:
+                item = QTableWidgetItem("")
+                self.table.setItem(row, 2, item)
+            if self._row_is_empty(row):
+                item.setText("")
+                item.setToolTip("")
+                continue
+            value = values.get(self._cell_text(row, 0).strip())
+            if value is None:
+                item.setText("—")
+                item.setToolTip(tooltip or "Unresolved expression")
+                continue
+            item.setText(format_number(value))
+            item.setToolTip("")
+
+    # -- validation / result ---------------------------------------------
+    def _accept(self) -> None:
+        self._sync_editor()
+        rows = self._table_rows()
+        renames = self._table_renames()
+        definitions, value_errors = self._definitions_from_rows(rows, renames)
         values, errors = resolve_variable_defs(definitions)
         errors = value_errors + errors
         if errors:

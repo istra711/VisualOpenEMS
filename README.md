@@ -67,10 +67,11 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - **Named geometry variables** — define `L = 20`, `W = 10` in
   **Geometry → Variables…** and type `L/2`, `sqrt(L*L + W*W)` or plain numbers
   in every geometry field (Start/Stop, Center, Radius, waveguide a/b, dump and
-  NF2FF boxes, polygon/wire point lists). The table has Name/Value/Comment
-  columns, shows how many fields use each variable, re-evaluates all geometry
-  on change/rename, and refuses unresolved expressions. Variable-name
-  completion while typing is optional in **Settings → Geometry variables**.
+  NF2FF boxes, polygon/wire point lists). The table has Name/Value/Result/Comment
+  columns; **Result** shows the resolved numeric value live, shows how many
+  fields use each variable, re-evaluates all geometry on change/rename, and
+  refuses unresolved expressions. Variable-name completion while typing is
+  optional in **Settings → Geometry variables**.
   Names are case-insensitive; functions such as `sqrt`, `sin` and constants
   such as `pi` are reserved. Variable values may themselves be equations that
   reference other variables, including variables defined later in the table
