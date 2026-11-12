@@ -85,9 +85,10 @@ class VariableTableDialog(QDialog):
         self.ed_name.setPlaceholderText("e.g. L")
         self.ed_value = QLineEdit()
         self.ed_value.setPlaceholderText("number in the drawing unit")
-        self.ed_value.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.ed_comment = QLineEdit()
         self.ed_comment.setPlaceholderText("optional note")
+        for editor in (self.ed_name, self.ed_value, self.ed_comment):
+            editor.setAlignment(Qt.AlignmentFlag.AlignLeft)
         edit.addRow("Name", self.ed_name)
         edit.addRow("Value", self.ed_value)
         edit.addRow("Comment", self.ed_comment)
@@ -128,10 +129,11 @@ class VariableTableDialog(QDialog):
                 str(getattr(variable, "comment", "") or ""),
                 original=str(getattr(variable, "name", "") or ""),
             )
-        if self.table.rowCount() == 0:
-            self._append_row("", "", "")
-        self.table.selectRow(0)
-        self._load_row(0)
+        if self.table.rowCount():
+            self.table.selectRow(0)
+            self._load_row(0)
+        else:
+            self._load_row(-1)
 
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.ed_name.textChanged.connect(self._on_editor_changed)
@@ -162,6 +164,11 @@ class VariableTableDialog(QDialog):
         if not self._loading:
             self._load_row(self._current_row())
 
+    def _set_editor_enabled(self, enabled: bool) -> None:
+        for editor in (self.ed_name, self.ed_value, self.ed_comment):
+            editor.setEnabled(enabled)
+        self.btn_remove.setEnabled(enabled)
+
     def _load_row(self, row: int) -> None:
         if row < 0 or row >= self.table.rowCount():
             self._loading = True
@@ -171,8 +178,10 @@ class VariableTableDialog(QDialog):
                 self.ed_comment.clear()
             finally:
                 self._loading = False
+            self._set_editor_enabled(False)
             self.lbl_usage.setText("")
             return
+        self._set_editor_enabled(True)
         self._loading = True
         try:
             self.ed_name.setText(self._cell_text(row, 0))
@@ -201,10 +210,38 @@ class VariableTableDialog(QDialog):
         self._on_editor_changed()
 
     # -- add / remove -----------------------------------------------------
+    def _row_is_empty(self, row: int) -> bool:
+        return not any(
+            self._cell_text(row, column).strip() for column in range(3)
+        )
+
+    def _next_default_name(self) -> str:
+        """Lowest free ``varN`` name, independent of the row count.
+
+        Using ``rowCount + 1`` skipped names when an existing variable had a
+        custom name, and the old empty placeholder row made the first Add
+        produce ``var2`` instead of ``var1``.
+        """
+        used = {
+            self._cell_text(row, 0).strip().casefold()
+            for row in range(self.table.rowCount())
+        }
+        number = 1
+        while f"var{number}" in used:
+            number += 1
+        return f"var{number}"
+
     def _add_row(self) -> None:
         self._sync_editor()
-        n = self.table.rowCount() + 1
-        row = self._append_row(f"var{n}", "0", "")
+        row = self._current_row()
+        name = self._next_default_name()
+        if row >= 0 and self._row_is_empty(row):
+            # Reuse a leftover blank row instead of adding a second one.
+            self.table.item(row, 0).setText(name)
+            self.table.item(row, 1).setText("0")
+            self.table.item(row, 2).setText("")
+        else:
+            row = self._append_row(name, "0", "")
         self.table.selectRow(row)
         self.table.setCurrentCell(row, 0)
         self._load_row(row)
@@ -219,7 +256,8 @@ class VariableTableDialog(QDialog):
         self.table.removeRow(row)
         self._row_originals.pop(row)
         if self.table.rowCount() == 0:
-            self._append_row("", "", "")
+            self._load_row(-1)
+            return
         next_row = min(row, self.table.rowCount() - 1)
         self.table.selectRow(next_row)
         self.table.setCurrentCell(next_row, 0)

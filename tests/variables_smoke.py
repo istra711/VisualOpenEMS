@@ -104,6 +104,7 @@ def _test_variable_field() -> None:
 
 
 def _test_variable_table() -> None:
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication, QMessageBox
 
     app = QApplication.instance() or QApplication(sys.argv)
@@ -118,6 +119,14 @@ def _test_variable_table() -> None:
     table.table.selectRow(0)
     _assert(table.ed_name.text() == "L")
     _assert("3 geometry fields" in table.lbl_usage.text(), table.lbl_usage.text())
+    _assert(
+        table.ed_name.alignment() & Qt.AlignmentFlag.AlignLeft,
+        "name field must be left aligned",
+    )
+    _assert(
+        table.ed_value.alignment() & Qt.AlignmentFlag.AlignLeft,
+        "value field must be left aligned",
+    )
     table.ed_name.setText("length")
     table.ed_value.setText("25")
     table.ed_comment.setText("board length")
@@ -126,6 +135,40 @@ def _test_variable_table() -> None:
     _assert([v.name for v in vars_] == ["length", "W"], [v.name for v in vars_])
     _assert(vars_[0].value == 25.0)
     _assert(table.renames == {"L": "length"}, table.renames)
+
+    # An empty table must not start with a phantom row: the first Add creates
+    # var1, and each later Add creates exactly one new row.
+    empty = VariableTableDialog()
+    _assert(empty.table.rowCount() == 0, empty.table.rowCount())
+    _assert(not empty.ed_name.isEnabled(), "empty table editor must be disabled")
+    empty._add_row()
+    _assert([empty._cell_text(r, 0) for r in range(empty.table.rowCount())] == ["var1"])
+    empty._add_row()
+    _assert(
+        [empty._cell_text(r, 0) for r in range(empty.table.rowCount())]
+        == ["var1", "var2"]
+    )
+    empty._remove_row()
+    empty._remove_row()
+    _assert(empty.table.rowCount() == 0)
+    _assert(not empty.btn_remove.isEnabled(), "remove must be disabled when empty")
+    empty._add_row()
+    _assert([empty._cell_text(r, 0) for r in range(empty.table.rowCount())] == ["var1"])
+
+    # Custom names do not shift the default counter (old code produced var2
+    # after trace_l because it used rowCount + 1).
+    custom = VariableTableDialog(variables=[VariableDef("trace_l", 100.0)])
+    custom._add_row()
+    _assert(
+        [custom._cell_text(r, 0) for r in range(custom.table.rowCount())]
+        == ["trace_l", "var1"]
+    )
+    custom.ed_name.setText("trace_w")
+    custom._add_row()
+    _assert(
+        [custom._cell_text(r, 0) for r in range(custom.table.rowCount())]
+        == ["trace_l", "trace_w", "var1"]
+    )
 
     # MainWindow-style callback rejects unresolved expressions and keeps editing
     warned: list[str] = []
@@ -159,6 +202,8 @@ def _test_variable_table() -> None:
         variable_table_module.QMessageBox = real_mb
     rejected.deleteLater()
     blank_value.deleteLater()
+    empty.deleteLater()
+    custom.deleteLater()
     table.deleteLater()
     app.processEvents()
     print("[table] edit/rename/validation OK")
