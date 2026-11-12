@@ -108,7 +108,9 @@ single source after a build). **Right-click anywhere in the log area** (text,
 tab bar, button row, line counter or the divider above it) for the log options:
 show/hide the Log and the Project / Geometry panel, pick a log tab, auto-scroll,
 Save log…, Pop out log…. In the text, Copy / Select All are above them. The same
-menu sits on the status bar at the bottom edge.
+menu sits on the status bar at the bottom edge. New Project, opening a project
+and geometry imports reset the status line: old progress bars, runtime/ETA and
+messages disappear.
 
 **Settings…** (once):
 

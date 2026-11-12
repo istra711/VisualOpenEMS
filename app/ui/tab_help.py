@@ -461,7 +461,9 @@ Progress (status bar)
       which the timestep count alone does not decide. The vertical marker
       shows the highest value reached (peak hold), because the live energy
       percentage can move backwards during a run.
-    Both reset on each run.
+    Both reset on each run. New Project, opening a project and importing
+    geometry (including Gerber/KiCad/CST) clear the old run bars and labels
+    and return the status line to Ready.
 
 Run All Ports (Simulation menu → Ctrl+Shift+R)
   • One FDTD run per port (each port excited once) → the complete S-matrix for

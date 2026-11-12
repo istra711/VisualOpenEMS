@@ -32,8 +32,9 @@ def main() -> int:
     from app.ui.main_window import MainWindow
 
     app = QApplication.instance() or QApplication(sys.argv)
-    settings = AppSettings.load()
-    settings.work_dir = tempfile.mkdtemp(prefix="progress_smoke_")
+    tmp = Path(tempfile.mkdtemp(prefix="progress_smoke_"))
+    settings = AppSettings.load(tmp / "settings.json")
+    settings.work_dir = str(tmp / "work")
     win = MainWindow(settings)
 
     # NB: isVisible() is False while the top-level window is not shown, so use
@@ -96,6 +97,67 @@ def main() -> int:
     assert win.progress_energy.isHidden(), "reset must hide the energy bar"
     assert win.progress_energy.peak is None, "peak hold must reset for a new run"
     assert win.progress.styleSheet() == ""
+
+    # New Project / Open / geometry import must not leave the previous run's
+    # progress widgets or message in the bottom status line.
+    def _prime_status() -> str:
+        win._reset_engine_progress()
+        for line in _LINES:
+            win._log(line)
+        win._drain_log_queue()
+        assert not win.progress.isHidden()
+        return win.status.currentMessage()
+
+    def _assert_status_cleared(label: str) -> None:
+        assert win.progress.isHidden(), f"{label}: TS bar still visible"
+        assert win.progress_energy.isHidden(), f"{label}: energy bar still visible"
+        assert win.lbl_engine.isHidden(), f"{label}: engine label still visible"
+        assert win.lbl_runtime.isHidden(), f"{label}: runtime label still visible"
+        assert win.lbl_eta.isHidden(), f"{label}: ETA label still visible"
+        assert win.progress_energy.peak is None, f"{label}: peak marker not reset"
+        assert win.progress.styleSheet() == "", f"{label}: TS bar still red"
+        assert win.progress_energy.styleSheet() == "", f"{label}: E bar still red"
+        msg = win.status.currentMessage()
+        assert "Timestep:" not in msg and "Energy:" not in msg, (label, msg)
+
+    old = _prime_status()
+    win._log(_LINES[-1])  # still queued when the project transition starts
+    win._on_new()
+    win._drain_log_queue()
+    _assert_status_cleared("new project")
+    assert win.status.currentMessage() != old
+
+    stl = Path(settings.work_dir) / "status_triangle.stl"
+    stl.parent.mkdir(parents=True, exist_ok=True)
+    stl.write_text(
+        "solid tri\n"
+        "facet normal 0 0 1\n"
+        "outer loop\n"
+        "vertex 0 0 0\n"
+        "vertex 1 0 0\n"
+        "vertex 0 1 0\n"
+        "endloop\n"
+        "endfacet\n"
+        "endsolid tri\n",
+        encoding="ascii",
+    )
+    old = _prime_status()
+    win._log(_LINES[-1])
+    win._import_geometry_path(str(stl))
+    win._drain_log_queue()
+    _assert_status_cleared("geometry import")
+    assert win.status.currentMessage() != old
+
+    from app.models.project import Project
+
+    project_file = Path(settings.work_dir) / "status_reset.fcsim.json"
+    Project.new_default("status_reset").save(project_file)
+    old = _prime_status()
+    win._log(_LINES[-1])
+    win._open_project_path(project_file)
+    win._drain_log_queue()
+    _assert_status_cleared("open project")
+    assert win.status.currentMessage() != old
 
     win.close()
     print("PROGRESS SMOKE OK")

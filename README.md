@@ -87,6 +87,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   round it out.
 - **Two status-bar progress bars** (side by side): timesteps and residual-energy
   convergence toward the end criterion (0 % = energy at start, 100 % = converged).
+  New Project, Open and geometry imports clear the previous run's bars/labels.
 
 ### Simulation
 

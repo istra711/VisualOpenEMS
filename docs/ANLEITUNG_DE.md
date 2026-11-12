@@ -111,6 +111,8 @@ Tab-Leiste, Knopfzeile, Zeilenzähler oder der Trenner darüber) öffnet die
 Log-Optionen: Log-Panel und Projekt-/Geometrie-Panel ein-/ausblenden, Log-Tab
 wählen, Auto-scroll, Save log…, Pop out log…. Im Text stehen darüber zusätzlich
 Copy / Select All. Das gleiche Menü liegt auf der Statuszeile ganz unten.
+New Project, Projekt öffnen und Geometrie-Importe setzen die Statuszeile
+zurück: alte Fortschrittsbalken, Laufzeit/ETA und Meldungen verschwinden.
 
 **Settings…** (einmalig):
 

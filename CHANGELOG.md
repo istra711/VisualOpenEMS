@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stale run status line on project/geometry changes**: New Project, Open
+  (including Recent projects), Import Geometry and the Gerber/KiCad/CST
+  imports now hide the previous run's TS/energy bars, engine/runtime/ETA
+  labels and red failure styling, and return the bottom status line to
+  `Ready`.
 - **Progress bar no longer reports “converged” after a non-converged run**:
   the parser treated the app's own finding line
   `energy_vs_criteria: energy reached … but the end criteria was not met`

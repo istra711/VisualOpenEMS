@@ -2243,8 +2243,26 @@ class MainWindow(QMainWindow):
             self._log(note)
         self._log(format_run_end(elapsed))
 
+    def _reset_status_bar(self) -> None:
+        """Clear stale run text/progress after a project or geometry change."""
+        # Pending log lines can still carry engine progress and would overwrite
+        # the reset a few hundred milliseconds later.  Keep them in the log,
+        # but suppress their auto-result hooks during the transition.
+        auto_results = self._allow_auto_results
+        auto_nf2ff = self._allow_auto_nf2ff
+        self._allow_auto_results = False
+        self._allow_auto_nf2ff = False
+        try:
+            self._drain_log_queue()
+        finally:
+            self._allow_auto_results = auto_results
+            self._allow_auto_nf2ff = auto_nf2ff
+        self._reset_engine_progress()
+        self.status.clearMessage()
+        self.status.showMessage("Ready")
+
     def _reset_engine_progress(self) -> None:
-        """Clear the FDTD engine progress bars (called when a run starts)."""
+        """Clear the FDTD engine progress bars and their status labels."""
         import math
 
         self._engine_progress.reset()
@@ -3990,6 +4008,7 @@ class MainWindow(QMainWindow):
         self._refresh_tree()
         self._update_window_title()
         self._mark_project_saved()
+        self._reset_status_bar()
         self._update_run_actions()
         self._log("New project created (generic — not patch-specific)")
 
@@ -4010,6 +4029,7 @@ class MainWindow(QMainWindow):
             self._project_store_obj = None
             self._mesh_sig = None  # different project -> loaded CSX is unknown
             self.project = Project.load(path)
+            self._reset_status_bar()
             # Layout rule (see _project_work_dir): the JSON sits one level above
             # its data folder: <base>/<stem>.fcsim.json + <base>/<stem>/.  The
             # old layout (<base>/<stem>/<stem>.fcsim.json) is still understood,
@@ -5357,6 +5377,7 @@ class MainWindow(QMainWindow):
         summary = apply_gerber_to_project(self.project, result, path, spec)
         self.primitives = [dict(p) for p in (self.project.primitives or [])]
         self._sync_assignment_materials_to_primitives()
+        self._reset_status_bar()
         self._refresh_materials()
         self._refresh_ports()
         self._refresh_tree()
@@ -5515,6 +5536,7 @@ class MainWindow(QMainWindow):
         summary = apply_kicad_to_project(self.project, result, path, spec)
         self.primitives = [dict(p) for p in (self.project.primitives or [])]
         self._sync_assignment_materials_to_primitives()
+        self._reset_status_bar()
         self._refresh_materials()
         self._refresh_ports()
         self._refresh_tree()
@@ -5656,6 +5678,7 @@ class MainWindow(QMainWindow):
         summary = apply_cst_to_project(self.project, result, source_key, spec)
         self.primitives = [dict(p) for p in (self.project.primitives or [])]
         self._sync_assignment_materials_to_primitives()
+        self._reset_status_bar()
         self._refresh_materials()
         self._refresh_ports()
         self._refresh_tree()
@@ -6315,6 +6338,7 @@ class MainWindow(QMainWindow):
         if note not in (self.project.notes or ""):
             self.project.notes = (self.project.notes + "\n" if self.project.notes else "") + note
         self._sync_assignment_materials_to_primitives()
+        self._reset_status_bar()
 
         for w in warnings:
             lines.append(f"WARNING: {w}")
