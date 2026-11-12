@@ -110,6 +110,14 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: AppSettings) -> None:
         super().__init__()
         self.settings = settings
+        try:
+            from app.ui.variable_field import set_variable_autocomplete_enabled
+
+            set_variable_autocomplete_enabled(
+                bool(getattr(settings, "variable_autocomplete", True))
+            )
+        except Exception:  # noqa: BLE001 - optional UI sugar must never block startup
+            pass
         self.project = Project.new_default("untitled")
         self.primitives: list[dict] = []
         self.runner = SimulationRunner(settings, app_root=APP_ROOT)
@@ -1391,6 +1399,15 @@ class MainWindow(QMainWindow):
             slot=self._on_add_prim_curve,
             tip="3D-Polylinie ohne Dicke (CSXCAD AddCurve)",
         )
+        gmenu.addSeparator()
+        add_action(
+            gmenu,
+            "Variables\u2026",
+            slot=self._on_edit_variables,
+            tip="Named drawing-unit values for geometry fields "
+            "(e.g. L = 20, then type L/2 in Start/Stop)",
+        )
+        gmenu.addSeparator()
         add_action(
             gmenu,
             "Import Gerber/Excellon…",
@@ -2642,6 +2659,12 @@ class MainWindow(QMainWindow):
             act = add.addAction(label)
             act.setToolTip(tip)
             act.triggered.connect(lambda _checked=False, s=slot: s())
+        add.addSeparator()
+        act_vars = add.addAction("Variables\u2026")
+        act_vars.setToolTip(
+            "Edit named drawing-unit values used by geometry expressions"
+        )
+        act_vars.triggered.connect(lambda _checked=False: self._on_edit_variables())
 
     def _add_project_panel_object_actions(self, menu: QMenu) -> None:
         """Selection + delete entries inside the Project / Geometry pane."""
@@ -4081,6 +4104,7 @@ class MainWindow(QMainWindow):
             self._sync_form_from_project()
             if hasattr(self.sim_params, "set_patch_group_visible"):
                 self.sim_params.set_patch_group_visible(bool(self.project.patch_params))
+            self._resolve_loaded_variables()
             self._refresh_tree()
             self.geom_info.setPlainText(
                 f"Opened {path}\n"
@@ -6753,6 +6777,167 @@ class MainWindow(QMainWindow):
             self._refresh_materials()
             self._log(f"Material: {m.name} ({m.kind}, εr={m.epsilon})")
 
+    def _expression_maps(self) -> list[dict]:
+        """All persisted expression maps (primitives/ports/dumps/NF2FF)."""
+        maps: list[dict] = []
+        for prim in self.primitives or []:
+            expressions = prim.get("expressions") if isinstance(prim, dict) else None
+            if isinstance(expressions, dict):
+                maps.append(expressions)
+        for obj in (
+            *self.project.ports,
+            *self.project.dumps,
+            self.project.nf2ff,
+        ):
+            expressions = getattr(obj, "expressions", None)
+            if isinstance(expressions, dict):
+                maps.append(expressions)
+        return maps
+
+    def _variable_usage_counts(self) -> dict[str, int]:
+        from app.models.variables import expression_references
+
+        names = [v.name for v in self.project.variables]
+        counts: dict[str, int] = {}
+        for expressions in self._expression_maps():
+            for name, count in expression_references(expressions, names).items():
+                key = name.casefold()
+                counts[key] = counts.get(key, 0) + count
+        return counts
+
+    def _variable_candidates(self, definitions, renames):
+        """Deep-copied geometry with definitions applied, plus validation errors.
+
+        Renaming happens before evaluation, in one pass, so a name swap in the
+        table follows the original variable identity.
+        """
+        import copy as _copy
+
+        from app.models.variables import (
+            rename_expression_map,
+            resolve_dump,
+            resolve_nf2ff,
+            resolve_port,
+            resolve_primitive,
+            validate_variable_defs,
+            variable_values_from_defs,
+        )
+
+        errors = validate_variable_defs(definitions)
+        if errors:
+            return None, errors
+        values = variable_values_from_defs(definitions)
+
+        primitives: list[dict] = []
+        for prim in self.primitives or []:
+            candidate = _copy.deepcopy(prim)
+            expressions = candidate.get("expressions")
+            if renames and isinstance(expressions, dict):
+                candidate["expressions"] = rename_expression_map(expressions, renames)
+            resolved, prim_errors = resolve_primitive(candidate, values)
+            primitives.append(resolved)
+            errors.extend(prim_errors)
+
+        ports = []
+        for port in self.project.ports:
+            candidate = _copy.deepcopy(port)
+            candidate.expressions = rename_expression_map(
+                getattr(candidate, "expressions", {}), renames
+            )
+            resolved, port_errors = resolve_port(candidate, values)
+            ports.append(resolved)
+            errors.extend(port_errors)
+
+        dumps = []
+        for dump in self.project.dumps:
+            candidate = _copy.deepcopy(dump)
+            candidate.expressions = rename_expression_map(
+                getattr(candidate, "expressions", {}), renames
+            )
+            resolved, dump_errors = resolve_dump(candidate, values)
+            dumps.append(resolved)
+            errors.extend(dump_errors)
+
+        nf = _copy.deepcopy(self.project.nf2ff)
+        nf.expressions = rename_expression_map(
+            getattr(nf, "expressions", {}), renames
+        )
+        nf, nf_errors = resolve_nf2ff(nf, values)
+        errors.extend(nf_errors)
+
+        return (primitives, ports, dumps, nf), errors
+
+    def _validate_variable_update(self, definitions, renames) -> list[str]:
+        """Variable-table callback: validate against every geometry expression."""
+        _candidates, errors = self._variable_candidates(definitions, renames)
+        return errors
+
+    def _apply_variable_update(self, definitions, renames) -> bool:
+        """Apply a table edit and re-evaluate every expression-backed field."""
+        import copy as _copy
+
+        candidates, errors = self._variable_candidates(definitions, renames)
+        if candidates is None or errors:
+            shown = errors[:12]
+            text = "\n".join(f"• {e}" for e in shown)
+            if len(errors) > len(shown):
+                text += f"\n… and {len(errors) - len(shown)} more."
+            QMessageBox.warning(
+                self,
+                "Variables",
+                "The variable change was not applied:\n\n" + text,
+            )
+            return False
+
+        primitives, ports, dumps, nf = candidates
+        self.project.variables = _copy.deepcopy(list(definitions))
+        self.primitives = primitives
+        self.project.primitives = list(primitives)
+        self.project.ports = ports
+        self.project.dumps = dumps
+        self.project.nf2ff = nf
+        self._mesh_sig = None
+        self._refresh_ports()
+        if getattr(nf, "expressions", None):
+            self._update_viewer_nf2ff()
+        self._log(
+            f"Geometry variables updated: {len(self.project.variables)} defined; "
+            "all expression-backed fields re-evaluated"
+        )
+        return True
+
+    def _resolve_loaded_variables(self) -> None:
+        """Make numeric geometry match saved expressions without blocking load."""
+        if not any(self._expression_maps()):
+            return
+        candidates, errors = self._variable_candidates(self.project.variables, {})
+        if candidates is None or errors:
+            for error in errors[:8]:
+                self._log(f"Variable warning: {error}")
+            if errors:
+                self._log(
+                    "Variable warning: saved numeric geometry kept for unresolved fields"
+                )
+            return
+        primitives, ports, dumps, nf = candidates
+        self.primitives = primitives
+        self.project.primitives = list(primitives)
+        self.project.ports = ports
+        self.project.dumps = dumps
+        self.project.nf2ff = nf
+
+    def _on_edit_variables(self) -> None:
+        from app.ui.variable_table import VariableTableDialog
+
+        dlg = VariableTableDialog(
+            self,
+            variables=self.project.variables,
+            usage=self._variable_usage_counts(),
+            validate=self._validate_variable_update,
+        )
+        if dlg.exec():
+            self._apply_variable_update(dlg.variables(), dlg.renames)
+
     def _on_add_prim_box(self) -> None:
         from app.ui.geometry_editors import PrimitiveBoxDialog
 
@@ -7050,12 +7235,27 @@ class MainWindow(QMainWindow):
         port.lumped_width = mode
         if mode == str(previous or "line").strip().lower():
             return  # unchanged: do not touch a hand-edited box
+
+        def _drop_transverse_expressions() -> None:
+            """Width rebuilding overwrote these axes: drop their old formulas."""
+            expressions = getattr(port, "expressions", None)
+            if not isinstance(expressions, dict):
+                return
+            keep = {f"start.{di}", f"stop.{di}"}
+            port.expressions = {
+                key: value
+                for key, value in expressions.items()
+                if key in keep
+                or not (str(key).startswith("start.") or str(key).startswith("stop."))
+            }
+
         if mode == "line":
             for k in range(3):
                 if k == di:
                     continue
                 mid = 0.5 * (float(port.start[k]) + float(port.stop[k]))
                 port.start[k] = port.stop[k] = mid
+            _drop_transverse_expressions()
             return
         wi = "xyz".index(mode)
         span = self._primitive_span(str(getattr(port, "metal", "") or ""), mode)
@@ -7071,6 +7271,7 @@ class MainWindow(QMainWindow):
                 continue
             mid = 0.5 * (float(port.start[k]) + float(port.stop[k]))
             port.start[k] = port.stop[k] = mid
+        _drop_transverse_expressions()
 
     def _on_mesh_port_place(self, request) -> None:
         """A click in the Mesh Viewer's port mode: configure a port there.
@@ -7300,10 +7501,17 @@ class MainWindow(QMainWindow):
             )
             return
         n = self.project.nf2ff
-        dlg = NF2FFBoxDialog(self, start=n.start, stop=n.stop, center=n.center)
+        dlg = NF2FFBoxDialog(
+            self,
+            start=n.start,
+            stop=n.stop,
+            center=n.center,
+            expressions=getattr(n, "expressions", {}),
+        )
         if dlg.exec() and dlg.result_start and dlg.result_stop:
             n.start = dlg.result_start
             n.stop = dlg.result_stop
+            n.expressions = dict(getattr(dlg, "result_expressions", {}) or {})
             n.center = [
                 0.5 * (dlg.result_start[i] + dlg.result_stop[i]) for i in range(3)
             ]
@@ -7354,6 +7562,7 @@ class MainWindow(QMainWindow):
         n.start = [float(v) for v in start]
         n.stop = [float(v) for v in stop]
         n.center = [0.5 * (start[i] + stop[i]) for i in range(3)]
+        n.expressions = {}
         n.enabled = True
         self._set_nf2ff_box_mode("auto")
         self.project.sim.nf2ff_enabled = True
@@ -7367,7 +7576,13 @@ class MainWindow(QMainWindow):
         it.setData(Qt.UserRole, kind)
         it.setData(Qt.UserRole + 1, index)
         it.setToolTip(
-            "Double-click to edit" if kind != "geom" else "Imported geometry (read-only) — edit in FreeCAD"
+            "Double-click to edit"
+            if kind not in ("geom", "vars")
+            else (
+                "Double-click to edit named geometry variables"
+                if kind == "vars"
+                else "Imported geometry (read-only) — edit in FreeCAD"
+            )
         )
         return it
 
@@ -7393,6 +7608,17 @@ class MainWindow(QMainWindow):
             if kind == prev[0] and index == prev[1]:
                 restore_row = self.tree.count() - 1
 
+        if self.project.variables:
+            parts = []
+            for v in self.project.variables[:4]:
+                try:
+                    value_text = f"{float(v.value):g}"
+                except (TypeError, ValueError):
+                    value_text = str(v.value)
+                parts.append(f"{v.name}={value_text}")
+            if len(self.project.variables) > 4:
+                parts.append("…")
+            _add(f"Vars: {', '.join(parts)}", "vars", 0)
         for i, gf in enumerate(self.project.geometry_files):
             _add(f"Geom: {Path(gf.path).name} [{gf.format}]", "geom", i)
         for i, pr in enumerate(self.primitives):
@@ -7482,6 +7708,9 @@ class MainWindow(QMainWindow):
         if not kind:
             self._log("Select a tree entry to remove (Delete key or Geometry menu)")
             return
+        if kind == "vars":
+            self._log("Variables are edited as a table (Geometry -> Variables…)")
+            return
         if kind == "geom":
             gf = (
                 self.project.geometry_files[idx]
@@ -7499,6 +7728,7 @@ class MainWindow(QMainWindow):
             n.start = [-20, -20, -20]
             n.stop = [20, 20, 20]
             n.center = [0, 0, 0]
+            n.expressions = {}
             self.project.sim.nf2ff_enabled = False
             self.chk_nf2ff.setChecked(False)
             self._log("NF2FF disabled and reset")
@@ -7677,6 +7907,9 @@ class MainWindow(QMainWindow):
             self._on_delete_selected_tree()
 
     def _edit_tree_entry(self, kind: str, idx: int) -> None:
+        if kind == "vars":
+            self._on_edit_variables()
+            return
         if kind == "geom":
             gf = self.project.geometry_files[idx] if 0 <= idx < len(self.project.geometry_files) else None
             if gf:
@@ -9507,7 +9740,7 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.resize(480, 560)
+        dlg.resize(500, 640)
         geo = self._dialog_geometry("settings_main")
         if geo is not None:
             dlg.restoreGeometry(geo)
@@ -9593,6 +9826,22 @@ class MainWindow(QMainWindow):
         aform.addRow("Quality / speed", cmb_3dq)
         root.addWidget(grp_ant)
 
+        # --- Geometry variables: optional name completion ---
+        grp_vars = QGroupBox("Geometry variables")
+        vform = QFL(grp_vars)
+        chk_var_complete = QCheckBox(
+            "Offer variable-name completion while typing geometry values"
+        )
+        chk_var_complete.setChecked(
+            bool(getattr(self.settings, "variable_autocomplete", True))
+        )
+        chk_var_complete.setToolTip(
+            "Show matching variable names in Start/Stop, Radius, Points and the\n"
+            "other geometry fields. Turn off if the popup disturbs typing."
+        )
+        vform.addRow(chk_var_complete)
+        root.addWidget(grp_vars)
+
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -9615,6 +9864,13 @@ class MainWindow(QMainWindow):
         self.settings.default_port_mesh_dirs = cmb_mesh.currentText()
         self.settings.default_port_direction = cmb_dir.currentText()
         self.settings.antenna_3d_quality = str(cmb_3dq.currentData() or "balanced")
+        self.settings.variable_autocomplete = bool(chk_var_complete.isChecked())
+        try:
+            from app.ui.variable_field import set_variable_autocomplete_enabled
+
+            set_variable_autocomplete_enabled(self.settings.variable_autocomplete)
+        except Exception:  # noqa: BLE001 - optional UI sugar
+            pass
         self.settings.save()
         try:
             self.sparam_viewer.scan_root = self.settings.work_path()
@@ -9628,7 +9884,8 @@ class MainWindow(QMainWindow):
             f"Settings saved (port defaults: type={pd['type']} "
             f"R={pd['resistance']} excite={pd['excite_port']} "
             f"mesh={pd['mesh_dirs']} dir={pd['direction'] or 'auto'}; "
-            f"antenna 3D: {self.settings.antenna_3d_quality})"
+            f"antenna 3D: {self.settings.antenna_3d_quality}; "
+            f"variable autocomplete: {'on' if self.settings.variable_autocomplete else 'off'})"
         )
 
 

@@ -51,6 +51,19 @@ Left panel (can be hidden)
   - Add Wire. / Add Curve. - 3-D polylines entered as "x, y, z" points.
     Wire is a round conductor (CSXCAD AddWire, radius in project units);
     Curve is a zero-thickness PEC path (AddCurve). Both are cartesian-only.
+  • Geometry -> Variables… (also in the project panel right-click Add menu) —
+    named drawing-unit values such as L = 20, W = 10. Type a name instead of a
+    number in Start/Stop, Center, Radius, waveguide a/b, dump/NF2FF boxes or
+    point lists, or use arithmetic such as L/2, sqrt(L*L + W*W), 2*pi*f.
+    Operators + - * / // % **, parentheses, unary signs and the functions
+    abs, sqrt, sin, cos, tan, asin, acos, atan, exp, log, log10, floor,
+    ceil, radians and degrees are supported. Names are case-insensitive;
+    functions/constants (pi, e, tau) are reserved. Point lines accept one
+    "x, y" or "x, y, z" per line; commas separate the two/three expressions.
+    The table shows comments and how many fields use each variable; edits and
+    renames are re-evaluated everywhere at once and are only accepted when all
+    expressions resolve. Settings -> Geometry variables controls the optional
+    name-completion popup while typing.
   • Add Assignment — bind FreeCAD mesh names to materials / boundary roles.
   • Add Material — PEC, dielectric, conducting sheet, lumped RLC, or ignore.
   • Add Port — lumped / MSL / waveguide port (also in the Ports / Dumps window).

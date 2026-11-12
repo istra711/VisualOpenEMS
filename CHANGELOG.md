@@ -33,6 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Named geometry variables**: **Geometry → Variables…** (also in the
+  project-panel right-click Add menu and the variable row of the project tree)
+  edits a Name/Value/Comment table in the project's drawing unit. Any numeric
+  geometry field can use a variable or a safe arithmetic expression (`L/2`,
+  `sqrt(W*W + L*L)`, `2*pi*f`, …), including primitive Start/Stop/Center/
+  Radius/Coord/Length, polygon and wire point lists, waveguide `a`/`b`, and
+  field-dump/NF2FF boxes. Values are case-insensitive; changing or renaming a
+  variable re-evaluates all expression-backed fields and rejects unresolved
+  expressions before closing the table. The numeric geometry is kept for
+  meshing/CSX/scripts, while the expression text is preserved and re-resolved
+  on load. Optional name completion is controlled in **Settings → Geometry
+  variables**. The project format gains `variables` and per-object
+  `expressions`; older project files load unchanged.
 - **Consistent run-log timestamps**: every line emitted during a run now gets
   the openEMS-style elapsed stamp (`[@ 1h50m02s]`), including solver warnings,
   post-processing messages and port summaries. Lines that already carry an

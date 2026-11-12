@@ -209,3 +209,15 @@ def test_window_layout_state_roundtrip(tmp_path):
     assert loaded.current_tab == "Field Viewer"
     assert loaded.viewer_settings_tab == 2
     assert loaded.dialog_geometry == {"viewer_settings": "abc"}
+
+
+def test_variable_autocomplete_default_and_roundtrip(tmp_path):
+    assert AppSettings().variable_autocomplete is True
+    path = tmp_path / "gui_settings.json"
+    s = AppSettings()
+    s.variable_autocomplete = False
+    s.save(path)
+    assert AppSettings.load(path).variable_autocomplete is False
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text('{"work_dir": "x"}', encoding="utf-8")
+    assert AppSettings.load(legacy).variable_autocomplete is True

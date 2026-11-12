@@ -64,6 +64,16 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   (see [CST import](docs/CST_IMPORT_DE.md)).
 - **`openems_export.json`** manifest from the FreeCAD export tools
 - **CSX primitives** — generic box, cylinder, polygon, and STL entries for non-FreeCAD workflows
+- **Named geometry variables** — define `L = 20`, `W = 10` in
+  **Geometry → Variables…** and type `L/2`, `sqrt(L*L + W*W)` or plain numbers
+  in every geometry field (Start/Stop, Center, Radius, waveguide a/b, dump and
+  NF2FF boxes, polygon/wire point lists). The table has Name/Value/Comment
+  columns, shows how many fields use each variable, re-evaluates all geometry
+  on change/rename, and refuses unresolved expressions. Variable-name
+  completion while typing is optional in **Settings → Geometry variables**.
+  Names are case-insensitive; functions such as `sqrt`, `sin` and constants
+  such as `pi` are reserved. Expressions are stored next to the resolved
+  numeric values, so existing meshing, CSX and script code keep seeing numbers.
 - Port markings (`PORT_<name>_start` / `PORT_<name>_stop` points) are carried through from FCStd
 
 ### Mesh Generation
@@ -596,6 +606,10 @@ Projects are stored as `.fcsim.json` — a human-readable JSON file:
   "name": "my_antenna",
   "version": 1,
   "geometry_files": [...],
+  "variables": [
+    {"name": "L", "value": 20.0, "comment": "board length"},
+    {"name": "W", "value": 10.0, "comment": "board width"}
+  ],
   "materials": [...],
   "assignments": [...],
   "ports": [...],
@@ -633,6 +647,15 @@ Projects are stored as `.fcsim.json` — a human-readable JSON file:
 ```
 
 **Backward compatibility:** unknown keys in older project files are silently ignored; missing keys fall back to defaults. Old flat result layouts are still read. On save, the file is rewritten atomically (temporary file + replace).
+
+**Expressions:** primitives, ports, dumps and the NF2FF box can carry an
+`expressions` object alongside their numeric values, for example
+`"expressions": {"start.0": "L/2", "stop.1": "W + 2"}`. Primitive keys use
+`start.<axis>`, `stop.<axis>`, `center.<axis>`, `radius`, `coord`, `length` or
+`points.<point>.<axis>`; ports add `wg_a`/`wg_b`. A scaled field is stored as
+`{"expr": "phi", "scale": 0.017453292519943295}`. The numeric fields are
+the resolved drawing-unit values; the expressions are re-evaluated on load
+and whenever the variable table changes.
 
 **Run storage:** a data folder contains `staging/` (uncommitted runs),
 `runs/<run-id>/` (immutable committed runs with `manifest.json`) and optional

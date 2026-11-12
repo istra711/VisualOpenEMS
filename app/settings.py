@@ -108,6 +108,10 @@ class AppSettings:
     default_port_mesh_dirs: str = "xyz"  # xyz | xy | xz | yz | x | y | z | ""
     default_port_direction: str = ""  # "" = auto from start/stop vector
 
+    # --- Geometry variables ---
+    #: offer variable-name completions while typing in geometry fields
+    variable_autocomplete: bool = True
+
     def port_defaults(self) -> dict:
         """Defaults applied when FreeCAD/export omits port fields."""
         return {

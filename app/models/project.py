@@ -47,6 +47,15 @@ CELLS_PER_WAVELENGTH_BY_PRESET: dict[str, float] = {
 
 
 @dataclass
+class VariableDef:
+    """A named drawing-unit value used by geometry expressions."""
+
+    name: str
+    value: float = 0.0
+    comment: str = ""
+
+
+@dataclass
 class MaterialDef:
     name: str
     kind: MaterialKind = "pec"
@@ -126,6 +135,10 @@ class PortDef:
     #: `MSLPort.direction` -> propagation sense), so this flips the port
     #: direction without moving its box. The geometry stays as drawn.
     reverse: bool = False
+    #: Named-variable expressions that produced the numeric start/stop (and
+    #: optionally wg_a/wg_b) fields. Keys use ``start.0``, ``stop.1``, ``wg_a``;
+    #: values are strings or ``{"expr": ..., "scale": ...}`` for scaled fields.
+    expressions: dict[str, Any] = field(default_factory=dict)
 
     def oriented(
         self, start: list[float] | None = None, stop: list[float] | None = None
@@ -167,6 +180,8 @@ class DumpDef:
     #: optional CSXCAD spatial dump resolution (drawing units) per axis.
     #: ``None`` = use the mesh; values > 0 resample the dump box.
     opt_resolution: list[float] | None = None
+    #: Named-variable expressions for ``start``/``stop`` (keys ``start.0`` etc.).
+    expressions: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -188,6 +203,8 @@ class NF2FFDef:
     freq_count: int = 11
     theta_steps: int = 181
     phi_steps: int = 361
+    #: Named-variable expressions for ``start``/``stop`` (keys ``start.0`` etc.).
+    expressions: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -695,6 +712,10 @@ class Project:
     patch_params: dict[str, Any] | None = None
     # generic CSX primitives (box/cylinder/polygon/stl dicts) for non-patch projects
     primitives: list[dict[str, Any]] | None = None
+    #: Named drawing-unit values available to geometry fields.  Primitives keep
+    #: their numeric values plus an ``expressions`` map; ports/dumps/NF2FF have
+    #: the same map as a dataclass field.
+    variables: list[VariableDef] = field(default_factory=list)
     #: Mesh Viewer appearance per object (edited in the object dialogs):
     #: ``{name: {"color": [r, g, b] | None, "transparency": 0-100,
     #: "visible": bool}}`` — ``color=None`` = the per-kind default colours
@@ -718,6 +739,12 @@ class Project:
             if m.name == name:
                 return m
         return None
+
+    def variable_values(self) -> dict[str, float]:
+        """Valid named variables as ``{name: numeric value}``."""
+        from app.models.variables import variable_values_from_defs
+
+        return variable_values_from_defs(self.variables)
 
     def effective_mesh(self) -> MeshSpec:
         """MeshSpec that is actually meshed/simulated with.
@@ -775,6 +802,31 @@ class Project:
         data["ports"] = [_make(PortDef, p) for p in data.get("ports", [])]
         data["dumps"] = [_make(DumpDef, d) for d in data.get("dumps", [])]
         data["nf2ff"] = _make(NF2FFDef, data.get("nf2ff", {}))
+        for port in data["ports"]:
+            if not isinstance(getattr(port, "expressions", None), dict):
+                port.expressions = {}
+        for dump in data["dumps"]:
+            if not isinstance(getattr(dump, "expressions", None), dict):
+                dump.expressions = {}
+        if not isinstance(getattr(data["nf2ff"], "expressions", None), dict):
+            data["nf2ff"].expressions = {}
+        var_data = data.get("variables")
+        if isinstance(var_data, list):
+            variables: list[VariableDef] = []
+            for item in var_data:
+                if isinstance(item, dict):
+                    variables.append(_make(VariableDef, item))
+                elif isinstance(item, VariableDef):
+                    variables.append(item)
+            data["variables"] = variables
+        elif isinstance(var_data, dict):
+            # tolerate a simple legacy name -> value mapping
+            data["variables"] = [
+                VariableDef(name=str(name), value=value)
+                for name, value in var_data.items()
+            ]
+        else:
+            data["variables"] = []
         data["mesh"] = _make(MeshSpec, data.get("mesh", {}))
         data["boundary"] = _make(BoundarySpec, data.get("boundary", {}))
         data["sim"] = _make(SimSpec, data.get("sim", {}))

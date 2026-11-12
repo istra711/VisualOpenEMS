@@ -27,8 +27,19 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.project import DumpDef, GeomAssignment, MaterialDef, PortDef
+from app.models.variables import (
+    VariableError,
+    evaluate_expression,
+    expression_entry,
+    expression_text,
+)
+from app.numfmt import format_number, parse_number
 from app.ui.object_display import DisplayOptionsWidget
 from app.ui.primitive_preview import PolygonPreview
+from app.ui.variable_field import (
+    VariableField,
+    variable_field_expressions,
+)
 
 MATERIAL_KINDS = ["pec", "dielectric", "conducting_sheet", "lumped_rlc", "ignore"]
 PORT_TYPES = ["lumped", "msl", "rect_waveguide"]
@@ -70,6 +81,37 @@ def _fit_dialog(
     )
 
 
+def _variables_for(
+    parent: QWidget | None, variables: dict[str, float] | None
+) -> dict[str, float]:
+    """Explicit variables, else the parent MainWindow's project variables."""
+    if variables is not None:
+        return {str(k): float(v) for k, v in variables.items()}
+    project = getattr(parent, "project", None)
+    getter = getattr(project, "variable_values", None)
+    if callable(getter):
+        try:
+            return dict(getter())
+        except Exception:  # noqa: BLE001 - a dialog must still open
+            return {}
+    return {}
+
+
+def _expression_for(expressions: dict | None, key: str) -> str:
+    if not isinstance(expressions, dict):
+        return ""
+    return expression_text(expressions.get(key))
+
+
+def _read_checked(parent: QWidget, title: str, reader):
+    """Run a dialog reader and show one clear warning for an invalid field."""
+    try:
+        return reader()
+    except VariableError as e:
+        QMessageBox.warning(parent, title, str(e))
+        return None
+
+
 def _vec3_row(
     form: QFormLayout,
     label: str,
@@ -77,31 +119,50 @@ def _vec3_row(
     lo: float = -1e4,
     hi: float = 1e4,
     coord_system: str = "cartesian",
+    *,
+    variables: dict[str, float] | None = None,
+    expressions: dict | None = None,
+    prefix: str = "",
 ):
-    """Three stacked spins (one per axis). Cylindrical: suffixes ρ/φ/z and
-    the phi spin shows DEGREES (project values are always radians)."""
+    """Three variable-capable fields (one per axis).
+
+    Cylindrical: suffixes ρ/φ/z and the phi field shows DEGREES (project values
+    are always radians).  Saved expressions are shown verbatim so editing an
+    object does not silently replace ``L/2`` with its current number.
+    """
     w = QWidget()
     lay = QVBoxLayout(w)
     lay.setContentsMargins(0, 0, 0, 0)
-    spins: list[QDoubleSpinBox] = []
+    fields: list[VariableField] = []
     polar = coord_system == "cylindrical"
-    for i, axis in enumerate(_axis_suffixes(coord_system)):
-        sp = QDoubleSpinBox()
-        sp.setDecimals(4)
+    axes = _axis_suffixes(coord_system)
+    for i, axis in enumerate(axes):
         raw = float(values[i]) if i < len(values) else 0.0
-        if polar and i == 1:
-            # phi is radians in the project; show degrees (a full turn +-36000 deg)
-            sp.setRange(-36000.0, 36000.0)
-            sp.setSuffix(" °")
-            sp.setValue(math.degrees(raw))
-        else:
-            sp.setRange(lo, hi)
-            sp.setSuffix(f" {axis}")
-            sp.setValue(raw)
-        spins.append(sp)
-        lay.addWidget(sp)
+        use_phi = polar and i == 1
+        field = VariableField(
+            math.degrees(raw) if use_phi else raw,
+            variables=variables or {},
+            scale=math.pi / 180.0 if use_phi else 1.0,
+            label=f"{label} {axis}",
+            minimum=-36000.0 if use_phi else lo,
+            maximum=36000.0 if use_phi else hi,
+        )
+        key = f"{prefix}.{i}" if prefix else ""
+        expr = _expression_for(expressions, key) if key else ""
+        if expr:
+            field.setExpression(expr)
+        row = QWidget()
+        row_lay = QHBoxLayout(row)
+        row_lay.setContentsMargins(0, 0, 0, 0)
+        row_lay.setSpacing(4)
+        row_lay.addWidget(field, 1)
+        suffix = QLabel("°" if use_phi else axis)
+        suffix.setMinimumWidth(14)
+        row_lay.addWidget(suffix)
+        lay.addWidget(row)
+        fields.append(field)
     form.addRow(label, w)
-    return spins
+    return fields
 
 
 def _axis_combo(current: str) -> QComboBox:
@@ -114,12 +175,21 @@ def _axis_combo(current: str) -> QComboBox:
     return cmb
 
 
-def _vec3_read(spins: list[QDoubleSpinBox], coord_system: str = "cartesian") -> list[float]:
-    """Spins -> project values (cylindrical phi: degrees -> radians)."""
-    vals = [float(s.value()) for s in spins]
-    if coord_system == "cylindrical" and len(vals) == 3:
-        vals[1] = math.radians(vals[1])
-    return vals
+def _vec3_read(fields: list[VariableField], coord_system: str = "cartesian") -> list[float]:
+    """Fields -> project values (scaling already handled by VariableField)."""
+    return [float(field.value()) for field in fields]
+
+
+def _split_point_line(line: str) -> list[str]:
+    """Split a point line on commas/semicolons first, then whitespace.
+
+    Commas are the reliable separator when an expression contains spaces or
+    operators; whitespace splitting keeps old numeric point lists working.
+    """
+    parts = [s.strip() for s in re.split(r"[,;]+", line) if s.strip()]
+    if len(parts) >= 2:
+        return parts
+    return [s for s in re.split(r"\s+", line.strip()) if s]
 
 
 class PortDialog(QDialog):
@@ -128,12 +198,15 @@ class PortDialog(QDialog):
         parent: QWidget | None = None,
         port: PortDef | None = None,
         coord_system: str = "cartesian",
+        variables: dict[str, float] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Port")
         self.resize(380, 500)
         self._coord_system = coord_system
+        self._variables = _variables_for(parent, variables)
         p = port or PortDef(name="in1")
+        self._expressions = dict(getattr(p, "expressions", {}) or {})
         self.result_port: PortDef | None = None
         form = QFormLayout(self)
 
@@ -148,14 +221,26 @@ class PortDialog(QDialog):
         self.cmb_dir = QComboBox()
         self.cmb_dir.addItems(["x", "y", "z"])
         self.cmb_dir.setCurrentText(p.direction or "z")
-        self.spn_wg_a = QDoubleSpinBox()
-        self.spn_wg_a.setRange(0.0, 1000.0)
-        self.spn_wg_a.setDecimals(3)
-        self.spn_wg_a.setValue(float(getattr(p, "wg_a", 0.0) or 0.0))
-        self.spn_wg_b = QDoubleSpinBox()
-        self.spn_wg_b.setRange(0.0, 1000.0)
-        self.spn_wg_b.setDecimals(3)
-        self.spn_wg_b.setValue(float(getattr(p, "wg_b", 0.0) or 0.0))
+        self.spn_wg_a = VariableField(
+            float(getattr(p, "wg_a", 0.0) or 0.0),
+            variables=self._variables,
+            label="Waveguide a",
+            minimum=0.0,
+            maximum=1000.0,
+        )
+        self.spn_wg_b = VariableField(
+            float(getattr(p, "wg_b", 0.0) or 0.0),
+            variables=self._variables,
+            label="Waveguide b",
+            minimum=0.0,
+            maximum=1000.0,
+        )
+        expr_wg_a = _expression_for(self._expressions, "wg_a")
+        expr_wg_b = _expression_for(self._expressions, "wg_b")
+        if expr_wg_a:
+            self.spn_wg_a.setExpression(expr_wg_a)
+        if expr_wg_b:
+            self.spn_wg_b.setExpression(expr_wg_b)
         self.cmb_wg_mode = QComboBox()
         self.cmb_wg_mode.addItems(["TE10", "TE20", "TE01", "TE11", "TE21"])
         _mode = str(getattr(p, "wg_mode", "") or "TE10").strip().upper()
@@ -254,8 +339,24 @@ class PortDialog(QDialog):
         form.addRow("Excitation phase", self.spn_exc_phase)
         form.addRow(self.chk_reverse)
         form.addRow("Mesh dirs", self.cmb_mesh)
-        self.spn_start = _vec3_row(form, "Start", p.start, coord_system=coord_system)
-        self.spn_stop = _vec3_row(form, "Stop", p.stop, coord_system=coord_system)
+        self.spn_start = _vec3_row(
+            form,
+            "Start",
+            p.start,
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="start",
+        )
+        self.spn_stop = _vec3_row(
+            form,
+            "Stop",
+            p.stop,
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="stop",
+        )
         if coord_system == "cylindrical":
             self.cmb_dir.setToolTip(
                 "Excitation/normal axis letter: x=ρ, y=φ, z (openEMS always\n"
@@ -284,13 +385,34 @@ class PortDialog(QDialog):
             form.setRowVisible(self.spn_r, not is_wg)
 
     def _accept(self) -> None:
+        vals = _read_checked(
+            self,
+            "Port",
+            lambda: (
+                _vec3_read(self.spn_start, self._coord_system),
+                _vec3_read(self.spn_stop, self._coord_system),
+                float(self.spn_wg_a.value()),
+                float(self.spn_wg_b.value()),
+            ),
+        )
+        if vals is None:
+            return
+        start, stop, wg_a, wg_b = vals
         name = self.ed_name.text().strip() or "in1"
         ptype = self.cmb_type.currentText()
+        expressions = variable_field_expressions(
+            {
+                **{f"start.{i}": f for i, f in enumerate(self.spn_start)},
+                **{f"stop.{i}": f for i, f in enumerate(self.spn_stop)},
+                "wg_a": self.spn_wg_a,
+                "wg_b": self.spn_wg_b,
+            }
+        )
         self.result_port = PortDef(
             name=name,
             type=ptype,  # type: ignore[arg-type]
-            start=_vec3_read(self.spn_start, self._coord_system),
-            stop=_vec3_read(self.spn_stop, self._coord_system),
+            start=start,
+            stop=stop,
             resistance=float(self.spn_r.value()),
             direction=self.cmb_dir.currentText(),
             prop_direction=self.cmb_prop.currentData() or "",
@@ -306,9 +428,10 @@ class PortDialog(QDialog):
                 else "line"
             ),
             metal=self._seed_metal,
-            wg_a=float(self.spn_wg_a.value()),
-            wg_b=float(self.spn_wg_b.value()),
+            wg_a=wg_a,
+            wg_b=wg_b,
             wg_mode=self.cmb_wg_mode.currentText() if ptype == "rect_waveguide" else "TE10",
+            expressions=expressions,
         )
         self.accept()
 
@@ -459,6 +582,7 @@ class PrimitiveBoxDialog(QDialog, _DisplayMixin):
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
         display: dict | None = None,
+        variables: dict[str, float] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Box primitive")
@@ -468,6 +592,8 @@ class PrimitiveBoxDialog(QDialog, _DisplayMixin):
             # In cylindrical mode a "box" is a wedge in (rho, phi, z).
             self.setWindowTitle("Wedge primitive (cylindrical)")
         p = prim or {"name": "box1", "material": "copper", "start": [0, 0, 0], "stop": [10, 10, 0.5]}
+        self._variables = _variables_for(parent, variables)
+        self._expressions = dict(p.get("expressions") or {}) if prim else {}
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
         form = QFormLayout(self)
@@ -487,10 +613,22 @@ class PrimitiveBoxDialog(QDialog, _DisplayMixin):
         form.addRow("Priority", self.spn_pri)
         form.addRow(self.chk_edges)
         self.spn_start = _vec3_row(
-            form, "Start", list(p.get("start", [0, 0, 0])), coord_system=coord_system
+            form,
+            "Start",
+            list(p.get("start", [0, 0, 0])),
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="start",
         )
         self.spn_stop = _vec3_row(
-            form, "Stop", list(p.get("stop", [10, 10, 0.5])), coord_system=coord_system
+            form,
+            "Stop",
+            list(p.get("stop", [10, 10, 0.5])),
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="stop",
         )
         self._add_display(form, display)
         bb = QDialogButtonBox(
@@ -501,20 +639,39 @@ class PrimitiveBoxDialog(QDialog, _DisplayMixin):
         bb.rejected.connect(self.reject)
 
     def _accept(self) -> None:
+        vals = _read_checked(
+            self,
+            "Box primitive",
+            lambda: (
+                _vec3_read(self.spn_start, self._coord_system),
+                _vec3_read(self.spn_stop, self._coord_system),
+            ),
+        )
+        if vals is None:
+            return
+        start, stop = vals
         name = self.ed_name.text().strip() or "box1"
         prim: dict[str, Any] = {
             "kind": "box",
             "name": name,
             "material": self.cmb_mat.currentText().strip() or "copper",
             "priority": self.spn_pri.value(),
-            "start": _vec3_read(self.spn_start, self._coord_system),
-            "stop": _vec3_read(self.spn_stop, self._coord_system),
+            "start": start,
+            "stop": stop,
         }
         if self.chk_edges.isChecked():
             prim["edges2grid"] = "xy"
+        expressions = variable_field_expressions(
+            {
+                **{f"start.{i}": f for i, f in enumerate(self.spn_start)},
+                **{f"stop.{i}": f for i, f in enumerate(self.spn_stop)},
+            }
+        )
+        if expressions:
+            prim["expressions"] = expressions
         # keep imported STL fields (path, mesh_path, …) when editing
         for k, v in (self._keep_extra or {}).items():
-            if k not in prim:
+            if k not in prim and k != "expressions":
                 prim[k] = v
         self.result = prim
         self.accept()
@@ -527,12 +684,15 @@ class PrimitiveCylinderDialog(QDialog, _DisplayMixin):
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
         display: dict | None = None,
+        variables: dict[str, float] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Cylinder primitive")
         self.resize(400, 480)
         self._coord_system = coord_system
         p = prim or {"name": "cyl1", "material": "copper", "start": [0, 0, 0], "stop": [0, 0, 5], "radius": 0.5}
+        self._variables = _variables_for(parent, variables)
+        self._expressions = dict(p.get("expressions") or {}) if prim else {}
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
         form = QFormLayout(self)
@@ -544,19 +704,37 @@ class PrimitiveCylinderDialog(QDialog, _DisplayMixin):
         self.spn_pri = QSpinBox()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(p.get("priority", 10)))
-        self.spn_radius = QDoubleSpinBox()
-        self.spn_radius.setRange(1e-4, 1e3)
-        self.spn_radius.setDecimals(4)
-        self.spn_radius.setValue(float(p.get("radius", 0.5)))
+        self.spn_radius = VariableField(
+            float(p.get("radius", 0.5)),
+            variables=self._variables,
+            label="Radius",
+            minimum=1e-4,
+            maximum=1e3,
+        )
+        expr_radius = _expression_for(self._expressions, "radius")
+        if expr_radius:
+            self.spn_radius.setExpression(expr_radius)
         form.addRow("Name", self.ed_name)
         form.addRow("Material", self.cmb_mat)
         form.addRow("Priority", self.spn_pri)
         form.addRow("Radius", self.spn_radius)
         self.spn_start = _vec3_row(
-            form, "Start (axis A)", list(p.get("start", [0, 0, 0])), coord_system=coord_system
+            form,
+            "Start (axis A)",
+            list(p.get("start", [0, 0, 0])),
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="start",
         )
         self.spn_stop = _vec3_row(
-            form, "Stop (axis B)", list(p.get("stop", [0, 0, 5])), coord_system=coord_system
+            form,
+            "Stop (axis B)",
+            list(p.get("stop", [0, 0, 5])),
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="stop",
         )
         self._add_display(form, display)
         bb = QDialogButtonBox(
@@ -567,17 +745,38 @@ class PrimitiveCylinderDialog(QDialog, _DisplayMixin):
         bb.rejected.connect(self.reject)
 
     def _accept(self) -> None:
+        vals = _read_checked(
+            self,
+            "Cylinder primitive",
+            lambda: (
+                _vec3_read(self.spn_start, self._coord_system),
+                _vec3_read(self.spn_stop, self._coord_system),
+                float(self.spn_radius.value()),
+            ),
+        )
+        if vals is None:
+            return
+        start, stop, radius = vals
         prim: dict[str, Any] = {
             "kind": "cylinder",
             "name": self.ed_name.text().strip() or "cyl1",
             "material": self.cmb_mat.currentText().strip() or "copper",
             "priority": self.spn_pri.value(),
-            "start": _vec3_read(self.spn_start, self._coord_system),
-            "stop": _vec3_read(self.spn_stop, self._coord_system),
-            "radius": float(self.spn_radius.value()),
+            "start": start,
+            "stop": stop,
+            "radius": radius,
         }
+        expressions = variable_field_expressions(
+            {
+                **{f"start.{i}": f for i, f in enumerate(self.spn_start)},
+                **{f"stop.{i}": f for i, f in enumerate(self.spn_stop)},
+                "radius": self.spn_radius,
+            }
+        )
+        if expressions:
+            prim["expressions"] = expressions
         for k, v in (self._keep_extra or {}).items():
-            if k not in prim:
+            if k not in prim and k != "expressions":
                 prim[k] = v
         self.result = prim
         self.accept()
@@ -592,6 +791,7 @@ class PrimitiveSphereDialog(QDialog, _DisplayMixin):
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
         display: dict | None = None,
+        variables: dict[str, float] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Sphere primitive")
@@ -603,6 +803,8 @@ class PrimitiveSphereDialog(QDialog, _DisplayMixin):
             "center": [0, 0, 0],
             "radius": 5.0,
         }
+        self._variables = _variables_for(parent, variables)
+        self._expressions = dict(p.get("expressions") or {}) if prim else {}
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
         form = QFormLayout(self)
@@ -614,16 +816,28 @@ class PrimitiveSphereDialog(QDialog, _DisplayMixin):
         self.spn_pri = QSpinBox()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(p.get("priority", 10)))
-        self.spn_radius = QDoubleSpinBox()
-        self.spn_radius.setRange(1e-4, 1e3)
-        self.spn_radius.setDecimals(4)
-        self.spn_radius.setValue(float(p.get("radius", 5.0)))
+        self.spn_radius = VariableField(
+            float(p.get("radius", 5.0)),
+            variables=self._variables,
+            label="Radius",
+            minimum=1e-4,
+            maximum=1e3,
+        )
+        expr_radius = _expression_for(self._expressions, "radius")
+        if expr_radius:
+            self.spn_radius.setExpression(expr_radius)
         form.addRow("Name", self.ed_name)
         form.addRow("Material", self.cmb_mat)
         form.addRow("Priority", self.spn_pri)
         form.addRow("Radius", self.spn_radius)
         self.spn_center = _vec3_row(
-            form, "Center", list(p.get("center", [0, 0, 0])), coord_system=coord_system
+            form,
+            "Center",
+            list(p.get("center", [0, 0, 0])),
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="center",
         )
         self._add_display(form, display)
         bb = QDialogButtonBox(
@@ -634,8 +848,17 @@ class PrimitiveSphereDialog(QDialog, _DisplayMixin):
         bb.rejected.connect(self.reject)
 
     def _accept(self) -> None:
-        center = _vec3_read(self.spn_center, self._coord_system)
-        radius = float(self.spn_radius.value())
+        vals = _read_checked(
+            self,
+            "Sphere primitive",
+            lambda: (
+                _vec3_read(self.spn_center, self._coord_system),
+                float(self.spn_radius.value()),
+            ),
+        )
+        if vals is None:
+            return
+        center, radius = vals
         prim: dict[str, Any] = {
             "kind": "sphere",
             "name": self.ed_name.text().strip() or "sphere1",
@@ -647,8 +870,16 @@ class PrimitiveSphereDialog(QDialog, _DisplayMixin):
             "start": [center[0] - radius, center[1] - radius, center[2] - radius],
             "stop": [center[0] + radius, center[1] + radius, center[2] + radius],
         }
+        expressions = variable_field_expressions(
+            {
+                **{f"center.{i}": f for i, f in enumerate(self.spn_center)},
+                "radius": self.spn_radius,
+            }
+        )
+        if expressions:
+            prim["expressions"] = expressions
         for k, v in (self._keep_extra or {}).items():
-            if k not in prim:
+            if k not in prim and k != "expressions":
                 prim[k] = v
         self.result = prim
         self.accept()
@@ -663,6 +894,7 @@ class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
         prim: dict[str, Any] | None = None,
         coord_system: str = "cartesian",
         display: dict | None = None,
+        variables: dict[str, float] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Lumped element (R/L/C)")
@@ -679,6 +911,8 @@ class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
             "caps": True,
             "priority": 15,
         }
+        self._variables = _variables_for(parent, variables)
+        self._expressions = dict(p.get("expressions") or {}) if prim else {}
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
 
@@ -720,12 +954,18 @@ class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
             "Start",
             list(p.get("start", [0, 0, 0])),
             coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="start",
         )
         self.spn_stop = _vec3_row(
             form,
             "Stop / other end",
             list(p.get("stop", [0, 0, 1])),
             coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="stop",
         )
         form.addRow("Resistance", self.spn_r)
         form.addRow("Inductance", self.spn_l)
@@ -746,20 +986,39 @@ class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
         bb.rejected.connect(self.reject)
 
     def _accept(self) -> None:
+        vals = _read_checked(
+            self,
+            "Lumped element (R/L/C)",
+            lambda: (
+                _vec3_read(self.spn_start, self._coord_system),
+                _vec3_read(self.spn_stop, self._coord_system),
+            ),
+        )
+        if vals is None:
+            return
+        start, stop = vals
         prim: dict[str, Any] = {
             "kind": "lumped",
             "name": self.ed_name.text().strip() or "R1",
             "direction": self.cmb_dir.currentText() or "z",
             "priority": self.spn_pri.value(),
-            "start": _vec3_read(self.spn_start, self._coord_system),
-            "stop": _vec3_read(self.spn_stop, self._coord_system),
+            "start": start,
+            "stop": stop,
             "resistance": float(self.spn_r.value()),
             "inductance": float(self.spn_l.value()) * 1e-9,
             "capacitance": float(self.spn_c.value()) * 1e-12,
             "caps": bool(self.chk_caps.isChecked()),
         }
+        expressions = variable_field_expressions(
+            {
+                **{f"start.{i}": f for i, f in enumerate(self.spn_start)},
+                **{f"stop.{i}": f for i, f in enumerate(self.spn_stop)},
+            }
+        )
+        if expressions:
+            prim["expressions"] = expressions
         for k, v in (self._keep_extra or {}).items():
-            if k not in prim:
+            if k not in prim and k != "expressions":
                 prim[k] = v
         self.result = prim
         self.accept()
@@ -782,6 +1041,7 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         unit: str = "mm",
         size: tuple[int, int] | None = None,
         extruded: bool = False,
+        variables: dict[str, float] | None = None,
     ) -> None:
         super().__init__(parent)
         # compact default; a size the user picked before (``size``) wins
@@ -802,6 +1062,8 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
             if is_extruded
             else "Polygon primitive"
         )
+        self._variables = _variables_for(parent, variables)
+        self._expressions = dict(p.get("expressions") or {}) if prim else {}
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
         form = QFormLayout(self)
@@ -816,14 +1078,26 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         self.cmb_axis = QComboBox()
         self.cmb_axis.addItems(["x", "y", "z"])
         self.cmb_axis.setCurrentText(str(p.get("axis", "z")))
-        self.spn_coord = QDoubleSpinBox()
-        self.spn_coord.setRange(-1e4, 1e4)
-        self.spn_coord.setDecimals(4)
-        self.spn_coord.setValue(float(p.get("coord", 0.0)))
-        self.spn_length = QDoubleSpinBox()
-        self.spn_length.setRange(0.0, 1e4)
-        self.spn_length.setDecimals(4)
-        self.spn_length.setValue(float(p.get("length") or 0.0))
+        self.spn_coord = VariableField(
+            float(p.get("coord", 0.0)),
+            variables=self._variables,
+            label="Coordinate",
+            minimum=-1e4,
+            maximum=1e4,
+        )
+        self.spn_length = VariableField(
+            float(p.get("length") or 0.0),
+            variables=self._variables,
+            label="Length",
+            minimum=0.0,
+            maximum=1e4,
+        )
+        expr_coord = _expression_for(self._expressions, "coord")
+        expr_length = _expression_for(self._expressions, "length")
+        if expr_coord:
+            self.spn_coord.setExpression(expr_coord)
+        if expr_length:
+            self.spn_length.setExpression(expr_length)
         self.spn_length.setToolTip(
             "0 = flat surface (AddPolygon); > 0 = extruded solid prism\n"
             "(AddLinPoly) with this thickness along the axis."
@@ -839,13 +1113,20 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
         pts = p.get("points") or []
-        self.ed_points.setPlainText(
-            "\n".join(
-                f"{float(pt[0]):g}, {float(pt[1]):g}"
-                for pt in pts
-                if len(pt) >= 2
-            )
-        )
+        point_lines: list[str] = []
+        for point_index, pt in enumerate(pts):
+            if len(pt) < 2:
+                continue
+            values: list[str] = []
+            for axis_index in range(2):
+                expr = _expression_for(
+                    self._expressions, f"points.{point_index}.{axis_index}"
+                )
+                values.append(
+                    expr if expr else format_number(float(pt[axis_index]))
+                )
+            point_lines.append(", ".join(values))
+        self.ed_points.setPlainText("\n".join(point_lines))
         self.ed_points.setPlaceholderText("x, y  (one point per line, >= 3 points)")
         self.ed_points.setMinimumHeight(110)
         # live preview: polygon in its plane, repainted while typing
@@ -872,22 +1153,73 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
 
     def _refresh_preview(self) -> None:
         """Feed the current dialog state to the live polygon preview."""
+        points, _expressions, _errors = self._parse_points_variables(
+            self.ed_points.toPlainText(), strict=False
+        )
         self.preview.set_polygon(
-            self._parse_points(self.ed_points.toPlainText()),
+            points,
             axis=self.cmb_axis.currentText(),
-            coord=float(self.spn_coord.value()),
-            length=float(self.spn_length.value()),
+            coord=self.spn_coord.safe_value(),
+            length=max(0.0, self.spn_length.safe_value()),
             unit=self._unit,
         )
 
+    def _parse_points_variables(
+        self, text: str, *, strict: bool
+    ) -> tuple[list[list[float]], dict[str, Any], list[str]]:
+        """Parse 2-D points; evaluate expressions and keep their source text."""
+        points: list[list[float]] = []
+        expressions: dict[str, Any] = {}
+        errors: list[str] = []
+        for line_number, raw_line in enumerate(text.splitlines(), start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = _split_point_line(line)
+            if len(parts) < 2:
+                if strict:
+                    errors.append(
+                        f"Line {line_number}: expected 'x, y' (one point per line)."
+                    )
+                continue
+            values: list[float] = []
+            source: list[str] = []
+            failed = False
+            for axis_index, axis_name in enumerate(("x", "y")):
+                token = parts[axis_index]
+                try:
+                    value = evaluate_expression(
+                        token,
+                        self._variables,
+                        context=f"Point {len(points) + 1} {axis_name}",
+                    )
+                except VariableError as e:
+                    if strict:
+                        errors.append(str(e))
+                    failed = True
+                    break
+                values.append(value)
+                source.append(token)
+            if failed:
+                continue
+            point_index = len(points)
+            for axis_index, token in enumerate(source):
+                if parse_number(token) is None:
+                    expressions[f"points.{point_index}.{axis_index}"] = expression_entry(
+                        token
+                    )
+            points.append(values)
+        return points, expressions, errors
+
     @staticmethod
     def _parse_points(text: str) -> list[list[float]]:
+        """Numeric-only compatibility parser (no variables)."""
         pts: list[list[float]] = []
         for line in text.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            parts = [s for s in re.split(r"[,;\s]+", line) if s]
+            parts = _split_point_line(line)
             if len(parts) < 2:
                 continue
             try:
@@ -897,7 +1229,25 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         return pts
 
     def _accept(self) -> None:
-        pts = self._parse_points(self.ed_points.toPlainText())
+        vals = _read_checked(
+            self,
+            "Polygon primitive",
+            lambda: (float(self.spn_coord.value()), float(self.spn_length.value())),
+        )
+        if vals is None:
+            return
+        coord, length = vals
+        length = max(0.0, length)
+        pts, point_expressions, point_errors = self._parse_points_variables(
+            self.ed_points.toPlainText(), strict=True
+        )
+        if point_errors:
+            QMessageBox.warning(
+                self,
+                "Polygon primitive",
+                "\n".join(point_errors[:8]),
+            )
+            return
         if len(pts) < 3:
             QMessageBox.warning(
                 self,
@@ -907,8 +1257,6 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
             return
         axis = self.cmb_axis.currentText()
         axis_idx = "xyz".index(axis) if axis in "xyz" else 2
-        coord = float(self.spn_coord.value())
-        length = max(0.0, float(self.spn_length.value()))
         # bbox for the viewer slice rect (cyclic point mapping, see class doc)
         c0 = (axis_idx + 1) % 3
         c1 = (axis_idx + 2) % 3
@@ -934,8 +1282,14 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
             "start": start,
             "stop": stop,
         }
+        expressions = variable_field_expressions(
+            {"coord": self.spn_coord, "length": self.spn_length}
+        )
+        expressions.update(point_expressions)
+        if expressions:
+            prim["expressions"] = expressions
         for k, v in (self._keep_extra or {}).items():
-            if k not in prim:
+            if k not in prim and k != "expressions":
                 prim[k] = v
         self.result = prim
         self.accept()
@@ -958,6 +1312,7 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
         display: dict | None = None,
         unit: str = "mm",
         size: tuple[int, int] | None = None,
+        variables: dict[str, float] | None = None,
     ) -> None:
         super().__init__(parent)
         kind = str(kind or "wire").lower()
@@ -977,6 +1332,8 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
             "radius": 0.5,
             "points": [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
         }
+        self._variables = _variables_for(parent, variables)
+        self._expressions = dict(p.get("expressions") or {}) if prim else {}
         self._keep_extra = dict(p) if prim else {}
         self.result: dict[str, Any] | None = None
 
@@ -993,13 +1350,18 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
         form.addRow("Material", self.cmb_mat)
         form.addRow("Priority", self.spn_pri)
 
-        self.spn_radius: QDoubleSpinBox | None = None
+        self.spn_radius: VariableField | None = None
         if kind == "wire":
-            self.spn_radius = QDoubleSpinBox()
-            self.spn_radius.setRange(0.001, 1_000.0)
-            self.spn_radius.setDecimals(4)
-            self.spn_radius.setSingleStep(0.05)
-            self.spn_radius.setValue(float(p.get("radius", 0.5) or 0.5))
+            self.spn_radius = VariableField(
+                float(p.get("radius", 0.5) or 0.5),
+                variables=self._variables,
+                label="Wire radius",
+                minimum=1e-3,
+                maximum=1_000.0,
+            )
+            expr_radius = _expression_for(self._expressions, "radius")
+            if expr_radius:
+                self.spn_radius.setExpression(expr_radius)
             self.spn_radius.setToolTip(
                 "Wire radius in the current drawing unit. CSXCAD AddWire\n"
                 "sweeps a circular cross-section around the polyline."
@@ -1011,13 +1373,20 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
         pts = p.get("points") or []
-        self.ed_points.setPlainText(
-            "\n".join(
-                f"{float(pt[0]):g}, {float(pt[1]):g}, {float(pt[2]):g}"
-                for pt in pts
-                if len(pt) >= 3
-            )
-        )
+        point_lines: list[str] = []
+        for point_index, pt in enumerate(pts):
+            if len(pt) < 3:
+                continue
+            values: list[str] = []
+            for axis_index in range(3):
+                expr = _expression_for(
+                    self._expressions, f"points.{point_index}.{axis_index}"
+                )
+                values.append(
+                    expr if expr else format_number(float(pt[axis_index]))
+                )
+            point_lines.append(", ".join(values))
+        self.ed_points.setPlainText("\n".join(point_lines))
         self.ed_points.setPlaceholderText(
             "x, y, z  (one 3-D point per line, >= 2 points)"
         )
@@ -1037,14 +1406,68 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
 
+    def _parse_points_variables(
+        self, text: str, *, strict: bool
+    ) -> tuple[list[list[float]], dict[str, Any], list[str]]:
+        points: list[list[float]] = []
+        expressions: dict[str, Any] = {}
+        errors: list[str] = []
+        for line_number, raw_line in enumerate(text.splitlines(), start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = _split_point_line(line)
+            if len(parts) < 3:
+                if strict:
+                    errors.append(
+                        f"Line {line_number}: expected 'x, y, z' (one point per line)."
+                    )
+                continue
+            values: list[float] = []
+            source: list[str] = []
+            failed = False
+            for axis_index, axis_name in enumerate(("x", "y", "z")):
+                token = parts[axis_index]
+                try:
+                    value = evaluate_expression(
+                        token,
+                        self._variables,
+                        context=f"Point {len(points) + 1} {axis_name}",
+                    )
+                except VariableError as e:
+                    if strict:
+                        errors.append(str(e))
+                    failed = True
+                    break
+                if not math.isfinite(value):
+                    if strict:
+                        errors.append(
+                            f"Point {len(points) + 1} {axis_name}: value is not finite."
+                        )
+                    failed = True
+                    break
+                values.append(value)
+                source.append(token)
+            if failed:
+                continue
+            point_index = len(points)
+            for axis_index, token in enumerate(source):
+                if parse_number(token) is None:
+                    expressions[f"points.{point_index}.{axis_index}"] = expression_entry(
+                        token
+                    )
+            points.append(values)
+        return points, expressions, errors
+
     @staticmethod
     def _parse_points(text: str) -> list[list[float]]:
+        """Numeric-only compatibility parser (no variables)."""
         pts: list[list[float]] = []
         for line in text.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            parts = [s for s in re.split(r"[,;\s]+", line) if s]
+            parts = _split_point_line(line)
             if len(parts) < 3:
                 continue
             try:
@@ -1056,7 +1479,28 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
         return pts
 
     def _accept(self) -> None:
-        pts = self._parse_points(self.ed_points.toPlainText())
+        vals = _read_checked(
+            self,
+            "Wire/Curve primitive",
+            lambda: (
+                float(self.spn_radius.value())
+                if self.spn_radius is not None
+                else 0.0
+            ),
+        )
+        if vals is None:
+            return
+        radius = max(0.0, vals)
+        pts, point_expressions, point_errors = self._parse_points_variables(
+            self.ed_points.toPlainText(), strict=True
+        )
+        if point_errors:
+            QMessageBox.warning(
+                self,
+                "Wire/Curve primitive",
+                "\n".join(point_errors[:8]),
+            )
+            return
         if len(pts) < 2:
             QMessageBox.warning(
                 self,
@@ -1065,11 +1509,6 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
                 "(one \"x, y, z\" per line).",
             )
             return
-        radius = (
-            max(0.0, float(self.spn_radius.value()))
-            if self.spn_radius is not None
-            else 0.0
-        )
         xs = [pt[0] for pt in pts]
         ys = [pt[1] for pt in pts]
         zs = [pt[2] for pt in pts]
@@ -1088,10 +1527,17 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
             "start": start,
             "stop": stop,
         }
+        expressions = dict(point_expressions)
         if self._kind == "wire":
             prim["radius"] = radius
+            if self.spn_radius is not None:
+                expressions.update(
+                    variable_field_expressions({"radius": self.spn_radius})
+                )
+        if expressions:
+            prim["expressions"] = expressions
         for k, v in (self._keep_extra or {}).items():
-            if k not in prim:
+            if k not in prim and k != "expressions":
                 prim[k] = v
         self.result = prim
         self.accept()
@@ -1117,6 +1563,7 @@ class DumpDialog(QDialog):
         coord_system: str = "cartesian",
         fit_box: tuple[list[float], list[float]] | None = None,
         nf2ff_box: tuple[list[float], list[float]] | None = None,
+        variables: dict[str, float] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Field dump")
@@ -1124,7 +1571,9 @@ class DumpDialog(QDialog):
         self._coord_system = coord_system
         self._fit_box = fit_box
         self._nf2ff_box = nf2ff_box
+        self._variables = _variables_for(parent, variables)
         d = dump or DumpDef(name="Et", quantity="E", frequency=2.45e9)
+        self._expressions = dict(getattr(d, "expressions", {}) or {})
         self.result: DumpDef | None = None
         form = QFormLayout(self)
         self.ed_name = QLineEdit(d.name)
@@ -1230,8 +1679,24 @@ class DumpDialog(QDialog):
         form.addRow("Opt. resolution", opt_row)
         form.addRow(self.chk_fd)
         form.addRow(self.chk_en)
-        self.spn_start = _vec3_row(form, "Start", d.start, coord_system=coord_system)
-        self.spn_stop = _vec3_row(form, "Stop", d.stop, coord_system=coord_system)
+        self.spn_start = _vec3_row(
+            form,
+            "Start",
+            d.start,
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="start",
+        )
+        self.spn_stop = _vec3_row(
+            form,
+            "Stop",
+            d.stop,
+            coord_system=coord_system,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="stop",
+        )
 
         def _write(spins, vals) -> None:
             for sp, v in zip(spins, vals):
@@ -1301,15 +1766,32 @@ class DumpDialog(QDialog):
         from app.postproc.nf2ff import parse_freq_list
         from app.ui.freq_units import spin_hz
 
+        vals = _read_checked(
+            self,
+            "Field dump",
+            lambda: (
+                _vec3_read(self.spn_start, self._coord_system),
+                _vec3_read(self.spn_stop, self._coord_system),
+            ),
+        )
+        if vals is None:
+            return
+        start, stop = vals
         unit = getattr(self, "_freq_unit_prev", "GHz") or "GHz"
         freqs = parse_freq_list(self.ed_freqs.text()) or None
         opt = [float(s.value()) for s in self.spn_opt]
         opt_res = opt if all(v > 0.0 for v in opt) else None
+        expressions = variable_field_expressions(
+            {
+                **{f"start.{i}": f for i, f in enumerate(self.spn_start)},
+                **{f"stop.{i}": f for i, f in enumerate(self.spn_stop)},
+            }
+        )
         self.result = DumpDef(
             name=self.ed_name.text().strip() or "dump",
             quantity=self.cmb_qty.currentText(),  # type: ignore[arg-type]
-            start=_vec3_read(self.spn_start, self._coord_system),
-            stop=_vec3_read(self.spn_stop, self._coord_system),
+            start=start,
+            stop=stop,
             frequency_domain=self.chk_fd.isChecked(),
             frequency=spin_hz(self.spn_freq, unit),
             enabled=self.chk_en.isChecked(),
@@ -1319,22 +1801,49 @@ class DumpDialog(QDialog):
             frequencies=freqs,
             custom_dump_type=int(self.spn_custom_type.value()),
             opt_resolution=opt_res,
+            expressions=expressions,
         )
         self.accept()
 
 
 class NF2FFBoxDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, start=None, stop=None, center=None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        start=None,
+        stop=None,
+        center=None,
+        *,
+        expressions: dict | None = None,
+        variables: dict[str, float] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("NF2FF box")
         self.resize(360, 340)
         start = list(start or [-40, -40, 0])
         stop = list(stop or [40, 40, 40])
+        self._variables = _variables_for(parent, variables)
+        self._expressions = dict(expressions or {})
         self.result_start: list[float] | None = None
         self.result_stop: list[float] | None = None
+        self.result_expressions: dict[str, Any] = {}
         form = QFormLayout(self)
-        self.spn_start = _vec3_row(form, "Start", start)
-        self.spn_stop = _vec3_row(form, "Stop", stop)
+        self.spn_start = _vec3_row(
+            form,
+            "Start",
+            start,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="start",
+        )
+        self.spn_stop = _vec3_row(
+            form,
+            "Stop",
+            stop,
+            variables=self._variables,
+            expressions=self._expressions,
+            prefix="stop",
+        )
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -1343,6 +1852,21 @@ class NF2FFBoxDialog(QDialog):
         bb.rejected.connect(self.reject)
 
     def _accept(self) -> None:
-        self.result_start = [float(s.value()) for s in self.spn_start]
-        self.result_stop = [float(s.value()) for s in self.spn_stop]
+        vals = _read_checked(
+            self,
+            "NF2FF box",
+            lambda: (
+                _vec3_read(self.spn_start),
+                _vec3_read(self.spn_stop),
+            ),
+        )
+        if vals is None:
+            return
+        self.result_start, self.result_stop = vals
+        self.result_expressions = variable_field_expressions(
+            {
+                **{f"start.{i}": f for i, f in enumerate(self.spn_start)},
+                **{f"stop.{i}": f for i, f in enumerate(self.spn_stop)},
+            }
+        )
         self.accept()
