@@ -159,6 +159,29 @@ def main() -> int:
     _assert_status_cleared("open project")
     assert win.status.currentMessage() != old
 
+    # Windows styles reserve a text label to the right of the groove.  The
+    # peak marker must follow the actual progress rect, not the full widget.
+    from PySide6.QtWidgets import QStyle, QStyleOptionProgressBar
+
+    old_style = app.style().name()
+    app.setStyle("windowsvista")
+    bar = win.progress_energy
+    bar.resize(150, 22)
+    bar.set_peak(100)
+    geometry = bar._peak_marker_geometry()
+    assert geometry is not None
+    x, y0, y1, track = geometry
+    opt = QStyleOptionProgressBar()
+    bar.initStyleOption(opt)
+    contents = bar.style().subElementRect(
+        QStyle.SubElement.SE_ProgressBarContents, opt, bar
+    )
+    assert contents.left() <= x <= contents.right(), (x, contents)
+    assert contents.top() <= y0 <= y1 <= contents.bottom(), (y0, y1, contents)
+    if "windows" in bar.style().name().lower():
+        assert contents.width() < bar.width(), (contents.width(), bar.width())
+    app.setStyle(old_style)
+
     win.close()
     print("PROGRESS SMOKE OK")
     return 0

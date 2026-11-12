@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Peak-hold marker stays inside the progress bar**: the marker was mapped
+  over the whole widget, but Windows styles reserve a text area to the right
+  of the actual groove. It now uses the style's real progress rectangle with
+  an inset and clipping, so the line stays on the bar at 0–100 %.
 - **Stale run status line on project/geometry changes**: New Project, Open
   (including Recent projects), Import Geometry and the Gerber/KiCad/CST
   imports now hide the previous run's TS/energy bars, engine/runtime/ETA

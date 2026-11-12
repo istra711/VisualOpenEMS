@@ -8,8 +8,14 @@ there until the next run starts.
 
 from __future__ import annotations
 
+from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QProgressBar, QWidget
+from PySide6.QtWidgets import (
+    QProgressBar,
+    QStyle,
+    QStyleOptionProgressBar,
+    QWidget,
+)
 
 
 class PeakHoldProgressBar(QProgressBar):
@@ -45,22 +51,47 @@ class PeakHoldProgressBar(QProgressBar):
             self._peak = value
         self.update()
 
-    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        super().paintEvent(event)
+    def _peak_marker_geometry(self) -> tuple[int, int, int, QRect] | None:
+        """Marker x/y and the style's actual progress-track rectangle."""
         peak = self._peak
         if peak is None or peak <= self.minimum() or self.maximum() <= self.minimum():
-            return
-
+            return None
         frac = (peak - self.minimum()) / (self.maximum() - self.minimum())
-        track = self.contentsRect()
-        # Keep the marker inside the rounded track even at 0/100 %.
-        x = track.left() + round(frac * max(1, track.width() - 1))
-        x = max(track.left() + 1, min(track.right() - 1, x))
-        y0 = track.top() + 2
-        y1 = track.bottom() - 2
+        # Use the style's actual progress-area rectangle, not the widget
+        # contents: some styles reserve margins or a text area.  The extra
+        # inset keeps the line, its caps and the white halo fully inside the
+        # painted bar, including at 0 % and 100 %.
+        opt = QStyleOptionProgressBar()
+        self.initStyleOption(opt)
+        track = self.style().subElementRect(
+            QStyle.SubElement.SE_ProgressBarContents, opt, self
+        )
+        if track.width() < 12 or track.height() < 8:
+            track = self.contentsRect()
+        inset_x = 4
+        left = track.left() + inset_x
+        right = track.right() - inset_x
+        if right <= left:
+            return None
+        x = left + round(frac * (right - left))
+        y0 = track.top() + 3
+        y1 = track.bottom() - 3
+        if y1 <= y0:
+            return None
+        return x, y0, y1, track
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().paintEvent(event)
+        geometry = self._peak_marker_geometry()
+        if geometry is None:
+            return
+        x, y0, y1, track = geometry
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # Clip to the track as a final guard against caps/halo bleeding over
+        # the rounded frame.
+        painter.setClipRect(track)
         # White halo keeps the marker visible on green (running) and red
         # (stopped before the end criterion).
         painter.setPen(QPen(QColor(255, 255, 255, 215), 3.0))
