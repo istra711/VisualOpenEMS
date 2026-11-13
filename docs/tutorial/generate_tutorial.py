@@ -391,7 +391,9 @@ def _make_main_window(project, primitives):
     return win
 
 
-def _grab_main_and_build(project, primitives) -> tuple[Path, Path, object]:
+def _grab_main_and_build(project, primitives) -> tuple[Path, Path, object, dict]:
+    from PySide6.QtCore import QPoint
+
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance()
@@ -475,10 +477,52 @@ def _grab_main_and_build(project, primitives) -> tuple[Path, Path, object]:
     except Exception:  # noqa: BLE001
         pass
     csx = getattr(win, "_last_csx", None)
+    # Geometry of the menu bar, tabs and project panel for the annotated
+    # "where is it in the GUI" cards.
+    meta: dict = {"menu_titles": {}, "tabs": {}}
+    try:
+        bar = win.menuBar()
+        bar_off = bar.mapTo(win, QPoint(0, 0))
+        for action in bar.actions():
+            text = action.text().replace("&", "")
+            rect = bar.actionGeometry(action)
+            meta["menu_titles"][text] = [
+                bar_off.x() + rect.x(),
+                bar_off.y() + rect.y(),
+                rect.width(),
+                rect.height(),
+            ]
+        tab_bar = win.tabs.tabBar()
+        tab_off = tab_bar.mapTo(win, QPoint(0, 0))
+        meta["tabbar"] = [
+            tab_off.x(),
+            tab_off.y(),
+            tab_bar.width(),
+            tab_bar.height(),
+        ]
+        for index in range(win.tabs.count()):
+            rect = tab_bar.tabRect(index)
+            meta["tabs"][win.tabs.tabText(index)] = [
+                tab_off.x() + rect.x(),
+                tab_off.y() + rect.y(),
+                rect.width(),
+                rect.height(),
+            ]
+        panel = win.project_panel
+        panel_off = panel.mapTo(win, QPoint(0, 0))
+        meta["project_panel"] = [
+            panel_off.x(),
+            panel_off.y(),
+            panel.width(),
+            panel.height(),
+        ]
+        (ASSETS / "main_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
     win.close()
     for _ in range(3):
         app.processEvents()
-    return overview, run_shot, csx
+    return overview, run_shot, csx, meta
 
 
 def _grab_dialogs(project, primitives, dump):
@@ -505,6 +549,14 @@ def _grab_dialogs(project, primitives, dump):
     pcb_prim = next(p for p in primitives if p["name"] == "PCB_FR4")
     pcb_dlg = PrimitiveBoxDialog(None, prim=pcb_prim)
     paths["pcb"] = _grab(pcb_dlg, "dialog_box_pcb.png")
+
+    gnd_prim = next(p for p in primitives if p["name"] == "GND_top")
+    gnd_dlg = PrimitiveBoxDialog(None, prim=gnd_prim)
+    paths["box_gnd"] = _grab(gnd_dlg, "dialog_box_gnd.png")
+
+    feed_prim = next(p for p in primitives if p["name"] == "IFA_feed")
+    feed_dlg = PrimitiveBoxDialog(None, prim=feed_prim)
+    paths["box_feed"] = _grab(feed_dlg, "dialog_box_feed.png")
 
     port = project.ports[0]
     port_dlg = PortDialog(None, port=port)
@@ -558,6 +610,13 @@ def _grab_mesh_viewer(csx, project, primitives) -> Path:
         pass
     path = ASSETS / "mesh_viewer_xy.png"
     viewer.grab().save(str(path))
+    try:
+        viewer.cmb_view.setCurrentText("Cell sizes")
+        for _ in range(4):
+            app.processEvents()
+        viewer.grab().save(str(ASSETS / "mesh_viewer_cells.png"))
+    except Exception:  # noqa: BLE001
+        pass
     viewer.close()
     app.processEvents()
     return path
@@ -621,8 +680,10 @@ def _asset_main() -> None:
     _write_field_vtr(field_vtr)
     layout = _render_layout_diagram()
     field_image = _render_field_slices()
-    overview, run_shot, csx = _grab_main_and_build(project, primitives)
+    overview, run_shot, csx, meta = _grab_main_and_build(project, primitives)
     print("main", overview, run_shot, "csx", csx is not None)
+    print("menus", _grab_menu_assets(meta))
+    print("tabs", _grab_tab_cards(meta))
     dialogs = _grab_dialogs(project, primitives, dump)
     print("dialogs", {k: str(v) for k, v in dialogs.items()})
     if csx is not None:
@@ -1090,6 +1151,29 @@ def _draw_footer(canvas, current: int, total: int):
             draw.ellipse((x - 4, 866, x + 4, 874), outline=(71, 85, 105), width=1)
 
 
+def _draw_number_marker(canvas, image_box, nx: float, ny: float, number: int):
+    from PIL import ImageDraw
+
+    x0, y0, x1, y1 = image_box
+    x = x0 + nx * (x1 - x0)
+    y = y0 + ny * (y1 - y0)
+    draw = ImageDraw.Draw(canvas)
+    radius = 17
+    draw.ellipse(
+        (x - radius, y - radius, x + radius, y + radius),
+        fill=(8, 47, 60),
+        outline=ACCENT,
+        width=3,
+    )
+    draw.text(
+        (x, y - 1),
+        str(number),
+        font=_font(18, True),
+        fill=(236, 254, 255),
+        anchor="mm",
+    )
+
+
 def _compose_regular(
     *,
     index: int,
@@ -1100,6 +1184,7 @@ def _compose_regular(
     images: list,
     weights: list[float] | None = None,
     callouts: list | None = None,
+    markers: list | None = None,
     side_card: tuple[str, list[str]] | None = None,
 ):
     from PIL import ImageDraw
@@ -1135,6 +1220,13 @@ def _compose_regular(
         image_index = int(spec[0])
         if 0 <= image_index < len(pasted):
             _draw_callout(canvas, pasted[image_index], spec)
+
+    for marker in markers or []:
+        image_index = int(marker[0])
+        if 0 <= image_index < len(pasted):
+            _draw_number_marker(
+                canvas, pasted[image_index], marker[1], marker[2], int(marker[3])
+            )
 
     if side_card is not None:
         _draw_side_card(
@@ -1698,17 +1790,1065 @@ def main() -> int:
     FRAMES.mkdir(parents=True, exist_ok=True)
     _setup_environment()
     _asset_main()
-    slides = _build_slides()
+    slides = _build_slides2()
     for index, slide in enumerate(slides, start=1):
         slide.save(FRAMES / f"{index:02d}.png")
     poster = FRAMES / "01.png"
     video = _encode_video(slides)
-    storyboard = _write_storyboard(slides, poster)
+    storyboard = _write_storyboard2(slides, poster)
     print("slides:", len(slides))
     print("poster:", poster)
     print("video:", video, f"{video.stat().st_size / 1e6:.1f} MB")
     print("storyboard:", storyboard)
     return 0
+
+
+def _grab_menu_assets(meta: dict) -> dict[str, Path]:
+    """Real QMenu screenshots with the target entry highlighted."""
+    from PIL import Image, ImageDraw
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QMenu
+
+    app = QApplication.instance()
+    menus = {
+        "file_new": (
+            "File",
+            [
+                "New Project", "Open…", "Recent projects", "Save", "Save As…",
+                "Import Geometry…", "Import Gerber/Excellon…", "Import KiCad PCB…",
+                "Import CST Studio Package…", "FreeCAD…", "Open Work Folder", "Exit",
+            ],
+            "New Project",
+        ),
+        "geometry_material": (
+            "Geometry",
+            [
+                "Add Box…", "Add Cylinder…", "Add Sphere…",
+                "Add Lumped Element (R/L/C)…", "Add Polygon…", "Add Extruded Polygon…",
+                "Add Wire…", "Add Curve…", "", "Variables…", "",
+                "Add Assignment…", "Add Material…", "", "Add Port…",
+                "Add Field Dump…", "", "Ports / Dumps…", "",
+                "Edit NF2FF Box…", "Fit NF2FF to Geometry",
+            ],
+            "Add Material…",
+        ),
+        "geometry_box": (
+            "Geometry",
+            [
+                "Add Box…", "Add Cylinder…", "Add Sphere…",
+                "Add Lumped Element (R/L/C)…", "Add Polygon…", "Add Extruded Polygon…",
+                "Add Wire…", "Add Curve…", "", "Variables…", "",
+                "Add Assignment…", "Add Material…", "", "Add Port…",
+                "Add Field Dump…", "", "Ports / Dumps…", "",
+                "Edit NF2FF Box…", "Fit NF2FF to Geometry",
+            ],
+            "Add Box…",
+        ),
+        "geometry_port": (
+            "Geometry",
+            [
+                "Add Box…", "Add Cylinder…", "Add Sphere…",
+                "Add Lumped Element (R/L/C)…", "Add Polygon…", "Add Extruded Polygon…",
+                "Add Wire…", "Add Curve…", "", "Variables…", "",
+                "Add Assignment…", "Add Material…", "", "Add Port…",
+                "Add Field Dump…", "", "Ports / Dumps…", "",
+                "Edit NF2FF Box…", "Fit NF2FF to Geometry",
+            ],
+            "Add Port…",
+        ),
+        "geometry_dump": (
+            "Geometry",
+            [
+                "Add Box…", "Add Cylinder…", "Add Sphere…",
+                "Add Lumped Element (R/L/C)…", "Add Polygon…", "Add Extruded Polygon…",
+                "Add Wire…", "Add Curve…", "", "Variables…", "",
+                "Add Assignment…", "Add Material…", "", "Add Port…",
+                "Add Field Dump…", "", "Ports / Dumps…", "",
+                "Edit NF2FF Box…", "Fit NF2FF to Geometry",
+            ],
+            "Add Field Dump…",
+        ),
+        "simulation_params": (
+            "Simulation",
+            [
+                "Run Simulation", "Run All Ports (full S-matrix)", "Abort", "",
+                "Commit staged results", "Discard staged results",
+                "Open staged results folder", "Run history…", "",
+                "Simulation Status…", "", "Simulation Parameters…",
+                "Solver Parameters…", "Script…", "", "S-Params Viewer",
+                "Pop-out S-Graph", "", "Antenna Pattern Viewer",
+                "Pop-out Antenna Graph", "", "3D Design Viewer", "Field Viewer",
+            ],
+            "Simulation Parameters…",
+        ),
+        "simulation_run": (
+            "Simulation",
+            [
+                "Run Simulation", "Run All Ports (full S-matrix)", "Abort", "",
+                "Commit staged results", "Discard staged results",
+                "Open staged results folder", "Run history…", "",
+                "Simulation Status…", "", "Simulation Parameters…",
+                "Solver Parameters…", "Script…", "", "S-Params Viewer",
+                "Pop-out S-Graph", "", "Antenna Pattern Viewer",
+                "Pop-out Antenna Graph", "", "3D Design Viewer", "Field Viewer",
+            ],
+            "Run Simulation",
+        ),
+        "mesh_params": (
+            "Mesh",
+            [
+                "Build Mesh", "Rebuild from scratch…", "Delete Mesh…",
+                "New Scene (no mesh)…", "", "Mesh Parameters…", "Critical cells",
+                "Mesh Report", "Show Mesh Viewer", "Export CSX XML…",
+                "Open in AppCSXCAD (3D)…",
+            ],
+            "Mesh Parameters…",
+        ),
+        "mesh_build": (
+            "Mesh",
+            [
+                "Build Mesh", "Rebuild from scratch…", "Delete Mesh…",
+                "New Scene (no mesh)…", "", "Mesh Parameters…", "Critical cells",
+                "Mesh Report", "Show Mesh Viewer", "Export CSX XML…",
+                "Open in AppCSXCAD (3D)…",
+            ],
+            "Build Mesh",
+        ),
+    }
+    paths: dict[str, Path] = {}
+    for key, (_title, items, target) in menus.items():
+        menu = QMenu()
+        actions = {}
+        for label in items:
+            if not label:
+                menu.addSeparator()
+            elif label in ("Recent projects", "Critical cells"):
+                menu.addMenu(label)
+            else:
+                actions[label] = menu.addAction(label)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        menu.show()
+        for _ in range(3):
+            app.processEvents()
+        rect = menu.actionGeometry(actions[target])
+        raw = ASSETS / f"menu_{key}_raw.png"
+        menu.grab().save(str(raw))
+        menu.hide()
+        with Image.open(raw) as source:
+            image = source.convert("RGB")
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle(
+            (rect.x() + 2, rect.y() + 2, rect.x() + rect.width() - 2, rect.y() + rect.height() - 2),
+            radius=4,
+            outline=ACCENT,
+            width=3,
+        )
+        path = ASSETS / f"menu_{key}.png"
+        image.save(path)
+        raw.unlink(missing_ok=True)
+        paths[key] = path
+    return paths
+
+
+def _grab_tab_cards(meta: dict) -> dict[str, Path]:
+    """Crop the main-window tab bar and highlight one tab per card."""
+    from PIL import Image, ImageDraw
+
+    source = Image.open(ASSETS / "main_window.png").convert("RGB")
+    bar_x, bar_y, bar_w, bar_h = meta.get("tabbar", [0, 0, source.width, 30])
+    pad = 8
+    crop = source.crop(
+        (
+            max(0, bar_x - pad),
+            max(0, bar_y - pad),
+            min(source.width, bar_x + bar_w + pad),
+            min(source.height, bar_y + bar_h + pad),
+        )
+    )
+    scale = 1.7
+    crop = crop.resize((int(crop.width * scale), int(crop.height * scale)), Image.LANCZOS)
+    paths: dict[str, Path] = {}
+    for name, key in (
+        ("Geometry", "tab_geometry"),
+        ("Mesh Viewer", "tab_mesh"),
+        ("3D Design", "tab_design"),
+        ("S-Params", "tab_sparams"),
+        ("Antenna", "tab_antenna"),
+        ("Field Viewer", "tab_field"),
+    ):
+        rect = meta.get("tabs", {}).get(name)
+        if not rect:
+            continue
+        image = crop.copy()
+        draw = ImageDraw.Draw(image)
+        x = (rect[0] - (bar_x - pad)) * scale
+        y = (rect[1] - (bar_y - pad)) * scale
+        w = rect[2] * scale
+        h = rect[3] * scale
+        draw.rounded_rectangle((x + 1, y + 1, x + w - 1, y + h - 1), radius=4, outline=ACCENT, width=4)
+        path = ASSETS / f"{key}.png"
+        image.save(path)
+        paths[key] = path
+    return paths
+
+def _menu_card(meta: dict, main_image, menu_image, menu_title: str, path_label: str):
+    """A "where is it" card: main window with the menu open + path label."""
+    from PIL import Image, ImageDraw
+
+    width = 820
+    crop_width = min(main_image.width, 900)
+    crop_height = min(main_image.height, 650)
+    scene = main_image.crop((0, 0, crop_width, crop_height))
+    scale = width / scene.width
+    scene = scene.resize((width, int(scene.height * scale)), Image.LANCZOS)
+    card_height = max(scene.height + 44, 120 + menu_image.height)
+    card = Image.new("RGB", (width, card_height), (244, 247, 250))
+    card.paste(scene, (0, 0))
+    draw = ImageDraw.Draw(card)
+    title_rect = meta.get("menu_titles", {}).get(menu_title)
+    if title_rect:
+        x = int(title_rect[0] * scale)
+        y = int(title_rect[1] * scale)
+        w = max(8, int(title_rect[2] * scale))
+        h = max(6, int(title_rect[3] * scale))
+        draw.rounded_rectangle((x, y, x + w, y + h), radius=3, outline=ACCENT, width=3)
+        menu_x = max(4, min(x, width - menu_image.width - 4))
+        menu_y = y + h + 2
+    else:
+        menu_x, menu_y = 12, 38
+    card.paste(menu_image, (menu_x, menu_y))
+    draw.text(
+        (12, card_height - 30),
+        path_label,
+        font=_font(15, True),
+        fill=(30, 64, 92),
+    )
+    return card
+
+
+def _with_tab_strip(viewer, strip, gap: int = 10):
+    """Put the highlighted main-window tab strip above a viewer screenshot."""
+    from PIL import Image
+
+    strip_width = viewer.width
+    strip_height = max(1, int(strip.height * strip_width / strip.width))
+    resized = strip.resize((strip_width, strip_height), Image.LANCZOS)
+    combined = Image.new("RGB", (viewer.width, strip_height + gap + viewer.height), (244, 247, 250))
+    combined.paste(resized, (0, 0))
+    combined.paste(viewer, (0, strip_height + gap))
+    return combined
+
+def _load_assets2() -> tuple[dict, dict]:
+    from PIL import Image
+
+    names = [
+        "main_window.png",
+        "layout_diagram.png",
+        "dialog_sim_params.png",
+        "dialog_material.png",
+        "dialog_box_pcb.png",
+        "dialog_box_gnd.png",
+        "dialog_box_arm.png",
+        "dialog_box_feed.png",
+        "dialog_port.png",
+        "dialog_mesh_params.png",
+        "mesh_viewer_xy.png",
+        "mesh_viewer_cells.png",
+        "dialog_dump.png",
+        "dialog_nf2ff.png",
+        "main_run.png",
+        "main_run_crop.png",
+        "sparam_viewer.png",
+        "antenna_3d.png",
+        "field_viewer.png",
+        "summary.png",
+        "menu_file_new.png",
+        "menu_geometry_material.png",
+        "menu_geometry_box.png",
+        "menu_geometry_port.png",
+        "menu_geometry_dump.png",
+        "menu_simulation_params.png",
+        "menu_simulation_run.png",
+        "menu_mesh_params.png",
+        "menu_mesh_build.png",
+        "tab_geometry.png",
+        "tab_mesh.png",
+        "tab_design.png",
+        "tab_sparams.png",
+        "tab_antenna.png",
+        "tab_field.png",
+    ]
+    assets = {name: Image.open(ASSETS / name).convert("RGB") for name in names}
+    meta = json.loads((ASSETS / "main_meta.json").read_text(encoding="utf-8"))
+    return assets, meta
+
+
+def _build_slides2() -> list:
+    assets, meta = _load_assets2()
+    total = 20
+    slides = []
+    slides.append(_compose_title(0, total, assets["layout_diagram.png"]))
+
+    def menu(key: str, title: str, label: str):
+        return _menu_card(
+            meta,
+            assets["main_window.png"],
+            assets[f"menu_{key}.png"],
+            title,
+            label,
+        )
+
+    slides.append(
+        _compose_regular(
+            index=1,
+            total=total,
+            step_label="STEP 01 / 18",
+            title="The main window",
+            caption=(
+                "Everything starts here: the menu bar holds the geometry and "
+                "simulation commands, the left tree lists every object, material "
+                "and port, and the tabs open the mesh, result and field viewers."
+            ),
+            images=[assets["main_window.png"]],
+            side_card=(
+                "Window map",
+                [
+                    "1  Menu bar: File, Geometry, Mesh, Simulation",
+                    "2  Project / Geometry tree: objects, materials, ports",
+                    "3  Tabs: Geometry, Mesh Viewer, 3D Design, S-Params, Antenna, Field",
+                    "4  Status bar: progress, runtime and log toggle",
+                ],
+            ),
+            markers=[
+                (0, 0.78, 0.012, 1),
+                (0, 0.06, 0.12, 2),
+                (0, 0.25, 0.045, 3),
+                (0, 0.42, 0.975, 4),
+            ],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=2,
+            total=total,
+            step_label="STEP 02 / 18",
+            title="Start a new project",
+            caption=(
+                "Use File -> New Project (Ctrl+N). The project stores the "
+                "drawing unit, geometry, mesh, ports and results in one "
+                ".fcsim.json file; save it with Ctrl+S."
+            ),
+            images=[menu("file_new", "File", "File -> New Project  (Ctrl+N)")],
+            side_card=(
+                "Project basics",
+                [
+                    "File -> New Project (Ctrl+N)",
+                    "File -> Save (Ctrl+S)",
+                    "File -> Save As… (Ctrl+Shift+S)",
+                    "Settings -> Settings… for the work folder",
+                ],
+            ),
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=3,
+            total=total,
+            step_label="STEP 03 / 18",
+            title="Set the frequency range",
+            caption=(
+                "Simulation -> Simulation Parameters… (Ctrl+Shift+P): drawing "
+                "unit mm, start 5.0 GHz, stop 6.6 GHz, target 5.8 GHz. The target "
+                "drives the mesh and the NF2FF evaluation."
+            ),
+            images=[
+                menu(
+                    "simulation_params",
+                    "Simulation",
+                    "Simulation -> Simulation Parameters…  (Ctrl+Shift+P)",
+                ),
+                assets["dialog_sim_params.png"],
+            ],
+            weights=[0.43, 0.57],
+            side_card=None,
+            callouts=[(1, 0.02, 0.16, 0.95, 0.23, "f_start / f_stop / f_target")],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=4,
+            total=total,
+            step_label="STEP 04 / 18",
+            title="Create the FR4 material",
+            caption=(
+                "Geometry -> Add Material…: kind dielectric, eps_r = 4.4, "
+                "tan_d = 0.02. Materials are listed in the project tree and can "
+                "be reused by every primitive."
+            ),
+            images=[
+                menu("geometry_material", "Geometry", "Geometry -> Add Material…"),
+                assets["dialog_material.png"],
+            ],
+            weights=[0.46, 0.54],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=5,
+            total=total,
+            step_label="STEP 05 / 18",
+            title="Add the PCB substrate",
+            caption=(
+                "Geometry -> Add Box…: name PCB_FR4, material FR4, start 0/0/0, "
+                "stop 25/45/1.6. This box is the 1.6 mm FR4 board; it has the "
+                "lowest priority so copper stays on top."
+            ),
+            images=[
+                menu("geometry_box", "Geometry", "Geometry -> Add Box…"),
+                assets["dialog_box_pcb.png"],
+            ],
+            weights=[0.46, 0.54],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=6,
+            total=total,
+            step_label="STEP 06 / 18",
+            title="Add the ground planes",
+            caption=(
+                "Add the bottom ground over the full board (z = 0...0.035 mm) "
+                "and the top ground only up to y = 35 mm. The 10 mm clearance "
+                "leaves room for the antenna to radiate."
+            ),
+            images=[assets["layout_diagram.png"], assets["dialog_box_gnd.png"]],
+            weights=[0.62, 0.38],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=7,
+            total=total,
+            step_label="STEP 07 / 18",
+            title="Add the IFA arm",
+            caption=(
+                "Add the 7 x 2 mm radiator: x = 10...17, y = 38...40, "
+                "z = 1.6...1.635 mm. Keep the same copper material as the "
+                "ground so both are PEC in openEMS."
+            ),
+            images=[assets["layout_diagram.png"], assets["dialog_box_arm.png"]],
+            weights=[0.62, 0.38],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=8,
+            total=total,
+            step_label="STEP 08 / 18",
+            title="Add the short and the feed",
+            caption=(
+                "Short: x = 10...12, y = 35...40 mm. Feed: x = 12.5...14.5, "
+                "y = 35.5...38 mm. The 0.5 mm gap between feed and top ground "
+                "is where the port will sit."
+            ),
+            images=[assets["layout_diagram.png"], assets["dialog_box_feed.png"]],
+            weights=[0.62, 0.38],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=9,
+            total=total,
+            step_label="STEP 09 / 18",
+            title="Add the 50 ohm feed port",
+            caption=(
+                "Geometry -> Add Port…: lumped, 50 ohm, direction y, width "
+                "\"Area - as wide as the metal (x)\". Start 35.5 / stop 35.0 mm "
+                "and metal reference IFA_feed."
+            ),
+            images=[
+                menu("geometry_port", "Geometry", "Geometry -> Add Port…"),
+                assets["dialog_port.png"],
+            ],
+            weights=[0.43, 0.57],
+            side_card=None,
+            callouts=[(1, 0.36, 0.20, 0.62, 0.07, "Area along x - 2 mm")],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=10,
+            total=total,
+            step_label="STEP 10 / 18",
+            title="Add the E-field dump",
+            caption=(
+                "Geometry -> Add Field Dump…: quantity E, frequency 5.8 GHz, "
+                "file type VTK, box around the antenna. The Field Viewer reads "
+                "this .vtr file later."
+            ),
+            images=[
+                menu("geometry_dump", "Geometry", "Geometry -> Add Field Dump…"),
+                assets["dialog_dump.png"],
+            ],
+            weights=[0.43, 0.57],
+            callouts=[(1, 0.0, 0.30, 1.0, 0.06, "5.8 GHz")],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=11,
+            total=total,
+            step_label="STEP 11 / 18",
+            title="Enable the NF2FF far field",
+            caption=(
+                "Simulation -> Simulation Parameters… -> NF2FF-Parameter: enable "
+                "far-field, frequency list 5.8 GHz, box automatic, theta = 181, "
+                "phi = 361. This produces the antenna-pattern data."
+            ),
+            images=[
+                menu(
+                    "simulation_params",
+                    "Simulation",
+                    "Simulation -> Simulation Parameters… -> NF2FF",
+                ),
+                assets["dialog_nf2ff.png"],
+            ],
+            weights=[0.43, 0.57],
+            callouts=[(1, 0.0, 0.38, 1.0, 0.08, "eval frequency 5.8 GHz")],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=12,
+            total=total,
+            step_label="STEP 12 / 18",
+            title="Set the mesh parameters",
+            caption=(
+                "Mesh -> Mesh Parameters… (Ctrl+Shift+M): max cell 1.2 mm, min "
+                "cell 0.15 mm, min z 0.08 mm, refined cell 0.2 mm, 18 cells per "
+                "wavelength. Apply writes them into the project."
+            ),
+            images=[
+                menu("mesh_params", "Mesh", "Mesh -> Mesh Parameters…  (Ctrl+Shift+M)"),
+                assets["dialog_mesh_params.png"],
+            ],
+            weights=[0.46, 0.54],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=13,
+            total=total,
+            step_label="STEP 13 / 18",
+            title="Build the mesh",
+            caption=(
+                "Mesh -> Build Mesh (Ctrl+M). easyMesh resolves the feed gap and "
+                "the copper edges; the Mesh Viewer opens the XY slice at "
+                "z = 1.6 mm. Check the grid before running."
+            ),
+            images=[
+                menu("mesh_build", "Mesh", "Mesh -> Build Mesh  (Ctrl+M)"),
+                assets["mesh_viewer_xy.png"],
+            ],
+            weights=[0.36, 0.64],
+            callouts=[(1, 0.31, 0.30, 0.28, 0.45, "fine cells at the gap")],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=14,
+            total=total,
+            step_label="STEP 14 / 18",
+            title="Check the mesh quality",
+            caption=(
+                "In the Mesh Viewer use the Cell sizes tab (or the right-click "
+                "menu) to see the cell-size distribution. The gap and the metal "
+                "edges need the finest cells; air can stay coarse."
+            ),
+            images=[
+                assets["mesh_viewer_xy.png"],
+                assets["mesh_viewer_cells.png"],
+            ],
+            weights=[0.52, 0.48],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=15,
+            total=total,
+            step_label="STEP 15 / 18",
+            title="Run the FDTD simulation",
+            caption=(
+                "Simulation -> Run Simulation (Ctrl+R). Watch the TS and energy "
+                "bars; the run stops at the energy criterion. The log lists the "
+                "S-parameter and NF2FF files."
+            ),
+            images=[
+                menu("simulation_run", "Simulation", "Simulation -> Run Simulation  (Ctrl+R)"),
+                assets["main_run_crop.png"],
+            ],
+            weights=[0.36, 0.64],
+            callouts=[
+                (1, 0.0, 0.18, 0.73, 0.68, "run log"),
+                (1, 0.37, 0.93, 0.58, 0.06, "TS / energy / runtime"),
+            ],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=16,
+            total=total,
+            step_label="STEP 16 / 18",
+            title="Read the S-parameters",
+            caption=(
+                "Open the S-Params tab. Plot |S| dB, click the plot to add a "
+                "marker at 5.8 GHz, and use the trace preset for return loss. "
+                "Smith, VSWR, phase and Re/Im are in the same Plot menu."
+            ),
+            images=[
+                _with_tab_strip(
+                    assets["sparam_viewer.png"], assets["tab_sparams.png"]
+                )
+            ],
+            callouts=[(0, 0.60, 0.62, 0.14, 0.29, "-28 dB @ 5.80 GHz")],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=17,
+            total=total,
+            step_label="STEP 17 / 18",
+            title="Read the antenna pattern",
+            caption=(
+                "Open the Antenna tab. The 3D Pattern view colours gain in dBi; "
+                "the Plot selector adds E-/H-plane and azimuth cuts. Markers "
+                "read gain, angle and HPBW."
+            ),
+            images=[
+                _with_tab_strip(assets["antenna_3d.png"], assets["tab_antenna.png"])
+            ],
+            callouts=[(0, 0.43, 0.50, 0.20, 0.35, "max 2.6 dBi")],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=18,
+            total=total,
+            step_label="STEP 18 / 18",
+            title="Inspect the E-field",
+            caption=(
+                "Open the Field Viewer tab. In the Data panel choose "
+                "pt:magnitude, the XY slice at z = 1.6 mm, or a YZ cut through "
+                "the feed. The hot spot sits at the 0.5 mm gap and along the arm."
+            ),
+            images=[
+                _with_tab_strip(assets["field_viewer.png"], assets["tab_field.png"])
+            ],
+            callouts=[(0, 0.26, 0.67, 0.18, 0.18, "feed gap hot spot")],
+        )
+    )
+
+    slides.append(
+        _compose_regular(
+            index=19,
+            total=total,
+            step_label="SUMMARY",
+            title="Done - and what to tune next",
+            caption=(
+                "Change one dimension at a time, rebuild the mesh and compare "
+                "S11 and the pattern. The same workflow scales to other PCB "
+                "antennas and feed structures."
+            ),
+            images=[assets["summary.png"]],
+        )
+    )
+    return slides
+
+
+def _write_storyboard2(slides: list, poster: Path) -> Path:
+    steps = [
+        {
+            "title": "The main window",
+            "where": "the window that opens when VisualOpenEMS starts",
+            "do": [
+                "Menu bar: **File**, **Presets**, **Geometry**, **Mesh**, **Simulation**, **View**, **Settings**, **Help**.",
+                "Left panel **Project / Geometry**: every primitive, material, port, dump and NF2FF box.",
+                "Tabs: **Geometry**, **Mesh Viewer**, **3D Design**, **S-Params**, **Antenna**, **Field Viewer**.",
+                "Bottom bar: run status, timestep/energy bars, runtime and the log toggle.",
+            ],
+            "check": "The project tree and the tabs are the two places you will use most.",
+            "images": ["assets/main_window.png"],
+        },
+        {
+            "title": "Start a new project",
+            "where": "**File -> New Project** (Ctrl+N)",
+            "do": [
+                "Choose a work folder under **Settings -> Settings...** if you want the results somewhere specific.",
+                "Save the project with **File -> Save** (Ctrl+S); it stores geometry, mesh, ports and results in one `.fcsim.json` file.",
+            ],
+            "check": "The window title shows the project name; the tree is empty except for defaults.",
+            "images": ["assets/menu_file_new.png"],
+        },
+        {
+            "title": "Set the frequency range",
+            "where": "**Simulation -> Simulation Parameters...** (Ctrl+Shift+P), tab **Simulation-Parameter**",
+            "do": [
+                "Drawing unit: **mm**.",
+                "Start frequency **5.0 GHz**, stop frequency **6.6 GHz**, target frequency **5.8 GHz**.",
+                "Boundary conditions: PML on all sides, **zmin = PEC** (the ground plane sits there).",
+                "Press **Apply**; the computed block shows max cell 1.2 mm and the air margin.",
+            ],
+            "check": "The computed block lists 5.0 / 6.6 / 5.8 GHz and max cell lambda/10 = 1.2 mm.",
+            "images": [
+                "assets/menu_simulation_params.png",
+                "assets/dialog_sim_params.png",
+            ],
+        },
+        {
+            "title": "Create the FR4 material",
+            "where": "**Geometry -> Add Material...**",
+            "do": [
+                "Name **FR4**, kind **dielectric**.",
+                "eps_r = **4.4**, kappa = 0, tan_d = **0.02**.",
+                "Press **OK**; the material appears under Materials in the project tree.",
+            ],
+            "check": "The material row shows FR4 (dielectric) with eps_r 4.4.",
+            "images": [
+                "assets/menu_geometry_material.png",
+                "assets/dialog_material.png",
+            ],
+        },
+        {
+            "title": "Add the PCB substrate",
+            "where": "**Geometry -> Add Box...**",
+            "do": [
+                "Name **PCB_FR4**, material **FR4**, priority **1**.",
+                "Start **0 / 0 / 0 mm**, stop **25 / 45 / 1.6 mm**.",
+                "This is the 1.6 mm board; the low priority keeps the copper on top.",
+            ],
+            "check": "The tree shows Prim: PCB_FR4 and the mesh viewer draws a blue substrate.",
+            "images": [
+                "assets/menu_geometry_box.png",
+                "assets/dialog_box_pcb.png",
+            ],
+        },
+        {
+            "title": "Add the ground planes",
+            "where": "**Geometry -> Add Box...** (twice), or duplicate the box with Ctrl+D",
+            "do": [
+                "Bottom ground: **0 / 0 / 0** to **25 / 45 / 0.035 mm**, copper, priority 10.",
+                "Top ground: **0 / 0 / 1.6** to **25 / 35 / 1.635 mm**, copper, priority 10.",
+                "The top ground stops at y = 35 mm, leaving a **10 mm antenna clearance**.",
+            ],
+            "check": "In the XY slice at z = 1.6 mm the copper covers y = 0...35 only.",
+            "images": ["assets/layout_diagram.png", "assets/dialog_box_gnd.png"],
+        },
+        {
+            "title": "Add the IFA arm",
+            "where": "**Geometry -> Add Box...**",
+            "do": [
+                "Name **IFA_arm**, material **copper_antenna** (or copper), priority 10.",
+                "Start **10 / 38 / 1.6 mm**, stop **17 / 40 / 1.635 mm**.",
+                "The arm is 7 x 2 mm and sits on top of the substrate.",
+            ],
+            "check": "The top view shows the horizontal arm at the ground edge.",
+            "images": ["assets/layout_diagram.png", "assets/dialog_box_arm.png"],
+        },
+        {
+            "title": "Add the short and the feed",
+            "where": "**Geometry -> Add Box...** (two more boxes)",
+            "do": [
+                "Short: **10 / 35 / 1.6** to **12 / 40 / 1.635 mm**.",
+                "Feed: **12.5 / 35.5 / 1.6** to **14.5 / 38 / 1.635 mm**.",
+                "Leave a **0.5 mm gap** between the feed (y = 35.5) and the top ground (y = 35.0).",
+            ],
+            "check": "The three copper boxes form the F shape; the gap is clearly visible.",
+            "images": ["assets/layout_diagram.png", "assets/dialog_box_feed.png"],
+        },
+        {
+            "title": "Add the 50 ohm feed port",
+            "where": "**Geometry -> Add Port...** (also in the Ports / Dumps window, Ctrl+Shift+D)",
+            "do": [
+                "Type **lumped**, resistance **50 ohm**, direction **y**.",
+                "Width (lumped): **Area - as wide as the metal (x)**.",
+                "Start **13.5 / 35.5 / 1.6 mm**, stop **13.5 / 35.0 / 1.6 mm**.",
+                "The metal reference is **IFA_feed**; the port list shows `area along X`.",
+            ],
+            "check": "The port spans the 0.5 mm gap and is as wide as the 2 mm feed strip.",
+            "images": [
+                "assets/menu_geometry_port.png",
+                "assets/dialog_port.png",
+            ],
+        },
+        {
+            "title": "Add the E-field dump",
+            "where": "**Geometry -> Add Field Dump...**",
+            "do": [
+                "Name **E_5p8**, quantity **E**, frequency **5.8 GHz**, file type **VTK (.vtr)**.",
+                "Box: **-5 / 28 / -3** to **30 / 47 / 14 mm**; optional resolution 0.2 mm.",
+                "Enable **Frequency domain** and **Enabled**.",
+            ],
+            "check": "The tree lists Dump: E_5p8 (E); the Field Viewer will read the .vtr file.",
+            "images": [
+                "assets/menu_geometry_dump.png",
+                "assets/dialog_dump.png",
+            ],
+        },
+        {
+            "title": "Enable the NF2FF far field",
+            "where": "**Simulation -> Simulation Parameters...** -> tab **NF2FF-Parameter**",
+            "do": [
+                "Tick **Enable far-field (NF2FF)**.",
+                "Mode **Frequency list**, frequencies **5.8 GHz**.",
+                "Box placement **Automatic (fit to geometry + air margin)**.",
+                "theta steps **181**, phi steps **361**.",
+            ],
+            "check": "The tree shows NF2FF: on; the antenna pattern will be evaluated at 5.8 GHz.",
+            "images": [
+                "assets/menu_simulation_params.png",
+                "assets/dialog_nf2ff.png",
+            ],
+        },
+        {
+            "title": "Set the mesh parameters",
+            "where": "**Mesh -> Mesh Parameters...** (Ctrl+Shift+M)",
+            "do": [
+                "Max cell **1.2 mm**, min cell **0.15 mm**, min z cell **0.08 mm**.",
+                "Refined cell **0.2 mm**, max grading ratio **2.0**.",
+                "Cells per wavelength **18**; mesh directions **xyz**.",
+                "Press **Apply** to write the values into the project.",
+            ],
+            "check": "The dialog shows the values above; the mesh report will quote them.",
+            "images": [
+                "assets/menu_mesh_params.png",
+                "assets/dialog_mesh_params.png",
+            ],
+        },
+        {
+            "title": "Build the mesh",
+            "where": "**Mesh -> Build Mesh** (Ctrl+M), or the **Build Mesh** button on the Mesh tab",
+            "do": [
+                "easyMesh resolves the 0.5 mm gap and the copper edges.",
+                "The Mesh Viewer opens the XY slice at z = 1.6 mm.",
+                "Toggle **Mesh grid** in the viewer to inspect the lines.",
+            ],
+            "check": "The gap and the metal edges contain several grid lines; the air cells are larger.",
+            "images": [
+                "assets/menu_mesh_build.png",
+                "assets/mesh_viewer_xy.png",
+            ],
+        },
+        {
+            "title": "Check the mesh quality",
+            "where": "**Mesh Viewer** -> tab **Slice / Overview** / **Cell sizes**",
+            "do": [
+                "Use **Cell sizes** for the cell-size distribution.",
+                "Right-click the viewer for **Critical cells** and the runtime overlay.",
+                "If the gap has too few cells, lower the min cell size and rebuild.",
+            ],
+            "check": "The finest cells sit at the feed gap and the metal edges; no unexpected slivers.",
+            "images": [
+                "assets/mesh_viewer_xy.png",
+                "assets/mesh_viewer_cells.png",
+            ],
+        },
+        {
+            "title": "Run the FDTD simulation",
+            "where": "**Simulation -> Run Simulation** (Ctrl+R), or the **Run Simulation** button",
+            "do": [
+                "Watch the timestep bar and the energy bar in the status line.",
+                "openEMS stops when the energy criterion is reached.",
+                "The log lists the S-parameter and NF2FF files and the runtime.",
+            ],
+            "check": "The log ends with `Simulation finished`; the S-Params and Antenna tabs have data.",
+            "images": [
+                "assets/menu_simulation_run.png",
+                "assets/main_run_crop.png",
+            ],
+        },
+        {
+            "title": "Read the S-parameters",
+            "where": "tab **S-Params**; plot selector at the top, trace list on the left",
+            "do": [
+                "Plot **|S| dB**; the dip is at **5.80 GHz**.",
+                "Click the plot to add a marker; the marker list shows |S11| = **-28.17 dB**, VSWR **1.08**.",
+                "Use **Preset -> Return loss (Sii)** for a single curve.",
+                "The **Plot** selector also offers Smith, VSWR, phase and Re/Im.",
+            ],
+            "check": "|S11| < -10 dB from about **5.65 to 5.95 GHz**.",
+            "images": ["assets/tab_sparams.png", "assets/sparam_viewer.png"],
+        },
+        {
+            "title": "Read the antenna pattern",
+            "where": "tab **Antenna**; Plot selector and Freq selector at the top",
+            "do": [
+                "Plot **3D Pattern**, field **Gain**, frequency **5.8 GHz**.",
+                "Use **E-Plane (phi=90)** and **H-Plane (phi=0)** for cuts.",
+                "Markers read gain, angle and HPBW; the details panel shows Dmax and efficiency.",
+            ],
+            "check": "Maximum gain about **2.6 dBi**, efficiency **68 %**, Dmax 3.15 dBi.",
+            "images": ["assets/tab_antenna.png", "assets/antenna_3d.png"],
+        },
+        {
+            "title": "Inspect the E-field",
+            "where": "tab **Field Viewer**; **Data** panel on the left",
+            "do": [
+                "Array **pt:magnitude**; Show **Surface**; View **Fit (keep direction)**.",
+                "Slice **XY** at z = 1.6 mm for the top-copper distribution.",
+                "A **YZ** cut at x = 13.5 mm shows the field across the feed gap.",
+                "Use **Colour** (auto/min/max/log) and the time/frequency slider to animate.",
+            ],
+            "check": "The hot spot sits at the 0.5 mm gap and along the arm; the field decays into the air.",
+            "images": ["assets/tab_field.png", "assets/field_viewer.png"],
+        },
+    ]
+
+    lines = [
+        "# Inverted-F Antenna on a PCB - 5.8 GHz tutorial",
+        "",
+        "[Watch the MP4](IFA_5p8GHz_Tutorial.mp4)",
+        "",
+        f"![Poster]({poster.relative_to(TUTORIAL).as_posix()})",
+        "",
+        "A detailed VisualOpenEMS walkthrough: build the PCB and the inverted-F",
+        "metal, add the port, mesh the model, run openEMS and read the",
+        "S-parameters, the 3D antenna pattern and the E-field. Every step names",
+        "the exact menu path or tab and shows a screenshot with the target",
+        "highlighted.",
+        "",
+        "> The GUI screenshots are real. The S-parameter curve, pattern and",
+        "> field maps use representative IFA data so the viewers can be explained",
+        "> without a long FDTD run; your own results will differ with geometry,",
+        "> mesh and materials.",
+        "",
+        "## What you need",
+        "",
+        "- VisualOpenEMS with a working openEMS/CSXCAD installation.",
+        "- A work folder for the project and results.",
+        "- About 10 minutes for the build; the FDTD run takes a few minutes.",
+        "",
+        "## GUI map",
+        "",
+        "| Region | What it is for |",
+        "| --- | --- |",
+        "| Menu bar | File, Geometry, Mesh, Simulation, View, Settings, Help |",
+        "| Project / Geometry tree | Primitives, materials, ports, dumps, NF2FF box |",
+        "| Tabs | Geometry, Mesh Viewer, 3D Design, S-Params, Antenna, Field Viewer |",
+        "| Status bar | Timestep/energy progress, runtime, log toggle |",
+        "",
+        "## Geometry",
+        "",
+        "| Part | Dimensions / position |",
+        "| --- | --- |",
+        "| FR4 substrate | 25 x 45 x 1.6 mm, eps_r = 4.4, tan_d = 0.02 |",
+        "| Bottom ground | 25 x 45 mm, z = 0...0.035 mm |",
+        "| Top ground | 25 x 35 mm, z = 1.6...1.635 mm |",
+        "| IFA arm | 7 x 2 mm, y = 38...40 mm, z = 1.6...1.635 mm |",
+        "| Short | 2 x 5 mm, x = 10...12 mm, y = 35...40 mm |",
+        "| Feed strip | 2 x 2.5 mm, x = 12.5...14.5 mm, y = 35.5...38 mm |",
+        "| Port | lumped, 50 ohm, direction y across the 0.5 mm gap, width x = 2 mm |",
+        "| Mesh | max 1.2 mm, min 0.15 mm, 18 cells/lambda at 5.8 GHz |",
+        "",
+        "## Video chapters",
+        "",
+        "| Time | Chapter |",
+        "| --- | --- |",
+        "| 00:00 | Title and overview |",
+        *[
+            "| {minute:02d}:{second:02d} | Step {index} - {title} |".format(
+                minute=int(index * (HOLD_SECONDS + FADE_SECONDS)) // 60,
+                second=int(index * (HOLD_SECONDS + FADE_SECONDS)) % 60,
+                index=index,
+                title=step["title"],
+            )
+            for index, step in enumerate(steps, start=1)
+        ],
+        "| 01:26 | Summary and tuning tips |",
+        "",
+        "## Steps",
+        "",
+    ]
+    for index, step in enumerate(steps, start=1):
+        lines += [
+            f"### Step {index} - {step['title']}",
+            "",
+            f"**Where:** {step['where']}",
+            "",
+            "**Do:**",
+            "",
+        ]
+        for item in step["do"]:
+            lines.append(f"- {item}")
+        lines += ["", f"**Check:** {step['check']}", ""]
+        for image in step["images"]:
+            lines += [f"![Step {index}]({image})", ""]
+
+    lines += [
+        "## Viewer controls cheat sheet",
+        "",
+        "**S-Params tab.** Top bar: Open, Reload, Scan work dir, Export, Plot,",
+        "Preset, Primary. Left: loaded files, trace checkboxes, markers. Plot",
+        "options: Smith, |S| dB, Return loss, |S| mag, Phase, VSWR, Re/Im,",
+        "Z Re/Im. Click the plot to add a marker; right-click for smart actions.",
+        "",
+        "**Antenna tab.** Top bar: Open, Reload, Polarization, Plot, Freq, cmap.",
+        "Plot options: E-Plane, H-Plane, Azimuth, Axial Ratio, Gain vs Frequency,",
+        "Efficiency, 3D Pattern. The 3D toolbar controls Gain/Dmax, the dB floor,",
+        "Full/zoom, radius mapping and the view preset.",
+        "",
+        "**Field Viewer tab.** Data panel: Show, Array, View, Outline, Geometry.",
+        "Colour panel: Auto, min, max, Log scale, Rescale. Slice panel: axis and",
+        "position. Vectors/Streamlines panels add arrows, tubes or streamlines.",
+        "The time/frequency slider animates a series; File -> Export renders MP4/GIF.",
+        "",
+        "## Reproduce the assets",
+        "",
+        "```bash",
+        "python docs/tutorial/generate_tutorial.py",
+        "```",
+        "",
+        "This regenerates the screenshots, the twenty slides (in `frames/`) and",
+        "the MP4. Install `ffmpeg` for the video step; the PNG frames are",
+        "written even without it.",
+        "",
+        "## Files",
+        "",
+        "- `IFA_5p8GHz_Tutorial.mp4` - 90 s, 1600 x 900, H.264, no audio.",
+        "- `frames/01.png` ... `frames/20.png` - the twenty slides.",
+        "- `assets/` - GUI screenshots, menu/tab highlight cards, diagrams and field maps.",
+        "- `generate_tutorial.py` - regenerates all of the above.",
+        "",
+        "## Notes",
+        "",
+        "- The geometry is a starting point, not a tuned production antenna.",
+        "  Expect the resonance to move with substrate tolerances and the feed",
+        "  detail; tune the arm length and the feed offset on your own board.",
+        "- Increase `end_criteria` or `max_timesteps` for a smoother S-parameter",
+        "  curve; a finer mesh costs runtime.",
+        "- The Field Viewer can also animate a time series and overlay vectors",
+        "  or streamlines; the same data can be opened in ParaView.",
+        "",
+    ]
+    path = TUTORIAL / "README.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 if __name__ == "__main__":
