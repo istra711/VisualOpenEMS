@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Narrow geometry dialogs**: the geometry, port, material, field-dump and
+  NF2FF editors now open at the narrowest width their layout needs, so every
+  label, button and input field stays fully visible while wide remembered or
+  default widths (e.g. the polygon/wire editors) no longer waste space.
+
 ### Fixed
 
 - **Left-aligned geometry inputs**: every numeric field in the geometry

@@ -57,15 +57,16 @@ def _axis_suffixes(coord_system: str) -> tuple[str, str, str]:
 def _fit_dialog(
     dlg: QDialog,
     want: tuple[int, int],
-    minimum: tuple[int, int] = (520, 360),
+    minimum: tuple[int, int] = (320, 260),
     margin: int = 80,
 ) -> None:
     """Size a dialog for the screen it opens on.
 
     ``want`` is the comfortable size; the dialog is clamped to the available
-    screen (minus ``margin`` px) so it never opens larger than the display, and
-    it can be shrunk down to ``minimum``. A size remembered by the caller
-    (``want`` = last size) simply wins as long as it still fits.
+    screen (minus ``margin`` px) so it never opens larger than the display.
+    The floor is deliberately low: the layout's own minimum size (every label
+    and field still fits) decides the real minimum, and the dialog narrows to
+    that on its first show (:class:`_NarrowDialog`).
     """
     screen = dlg.screen() or QApplication.primaryScreen()
     avail = screen.availableGeometry() if screen is not None else None
@@ -191,7 +192,40 @@ def _split_point_line(line: str) -> list[str]:
     return [s for s in re.split(r"\s+", line.strip()) if s]
 
 
-class PortDialog(QDialog):
+class _NarrowDialog(QDialog):
+    """Open at the narrowest width that still shows every label and field.
+
+    Several dialogs used to open with a comfortable default width that was
+    wider than their content (especially the polygon/wire editors with a
+    remembered size).  Qt's layout minimum is exactly "all labels and fields
+    still fit", so the first show narrows the width to that value while keeping
+    the requested height (or growing it when the content needs more).
+    """
+
+    _width_narrowed = False
+
+    def showEvent(self, event):  # noqa: N802 - Qt API
+        super().showEvent(event)
+        if self._width_narrowed:
+            return
+        self._width_narrowed = True
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        minimum = self.minimumSizeHint()
+        self.resize(minimum.width(), max(self.height(), minimum.height()))
+
+    def ensure_narrow_width(self) -> None:
+        """Grow (never shrink) when later changes make extra fields visible."""
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        minimum = self.minimumSizeHint()
+        if minimum.width() > self.width():
+            self.resize(minimum.width(), max(self.height(), minimum.height()))
+
+
+class PortDialog(_NarrowDialog):
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -410,6 +444,7 @@ class PortDialog(QDialog):
                 form.setRowVisible(w, is_wg)
             # a waveguide port uses the analytic wave impedance, not R
             form.setRowVisible(self.spn_r, not is_wg)
+        self.ensure_narrow_width()
 
     def _accept(self) -> None:
         vals = _read_checked(
@@ -463,7 +498,7 @@ class PortDialog(QDialog):
         self.accept()
 
 
-class AssignmentDialog(QDialog):
+class AssignmentDialog(_NarrowDialog):
     def __init__(
         self,
         object_names: list[str],
@@ -536,7 +571,7 @@ class AssignmentDialog(QDialog):
         self.accept()
 
 
-class MaterialDialog(QDialog):
+class MaterialDialog(_NarrowDialog):
     def __init__(self, parent: QWidget | None = None, material: MaterialDef | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Material")
@@ -600,7 +635,7 @@ class _DisplayMixin:
         form.addRow(self.display)
 
 
-class PrimitiveBoxDialog(QDialog, _DisplayMixin):
+class PrimitiveBoxDialog(_NarrowDialog, _DisplayMixin):
     """Add/edit a box primitive (any antenna/PCB metal or dielectric volume)."""
 
     def __init__(
@@ -704,7 +739,7 @@ class PrimitiveBoxDialog(QDialog, _DisplayMixin):
         self.accept()
 
 
-class PrimitiveCylinderDialog(QDialog, _DisplayMixin):
+class PrimitiveCylinderDialog(_NarrowDialog, _DisplayMixin):
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -809,7 +844,7 @@ class PrimitiveCylinderDialog(QDialog, _DisplayMixin):
         self.accept()
 
 
-class PrimitiveSphereDialog(QDialog, _DisplayMixin):
+class PrimitiveSphereDialog(_NarrowDialog, _DisplayMixin):
     """Add/edit a sphere primitive (exact openEMS AddSphere)."""
 
     def __init__(
@@ -912,7 +947,7 @@ class PrimitiveSphereDialog(QDialog, _DisplayMixin):
         self.accept()
 
 
-class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
+class PrimitiveLumpedElementDialog(_NarrowDialog, _DisplayMixin):
     """Add/edit a lumped R/L/C element (openEMS ``AddLumpedElement``)."""
 
     def __init__(
@@ -1051,7 +1086,7 @@ class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
         self.accept()
 
 
-class PrimitivePolygonDialog(QDialog, _DisplayMixin):
+class PrimitivePolygonDialog(_NarrowDialog, _DisplayMixin):
     """Add/edit a polygon primitive (flat sheet or extruded prism).
 
     Points are given in the plane perpendicular to the axis: axis z ->
@@ -1322,7 +1357,7 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         self.accept()
 
 
-class PrimitivePolylineDialog(QDialog, _DisplayMixin):
+class PrimitivePolylineDialog(_NarrowDialog, _DisplayMixin):
     """Add/edit a 3-D ``wire`` or ``curve`` primitive.
 
     Both kinds store a polyline of arbitrary 3-D points.  A wire additionally
@@ -1582,7 +1617,7 @@ class PrimitiveCurveDialog(PrimitivePolylineDialog):
         super().__init__(parent, **kwargs)
 
 
-class DumpDialog(QDialog):
+class DumpDialog(_NarrowDialog):
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -1833,7 +1868,7 @@ class DumpDialog(QDialog):
         self.accept()
 
 
-class NF2FFBoxDialog(QDialog):
+class NF2FFBoxDialog(_NarrowDialog):
     def __init__(
         self,
         parent: QWidget | None = None,

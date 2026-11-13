@@ -357,6 +357,15 @@ def main() -> int:
                 "VariableField",
                 field.alignment(),
             )
+        dialog.show()
+        app.processEvents()
+        content_width = dialog.minimumSizeHint().width()
+        assert dialog.width() <= content_width + 1, (
+            dialog.windowTitle(),
+            dialog.width(),
+            content_width,
+        )
+        dialog.close()
         dialog.deleteLater()
 
     from app.ui.object_display import DisplayOptionsWidget
