@@ -718,6 +718,10 @@ Run an example:
 python examples\run_yagi_example.py
 ```
 
+**Step-by-step video tutorial:** [Inverted-F antenna on a PCB at 5.8 GHz](docs/tutorial/README.md)
+builds the geometry, meshes it, runs openEMS and explains the S-parameter,
+antenna-pattern and E-field viewers (MP4 + twelve annotated slides).
+
 ---
 
 ## Tests
