@@ -1,22 +1,20 @@
-"""Generate the tutorial soundtrack and score the MP4.
+"""Synthesize the tutorial soundtrack.
 
-Two original, synthesized tracks are created with numpy/scipy (no third-party
-samples) in a temporary folder:
+Two original tracks are created with numpy/scipy (no third-party samples):
 
-* ``music_ambient.wav``      - slow pads, sub bass, sparse plucks
-* ``music_deep_techno.wav``  - 124 BPM kick, rolling bass, hats, pad, arp
+* ``render_ambient(duration)``      - slow pads, sub bass, sparse plucks
+* ``render_deep_techno(duration)``  - 124 BPM kick, rolling bass, hats, pad, arp
 
-The current video is stripped to a temporary silent track, then both versions
-are encoded:
+They are used by ``generate_narration.py``, which builds the narrated video and
+mixes the music underneath the speaker. This module can also be imported to
+render the tracks for another project.
 
-* ``IFA_5p8GHz_Tutorial.mp4``              - ambient (default)
-* ``IFA_5p8GHz_Tutorial_DeepTechno.mp4``   - deep techno alternate
-
-The temporary WAVs and silent video are not stored in the repository.
+The former standalone video scorer is intentionally retired so it cannot
+overwrite the narrated tutorial with a short instrumental version.
 
 Run from the repository root:
 
-    python docs/tutorial/generate_music.py
+    python docs/tutorial/generate_narration.py
 """
 
 from __future__ import annotations
@@ -540,31 +538,8 @@ def _ensure_silent() -> None:
 
 
 def main() -> int:
-    _ensure_silent()
-    duration = _duration()
-    print(f"duration: {duration:.1f} s")
-
-    print("rendering ambient ...")
-    ambient = render_ambient(duration)
-    sf.write(AMBIENT_WAV, ambient, SR, subtype="PCM_24")
-    print(
-        f"  {AMBIENT_WAV.name}: {len(ambient)/SR:.1f}s, peak {np.max(np.abs(ambient)):.3f}"
-    )
-
-    print("rendering deep techno ...")
-    techno = render_deep_techno(duration)
-    sf.write(TECHNO_WAV, techno, SR, subtype="PCM_24")
-    print(
-        f"  {TECHNO_WAV.name}: {len(techno)/SR:.1f}s, peak {np.max(np.abs(techno)):.3f}"
-    )
-
-    print("muxing ambient version (default) ...")
-    score(SILENT, AMBIENT_WAV, VIDEO, duration)
-    print("muxing deep techno version ...")
-    score(SILENT, TECHNO_WAV, TECHNO_VIDEO, duration)
-
-    for path in (VIDEO, TECHNO_VIDEO):
-        print(f"  {path.name}: {path.stat().st_size/1e6:.1f} MB")
+    print("Music synthesis functions: render_ambient(), render_deep_techno().")
+    print("Build the narrated tutorial with: python docs/tutorial/generate_narration.py")
     return 0
 
 

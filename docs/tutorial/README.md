@@ -1,6 +1,6 @@
 # Inverted-F Antenna on a PCB - 5.8 GHz tutorial
 
-[Watch the MP4 (ambient soundtrack)](IFA_5p8GHz_Tutorial.mp4)
+[Watch the MP4 (narrated, ambient soundtrack)](IFA_5p8GHz_Tutorial.mp4)
 
 [Deep Techno version](IFA_5p8GHz_Tutorial_DeepTechno.mp4)
 
@@ -57,27 +57,27 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 | Time | Chapter |
 | --- | --- |
 | 00:00 | Title and overview |
-| 00:04 | Step 1 - The main window |
-| 00:09 | Step 2 - Start a new project |
-| 00:13 | Step 3 - Set the frequency range |
-| 00:18 | Step 4 - Create the FR4 material |
-| 00:22 | Step 5 - Add the PCB substrate |
-| 00:27 | Step 6 - Bottom ground plane - GND_bottom |
-| 00:31 | Step 7 - Top ground plane - GND_top |
-| 00:36 | Step 8 - Radiating arm - IFA_arm |
-| 00:40 | Step 9 - Shorting stub - IFA_short |
-| 00:45 | Step 10 - Feed strip and feed gap - IFA_feed |
-| 00:50 | Step 11 - Add the 50 ohm feed port |
-| 00:54 | Step 12 - Add the E-field dump |
-| 00:59 | Step 13 - Enable the NF2FF far field |
-| 01:03 | Step 14 - Set the mesh parameters |
-| 01:08 | Step 15 - Build the mesh |
-| 01:12 | Step 16 - Check the mesh quality |
-| 01:17 | Step 17 - Run the FDTD simulation |
-| 01:21 | Step 18 - Read the S-parameters |
-| 01:26 | Step 19 - Read the antenna pattern |
-| 01:31 | Step 20 - Inspect the E-field |
-| 01:36 | Summary and tuning tips |
+| 00:13 | Step 1 - The main window |
+| 00:44 | Step 2 - Start a new project |
+| 00:58 | Step 3 - Set the frequency range |
+| 01:16 | Step 4 - Create the FR4 material |
+| 01:32 | Step 5 - Add the PCB substrate |
+| 01:55 | Step 6 - Bottom ground plane - GND_bottom |
+| 02:15 | Step 7 - Top ground plane - GND_top |
+| 02:41 | Step 8 - Radiating arm - IFA_arm |
+| 03:02 | Step 9 - Shorting stub - IFA_short |
+| 03:23 | Step 10 - Feed strip and feed gap - IFA_feed |
+| 03:52 | Step 11 - Add the 50 ohm feed port |
+| 04:14 | Step 12 - Add the E-field dump |
+| 04:29 | Step 13 - Enable the NF2FF far field |
+| 04:49 | Step 14 - Set the mesh parameters |
+| 05:06 | Step 15 - Build the mesh |
+| 05:20 | Step 16 - Check the mesh quality |
+| 05:34 | Step 17 - Run the FDTD simulation |
+| 05:49 | Step 18 - Read the S-parameters |
+| 06:07 | Step 19 - Read the antenna pattern |
+| 06:22 | Step 20 - Inspect the E-field |
+| 06:38 | Summary and tuning tips |
 
 ## Steps
 
@@ -433,17 +433,23 @@ The time/frequency slider animates a series; File -> Export renders MP4/GIF.
 
 ```bash
 python docs/tutorial/generate_tutorial.py
-python docs/tutorial/generate_music.py
+python docs/tutorial/generate_narration.py
 ```
 
-The first command regenerates the screenshots, the 22 slides (in `frames/`)
-and the silent MP4. The second renders the two original soundtracks and
-muxes them under the video. Install `ffmpeg` for both steps; the PNG
-frames are written even without it.
+The first command regenerates the screenshots, the 22 slides, the silent
+MP4 and the narration metadata. The second speaks every slide with the
+offline Windows voice **Microsoft David**, adapts each slide duration to
+the narration (at least twice the old hold) and mixes the music underneath.
+Install `ffmpeg` for the video step; the PNG frames are written even
+without it.
 
-## Music
+## Narrator and music
 
-The tutorial uses original, programmatically synthesized music - no
+Every slide is narrated in English by the offline Windows voice
+**Microsoft David**. The script is built from the slide title, the caption
+and the side-card values, so the video says what is on screen.
+
+The soundtrack is original, programmatically synthesized music - no
 third-party samples. Two versions are provided:
 
 - `IFA_5p8GHz_Tutorial.mp4` - ambient pad, sub bass and sparse plucks
@@ -451,17 +457,17 @@ third-party samples. Two versions are provided:
 - `IFA_5p8GHz_Tutorial_DeepTechno.mp4` - 124 BPM deep techno with a
   rolling bassline, kick, hats and atmospheric pad.
 
-Both soundtracks are normalized to about -19 LUFS so the text remains
-easy to read. The WAV files are rendered into a temporary folder while
-`generate_music.py` builds the mixes; only the MP4s are stored.
+The voice is normalized to about -17 LUFS; the music is mixed much lower
+and ducked while the narrator speaks, so the explanations stay clear.
+Temporary WAVs live only in the build folder.
 
 ## Files
 
-- `IFA_5p8GHz_Tutorial.mp4` - 100 s, 1600 x 900, H.264 + AAC, ambient.
-- `IFA_5p8GHz_Tutorial_DeepTechno.mp4` - deep techno soundtrack.
+- `IFA_5p8GHz_Tutorial.mp4` - 410 s, 1280 x 720, H.264 + AAC, narrated + ambient.
+- `IFA_5p8GHz_Tutorial_DeepTechno.mp4` - narrated + deep techno.
 - `frames/01.png` ... `frames/22.png` - the 22 slides.
-- `assets/` - GUI screenshots, highlight cards, diagrams and field maps.
-- `generate_tutorial.py`, `generate_music.py` - regenerate the video and the soundtrack.
+- `assets/` - GUI screenshots, highlight cards, diagrams, field maps and narration JSON.
+- `generate_tutorial.py`, `generate_narration.py`, `generate_music.py` - rebuild the video, voice and music.
 
 ## Notes
 

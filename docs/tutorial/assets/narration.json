@@ -1,0 +1,168 @@
+[
+  {
+    "step": 0,
+    "title": "Inverted-F Antenna on a PCB",
+    "caption": "5.8 GHz step-by-step simulation. Build the geometry, mesh it, run openEMS and read the S-parameters, the 3D antenna pattern and the E-field.",
+    "side_card": null
+  },
+  {
+    "step": 1,
+    "title": "The main window",
+    "caption": "Menu bar, Project/Geometry tree, workspace tabs and the status/log area. Most commands live in the Geometry, Mesh and Simulation menus; the tabs open the mesh and result viewers.",
+    "side_card": [
+      "Window map",
+      [
+        "1  Menu bar: File, Geometry, Mesh, Simulation",
+        "2  Project / Geometry tree: objects, materials, ports",
+        "3  Tabs: Geometry, Mesh Viewer, 3D Design, S-Params, Antenna, Field",
+        "4  Status bar: progress, runtime and log toggle"
+      ]
+    ]
+  },
+  {
+    "step": 2,
+    "title": "Start a new project",
+    "caption": "File -> New Project (Ctrl+N). The project stores the drawing unit, geometry, mesh, ports and results in one .fcsim.json file; save it with Ctrl+S.",
+    "side_card": [
+      "Project basics",
+      [
+        "File -> New Project (Ctrl+N)",
+        "File -> Save (Ctrl+S)",
+        "File -> Save As… (Ctrl+Shift+S)",
+        "Settings -> Settings… for the work folder"
+      ]
+    ]
+  },
+  {
+    "step": 3,
+    "title": "Set the frequency range",
+    "caption": "Simulation -> Simulation Parameters… (Ctrl+Shift+P): drawing unit mm, start 5.0 GHz, stop 6.6 GHz, target 5.8 GHz. The target drives the mesh and the NF2FF evaluation.",
+    "side_card": null
+  },
+  {
+    "step": 4,
+    "title": "Create the FR4 material",
+    "caption": "Geometry -> Add Material…: kind dielectric, eps_r = 4.4, tan_d = 0.02. The material is used by the substrate box; copper is a separate PEC material.",
+    "side_card": null
+  },
+  {
+    "step": 5,
+    "title": "Add the PCB substrate",
+    "caption": "Geometry -> Add Box…: name PCB_FR4, material FR4, priority 1. Start 0/0/0 mm, stop 25/45/1.6 mm. Start is the lower corner, Stop the upper corner; x is board width, y board length, z through the substrate.",
+    "side_card": [
+      "Box input",
+      [
+        "Start = lower corner (x, y, z)",
+        "Stop = upper corner (x, y, z)",
+        "x right, y along the board, z up",
+        "Copper priority 10 > substrate 1",
+        "All values in the drawing unit (mm)"
+      ]
+    ]
+  },
+  {
+    "step": 6,
+    "title": "Bottom ground plane (GND_bottom)",
+    "caption": "Second box: Start 0/0/0, Stop 25/45/0.035 mm, material copper, priority 10. It covers the whole board and is the return/reference plane; the zmin boundary is PEC as well.",
+    "side_card": null
+  },
+  {
+    "step": 7,
+    "title": "Top ground plane (GND_top)",
+    "caption": "Third box: Start 0/0/1.6, Stop 25/35/1.635 mm, copper, priority 10. It stops at y = 35 mm; y = 35...45 mm is the 10 mm antenna clearance (no box). It is the local feed reference; a production board would stitch it to the bottom ground with vias.",
+    "side_card": null
+  },
+  {
+    "step": 8,
+    "title": "Radiating arm (IFA_arm)",
+    "caption": "Fourth box: Start 10/38/1.6, Stop 17/40/1.635 mm, copper, priority 10. 7 mm long, 2 mm wide; the open end is at x = 17 mm. This is the main radiator.",
+    "side_card": null
+  },
+  {
+    "step": 9,
+    "title": "Shorting stub (IFA_short)",
+    "caption": "Fifth box: Start 10/35/1.6, Stop 12/40/1.635 mm, copper, priority 10. 2 mm wide and 5 mm high; it connects the arm at y = 40 to the top ground at y = 35 and sets the quarter-wave resonance.",
+    "side_card": null
+  },
+  {
+    "step": 10,
+    "title": "Feed strip and feed gap (IFA_feed)",
+    "caption": "Sixth box: Start 12.5/35.5/1.6, Stop 14.5/38/1.635 mm, copper, priority 10. 2 mm wide; it connects the arm at y = 38 to the feed point at y = 35.5. The y = 35.0...35.5 mm gap to GND_top is the 0.5 mm port gap (no box).",
+    "side_card": null
+  },
+  {
+    "step": 11,
+    "title": "Add the 50 ohm feed port",
+    "caption": "Geometry -> Add Port…: lumped, 50 ohm, direction y, width area along x. Start 13.5/35.5/1.6, Stop 13.5/35.0/1.6 mm; metal reference IFA_feed. It spans the 0.5 mm gap and is 2 mm wide.",
+    "side_card": [
+      "Port input",
+      [
+        "Type: lumped",
+        "Resistance: 50 ohm",
+        "Direction: y across the gap",
+        "Width: Area - as wide as the metal (x)",
+        "Start 35.5 / Stop 35.0 mm"
+      ]
+    ]
+  },
+  {
+    "step": 12,
+    "title": "Add the E-field dump",
+    "caption": "Geometry -> Add Field Dump…: quantity E, frequency 5.8 GHz, file type VTK, box around the antenna. The Field Viewer reads this .vtr file later.",
+    "side_card": null
+  },
+  {
+    "step": 13,
+    "title": "Enable the NF2FF far field",
+    "caption": "Simulation -> Simulation Parameters… -> NF2FF-Parameter: enable far-field, frequency list 5.8 GHz, box automatic, theta = 181, phi = 361. This produces the antenna-pattern data.",
+    "side_card": null
+  },
+  {
+    "step": 14,
+    "title": "Set the mesh parameters",
+    "caption": "Mesh -> Mesh Parameters… (Ctrl+Shift+M): max 1.2 mm, min 0.15 mm, min z 0.08 mm, refined 0.2 mm, 18 cells per wavelength. Apply writes them into the project.",
+    "side_card": null
+  },
+  {
+    "step": 15,
+    "title": "Build the mesh",
+    "caption": "Mesh -> Build Mesh (Ctrl+M). easyMesh resolves the feed gap and the copper edges; the Mesh Viewer opens the XY slice at z = 1.6 mm.",
+    "side_card": null
+  },
+  {
+    "step": 16,
+    "title": "Check the mesh quality",
+    "caption": "In the Mesh Viewer use the Cell sizes tab (or the right-click menu) to see the cell-size distribution. The gap and the metal edges need the finest cells; air can stay coarse.",
+    "side_card": null
+  },
+  {
+    "step": 17,
+    "title": "Run the FDTD simulation",
+    "caption": "Simulation -> Run Simulation (Ctrl+R). Watch the TS and energy bars; the run stops at the energy criterion. The log lists the S-parameter and NF2FF files.",
+    "side_card": null
+  },
+  {
+    "step": 18,
+    "title": "Read the S-parameters",
+    "caption": "Open the S-Params tab. Plot |S| dB, click the plot to add a marker at 5.8 GHz, and use the trace preset for return loss. Smith, VSWR, phase and Re/Im are in the same Plot menu.",
+    "side_card": null
+  },
+  {
+    "step": 19,
+    "title": "Read the antenna pattern",
+    "caption": "Open the Antenna tab. The 3D Pattern view colours gain in dBi; the Plot selector adds E-/H-plane and azimuth cuts. Markers read gain, angle and HPBW.",
+    "side_card": null
+  },
+  {
+    "step": 20,
+    "title": "Inspect the E-field",
+    "caption": "Open the Field Viewer tab. In the Data panel choose pt:magnitude, the XY slice at z = 1.6 mm, or a YZ cut through the feed. The hot spot sits at the 0.5 mm gap and along the arm.",
+    "side_card": null
+  },
+  {
+    "step": null,
+    "title": "Done - and what to tune next",
+    "caption": "Change one dimension at a time, rebuild the mesh and compare S11 and the pattern. The same workflow scales to other PCB antennas and feed structures.",
+    "side_card": null
+  }
+]

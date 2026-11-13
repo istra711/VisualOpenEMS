@@ -57,6 +57,8 @@ COPPER = (196, 118, 52)
 
 _PIL_FONTS: dict[str, object] = {}
 _FONT_FAMILY = "Segoe UI"
+#: Narration metadata for the speaker track (filled by :func:`_build_slides3`).
+NARRATION_SCRIPTS: list[dict] = []
 
 
 # ---------------------------------------------------------------------------
@@ -1793,12 +1795,29 @@ def _write_storyboard(slides: list, poster: Path) -> Path:
     return path
 
 
+def write_narration() -> Path:
+    """Write the current slide narration metadata to ``assets/narration.json``."""
+    path = ASSETS / "narration.json"
+    path.write_text(
+        json.dumps(NARRATION_SCRIPTS, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return path
+
+
+def export_narration() -> Path:
+    """Build the slide metadata and write the narration JSON (no GUI needed)."""
+    _build_slides3()
+    return write_narration()
+
+
 def main() -> int:
     ASSETS.mkdir(parents=True, exist_ok=True)
     FRAMES.mkdir(parents=True, exist_ok=True)
     _setup_environment()
     _asset_main()
     slides = _build_slides3()
+    write_narration()
     for index, slide in enumerate(slides, start=1):
         slide.save(FRAMES / f"{index:02d}.png")
     poster = FRAMES / "01.png"
@@ -2865,6 +2884,19 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
 def _build_slides3() -> list:
     assets, meta = _load_assets2()
     total = 22
+    NARRATION_SCRIPTS.clear()
+    NARRATION_SCRIPTS.append(
+        {
+            "step": 0,
+            "title": "Inverted-F Antenna on a PCB",
+            "caption": (
+                "5.8 GHz step-by-step simulation. Build the geometry, mesh it, "
+                "run openEMS and read the S-parameters, the 3D antenna pattern "
+                "and the E-field."
+            ),
+            "side_card": None,
+        }
+    )
 
     def menu(key: str, title: str, label: str):
         return _menu_card(
@@ -2921,6 +2953,14 @@ def _build_slides3() -> list:
                 "weights": weights,
                 "callouts": callouts,
                 "markers": markers,
+                "side_card": side_card,
+            }
+        )
+        NARRATION_SCRIPTS.append(
+            {
+                "step": step,
+                "title": title,
+                "caption": caption,
                 "side_card": side_card,
             }
         )
@@ -3330,7 +3370,7 @@ def _write_storyboard3(slides: list, poster: Path) -> Path:
     lines = [
         "# Inverted-F Antenna on a PCB - 5.8 GHz tutorial",
         "",
-        "[Watch the MP4 (ambient soundtrack)](IFA_5p8GHz_Tutorial.mp4)",
+        "[Watch the MP4 (narrated, ambient soundtrack)](IFA_5p8GHz_Tutorial.mp4)",
         "",
         "[Deep Techno version](IFA_5p8GHz_Tutorial_DeepTechno.mp4)",
         "",
@@ -3388,11 +3428,28 @@ def _write_storyboard3(slides: list, poster: Path) -> Path:
         "| --- | --- |",
         "| 00:00 | Title and overview |",
     ]
+    timings = None
+    try:
+        payload = json.loads(
+            (ASSETS / "narration_timings.json").read_text(encoding="utf-8")
+        )
+        timings = payload.get("slides")
+    except Exception:  # noqa: BLE001
+        timings = None
     for index, (title, *_rest) in enumerate(steps, start=1):
-        seconds = int(index * (HOLD_SECONDS + FADE_SECONDS))
+        if timings and index < len(timings):
+            seconds = int(timings[index]["start"])
+        else:
+            seconds = int(index * (HOLD_SECONDS + FADE_SECONDS))
         lines.append(f"| {seconds // 60:02d}:{seconds % 60:02d} | Step {index} - {title} |")
+    if timings:
+        summary_seconds = int(timings[-1]["start"])
+        total_duration = float(timings[-1]["start"]) + float(timings[-1]["hold"])
+    else:
+        summary_seconds = 96
+        total_duration = 100.0
     lines += [
-        "| 01:36 | Summary and tuning tips |",
+        f"| {summary_seconds // 60:02d}:{summary_seconds % 60:02d} | Summary and tuning tips |",
         "",
         "## Steps",
         "",
@@ -3445,17 +3502,23 @@ def _write_storyboard3(slides: list, poster: Path) -> Path:
         "",
         "```bash",
         "python docs/tutorial/generate_tutorial.py",
-        "python docs/tutorial/generate_music.py",
+        "python docs/tutorial/generate_narration.py",
         "```",
         "",
-        "The first command regenerates the screenshots, the 22 slides (in `frames/`)",
-        "and the silent MP4. The second renders the two original soundtracks and",
-        "muxes them under the video. Install `ffmpeg` for both steps; the PNG",
-        "frames are written even without it.",
+        "The first command regenerates the screenshots, the 22 slides, the silent",
+        "MP4 and the narration metadata. The second speaks every slide with the",
+        "offline Windows voice **Microsoft David**, adapts each slide duration to",
+        "the narration (at least twice the old hold) and mixes the music underneath.",
+        "Install `ffmpeg` for the video step; the PNG frames are written even",
+        "without it.",
         "",
-        "## Music",
+        "## Narrator and music",
         "",
-        "The tutorial uses original, programmatically synthesized music - no",
+        "Every slide is narrated in English by the offline Windows voice",
+        "**Microsoft David**. The script is built from the slide title, the caption",
+        "and the side-card values, so the video says what is on screen.",
+        "",
+        "The soundtrack is original, programmatically synthesized music - no",
         "third-party samples. Two versions are provided:",
         "",
         "- `IFA_5p8GHz_Tutorial.mp4` - ambient pad, sub bass and sparse plucks",
@@ -3463,17 +3526,17 @@ def _write_storyboard3(slides: list, poster: Path) -> Path:
         "- `IFA_5p8GHz_Tutorial_DeepTechno.mp4` - 124 BPM deep techno with a",
         "  rolling bassline, kick, hats and atmospheric pad.",
         "",
-        "Both soundtracks are normalized to about -19 LUFS so the text remains",
-        "easy to read. The WAV files are rendered into a temporary folder while",
-        "`generate_music.py` builds the mixes; only the MP4s are stored.",
+        "The voice is normalized to about -17 LUFS; the music is mixed much lower",
+        "and ducked while the narrator speaks, so the explanations stay clear.",
+        "Temporary WAVs live only in the build folder.",
         "",
         "## Files",
         "",
-        "- `IFA_5p8GHz_Tutorial.mp4` - 100 s, 1600 x 900, H.264 + AAC, ambient.",
-        "- `IFA_5p8GHz_Tutorial_DeepTechno.mp4` - deep techno soundtrack.",
+        f"- `IFA_5p8GHz_Tutorial.mp4` - {int(total_duration)} s, 1280 x 720, H.264 + AAC, narrated + ambient.",
+        "- `IFA_5p8GHz_Tutorial_DeepTechno.mp4` - narrated + deep techno.",
         "- `frames/01.png` ... `frames/22.png` - the 22 slides.",
-        "- `assets/` - GUI screenshots, highlight cards, diagrams and field maps.",
-        "- `generate_tutorial.py`, `generate_music.py` - regenerate the video and the soundtrack.",
+        "- `assets/` - GUI screenshots, highlight cards, diagrams, field maps and narration JSON.",
+        "- `generate_tutorial.py`, `generate_narration.py`, `generate_music.py` - rebuild the video, voice and music.",
         "",
         "## Notes",
         "",
