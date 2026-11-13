@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from app.freecad_io.kicad_import import KiCadInspection, KiCadStackupLayer
 from app.models.project import KiCadSpec, Project
+from app.ui.input_alignment import double_spin_box
 
 
 def _spin(
@@ -41,7 +42,7 @@ def _spin(
     step: float,
     suffix: str = " mm",
 ) -> QDoubleSpinBox:
-    box = QDoubleSpinBox()
+    box = double_spin_box()
     box.setRange(lo, hi)
     box.setDecimals(decimals)
     box.setSingleStep(step)

@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from app.freecad_io.gerber_import import GERBER_SUFFIXES, GerberInspection
 from app.models.project import GerberSpec, Project
+from app.ui.input_alignment import double_spin_box
 
 
 def _spin(
@@ -44,7 +45,7 @@ def _spin(
     step: float,
     suffix: str = " mm",
 ) -> QDoubleSpinBox:
-    box = QDoubleSpinBox()
+    box = double_spin_box()
     box.setRange(lo, hi)
     box.setDecimals(decimals)
     box.setSingleStep(step)

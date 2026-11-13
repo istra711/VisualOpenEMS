@@ -318,6 +318,54 @@ def main() -> int:
     assert abs(live.result_port.start[1] - 2.0) < 1e-12
     print("automatic area width for manual/old ports: OK")
 
+    # 8c) Every numeric field of the geometry dialogs is left-aligned
+    #     (Windows draws spin boxes right-aligned by default).
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QAbstractSpinBox
+
+    from app.models.project import MaterialDef
+    from app.ui.geometry_editors import (
+        DumpDialog,
+        MaterialDialog,
+        PrimitiveBoxDialog,
+    )
+
+    checked: list[str] = []
+    for dialog in (
+        PortDialog(win),
+        PrimitiveBoxDialog(win),
+        DumpDialog(win),
+        MaterialDialog(
+            win, material=MaterialDef(name="substrate", kind="dielectric")
+        ),
+    ):
+        boxes = dialog.findChildren(QAbstractSpinBox)
+        assert boxes, dialog.windowTitle()
+        for box in boxes:
+            assert int(box.alignment()) & int(Qt.AlignmentFlag.AlignLeft), (
+                dialog.windowTitle(),
+                type(box).__name__,
+                box.alignment(),
+            )
+            checked.append(f"{dialog.windowTitle()}:{type(box).__name__}")
+        dialog.deleteLater()
+
+    from app.ui.object_display import DisplayOptionsWidget
+
+    display = DisplayOptionsWidget(win)
+    assert int(display.spn_transparency.alignment()) & int(Qt.AlignmentFlag.AlignLeft)
+    display.deleteLater()
+
+    from app.ui.gerber_import_dialog import _spin as _gerber_spin
+    from app.ui.kicad_import_dialog import _spin as _kicad_spin
+
+    for factory in (_kicad_spin, _gerber_spin):
+        box = factory(0.0, 10.0, 3, 0.1)
+        assert int(box.alignment()) & int(Qt.AlignmentFlag.AlignLeft)
+        box.deleteLater()
+    assert len(checked) >= 8, checked
+    print("geometry dialogs: numeric fields left-aligned: OK")
+
     # 9) "Reverse" option: dialog round-trip + list/tree marker
     plain = _PD2(name="r0", start=[0, 0, 1.0], stop=[0, 0, 0.0], direction="z")
     assert plain.reverse is False, "ports default to 'not reversed'"

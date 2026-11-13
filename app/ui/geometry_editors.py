@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -21,7 +20,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -34,6 +32,7 @@ from app.models.variables import (
     expression_text,
 )
 from app.numfmt import format_number, parse_number
+from app.ui.input_alignment import double_spin_box, spin_box
 from app.ui.object_display import DisplayOptionsWidget
 from app.ui.primitive_preview import PolygonPreview
 from app.ui.variable_field import (
@@ -216,7 +215,7 @@ class PortDialog(QDialog):
         self.cmb_type = QComboBox()
         self.cmb_type.addItems(PORT_TYPES)
         self.cmb_type.setCurrentText(p.type)
-        self.spn_r = QDoubleSpinBox()
+        self.spn_r = double_spin_box()
         self.spn_r.setRange(0.1, 1e4)
         self.spn_r.setDecimals(2)
         self.spn_r.setValue(float(p.resistance or 50.0))
@@ -294,7 +293,7 @@ class PortDialog(QDialog):
         )
         self.chk_excite = QCheckBox("Excite port")
         self.chk_excite.setChecked(bool(p.excite_port))
-        self.spn_exc_phase = QDoubleSpinBox()
+        self.spn_exc_phase = double_spin_box()
         self.spn_exc_phase.setRange(-360.0, 360.0)
         self.spn_exc_phase.setDecimals(2)
         self.spn_exc_phase.setSuffix(" °")
@@ -494,7 +493,7 @@ class AssignmentDialog(QDialog):
         self.cmb_mat.addItems(material_names or ["substrate", "copper", "vacuum"])
         if a.material:
             self.cmb_mat.setCurrentText(a.material)
-        self.spn_pri = QSpinBox()
+        self.spn_pri = spin_box()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(a.priority))
         form.addRow("Object", self.cmb_obj)
@@ -549,15 +548,15 @@ class MaterialDialog(QDialog):
         self.cmb_kind = QComboBox()
         self.cmb_kind.addItems(MATERIAL_KINDS)
         self.cmb_kind.setCurrentText(m.kind)
-        self.spn_eps = QDoubleSpinBox()
+        self.spn_eps = double_spin_box()
         self.spn_eps.setRange(1.0, 100.0)
         self.spn_eps.setDecimals(4)
         self.spn_eps.setValue(float(m.epsilon or 1.0))
-        self.spn_kappa = QDoubleSpinBox()
+        self.spn_kappa = double_spin_box()
         self.spn_kappa.setRange(0.0, 1e9)
         self.spn_kappa.setDecimals(6)
         self.spn_kappa.setValue(float(m.kappa or 0.0))
-        self.spn_tand = QDoubleSpinBox()
+        self.spn_tand = double_spin_box()
         self.spn_tand.setRange(0.0, 10.0)
         self.spn_tand.setDecimals(6)
         self.spn_tand.setValue(float(getattr(m, "tand", 0.0) or 0.0))
@@ -631,7 +630,7 @@ class PrimitiveBoxDialog(QDialog, _DisplayMixin):
         mats = ["copper", "substrate", "vacuum", "pec", "dielectric"]
         self.cmb_mat.addItems(mats)
         self.cmb_mat.setCurrentText(str(p.get("material", "copper")))
-        self.spn_pri = QSpinBox()
+        self.spn_pri = spin_box()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(p.get("priority", 10)))
         self.chk_edges = QCheckBox("Snap edges to mesh (edges2grid)")
@@ -729,7 +728,7 @@ class PrimitiveCylinderDialog(QDialog, _DisplayMixin):
         self.cmb_mat.setEditable(True)
         self.cmb_mat.addItems(["copper", "substrate", "vacuum"])
         self.cmb_mat.setCurrentText(str(p.get("material", "copper")))
-        self.spn_pri = QSpinBox()
+        self.spn_pri = spin_box()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(p.get("priority", 10)))
         self.spn_radius = VariableField(
@@ -841,7 +840,7 @@ class PrimitiveSphereDialog(QDialog, _DisplayMixin):
         self.cmb_mat.setEditable(True)
         self.cmb_mat.addItems(["copper", "substrate", "vacuum"])
         self.cmb_mat.setCurrentText(str(p.get("material", "copper")))
-        self.spn_pri = QSpinBox()
+        self.spn_pri = spin_box()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(p.get("priority", 10)))
         self.spn_radius = VariableField(
@@ -946,7 +945,7 @@ class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
 
         form = QFormLayout(self)
         self.ed_name = QLineEdit(str(p.get("name", "R1")))
-        self.spn_pri = QSpinBox()
+        self.spn_pri = spin_box()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(p.get("priority", 15)))
         self.cmb_dir = QComboBox()
@@ -956,17 +955,17 @@ class PrimitiveLumpedElementDialog(QDialog, _DisplayMixin):
             "Component direction: the axis along which the lumped element acts.\n"
             "The Start/Stop box should span this axis."
         )
-        self.spn_r = QDoubleSpinBox()
+        self.spn_r = double_spin_box()
         self.spn_r.setRange(0.0, 1e9)
         self.spn_r.setDecimals(3)
         self.spn_r.setValue(float(p.get("resistance", 50.0) or 0.0))
         self.spn_r.setSuffix(" Ω")
-        self.spn_l = QDoubleSpinBox()
+        self.spn_l = double_spin_box()
         self.spn_l.setRange(0.0, 1e9)
         self.spn_l.setDecimals(4)
         self.spn_l.setValue(float(p.get("inductance", 0.0) or 0.0) * 1e9)
         self.spn_l.setSuffix(" nH")
-        self.spn_c = QDoubleSpinBox()
+        self.spn_c = double_spin_box()
         self.spn_c.setRange(0.0, 1e9)
         self.spn_c.setDecimals(4)
         self.spn_c.setValue(float(p.get("capacitance", 0.0) or 0.0) * 1e12)
@@ -1100,7 +1099,7 @@ class PrimitivePolygonDialog(QDialog, _DisplayMixin):
         self.cmb_mat.setEditable(True)
         self.cmb_mat.addItems(["copper", "substrate", "vacuum"])
         self.cmb_mat.setCurrentText(str(p.get("material", "copper")))
-        self.spn_pri = QSpinBox()
+        self.spn_pri = spin_box()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(p.get("priority", 10)))
         self.cmb_axis = QComboBox()
@@ -1371,7 +1370,7 @@ class PrimitivePolylineDialog(QDialog, _DisplayMixin):
         self.cmb_mat.setEditable(True)
         self.cmb_mat.addItems(["copper", "substrate", "vacuum"])
         self.cmb_mat.setCurrentText(str(p.get("material", "copper")))
-        self.spn_pri = QSpinBox()
+        self.spn_pri = spin_box()
         self.spn_pri.setRange(0, 200)
         self.spn_pri.setValue(int(p.get("priority", 10)))
         form.addRow("Name", self.ed_name)
@@ -1616,7 +1615,7 @@ class DumpDialog(QDialog):
             "SAR dumps are frequency-domain only; custom exposes the numeric "
             "CSXCAD DumpType."
         )
-        self.spn_custom_type = QSpinBox()
+        self.spn_custom_type = spin_box()
         self.spn_custom_type.setRange(0, 99)
         self.spn_custom_type.setValue(int(getattr(d, "custom_dump_type", 10) or 10))
         self.spn_custom_type.setToolTip(
@@ -1627,7 +1626,7 @@ class DumpDialog(QDialog):
         self.chk_fd.setChecked(bool(d.frequency_domain))
         self.chk_en = QCheckBox("Enabled")
         self.chk_en.setChecked(bool(d.enabled))
-        self.spn_freq = QDoubleSpinBox()
+        self.spn_freq = double_spin_box()
         self.spn_freq.setKeyboardTracking(False)
         from app.ui.freq_units import configure_freq_spin, hz_to_freq, unit_combo_items
 
@@ -1673,7 +1672,7 @@ class DumpDialog(QDialog):
         self.spn_sub = []
         sub_row = QHBoxLayout()
         for i, ax in enumerate("xyz"):
-            sp = QSpinBox()
+            sp = spin_box()
             sp.setRange(1, 100000)
             sp.setValue(int(sub[i]) if i < len(sub) else 1)
             sp.setToolTip(
@@ -1691,7 +1690,7 @@ class DumpDialog(QDialog):
         self.spn_opt = []
         opt_row = QHBoxLayout()
         for i, ax in enumerate("xyz"):
-            sp = QDoubleSpinBox()
+            sp = double_spin_box()
             sp.setRange(0.0, 1_000_000.0)
             sp.setDecimals(4)
             sp.setValue(float(opt[i]) if i < len(opt) else 0.0)

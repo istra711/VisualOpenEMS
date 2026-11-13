@@ -62,6 +62,7 @@ from app.models.port_width import (
     primitive_span,
     rebuild_box as rebuild_port_width_box,
 )
+from app.ui.input_alignment import align_left as align_input_left
 from app.runlog import (
     format_engine_elapsed,
     format_run_end,
@@ -8300,6 +8301,7 @@ class MainWindow(QMainWindow):
         spn_pri = QSpinBox()
         spn_pri.setRange(0, 200)
         spn_pri.setValue(int(pr.get("priority", 10)))
+        align_input_left(spn_pri)
         form.addRow("Name (imported)", ed_name)
         form.addRow("Material", cmb_mat)
         form.addRow("Priority", spn_pri)

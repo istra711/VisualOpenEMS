@@ -20,9 +20,10 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QPushButton,
-    QSpinBox,
     QWidget,
 )
+
+from app.ui.input_alignment import spin_box
 
 #: transparency used when an object has no explicit value (0 % = solid)
 DEFAULT_TRANSPARENCY = 30
@@ -115,7 +116,7 @@ class DisplayOptionsWidget(QGroupBox):
         self.btn_auto.clicked.connect(self._auto_color)
         rl.addWidget(self.btn_color, 1)
         rl.addWidget(self.btn_auto)
-        self.spn_transparency = QSpinBox(self)
+        self.spn_transparency = spin_box(self)
         self.spn_transparency.setRange(0, 100)
         self.spn_transparency.setSuffix(" %")
         self.spn_transparency.setValue(int(d["transparency"]))
