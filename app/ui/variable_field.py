@@ -69,7 +69,7 @@ class VariableField(QLineEdit):
         self._last_value = float(value)
         self._variables: dict[str, float] = {}
         self._loading = True
-        self.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.setMinimumWidth(92)
         self.setClearButtonEnabled(False)
         self.setToolTip(self._tooltip())

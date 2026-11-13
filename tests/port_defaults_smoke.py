@@ -348,6 +348,15 @@ def main() -> int:
                 box.alignment(),
             )
             checked.append(f"{dialog.windowTitle()}:{type(box).__name__}")
+        vector_fields = list(getattr(dialog, "spn_start", []) or []) + list(
+            getattr(dialog, "spn_stop", []) or []
+        )
+        for field in vector_fields:
+            assert int(field.alignment()) & int(Qt.AlignmentFlag.AlignLeft), (
+                dialog.windowTitle(),
+                "VariableField",
+                field.alignment(),
+            )
         dialog.deleteLater()
 
     from app.ui.object_display import DisplayOptionsWidget

@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dialogs (box, cylinder, sphere, polygon/wire, port, material, lumped element,
   field dump, NF2FF, display options and the KiCad/Gerber import options) now
   starts at the left edge instead of using Windows' right-aligned spin-box
-  default, so values line up with the name and Start/Stop text fields.
+  default. The shared Start/Stop/Center/Radius variable fields are left-aligned
+  as well, so every value lines up with the name field.
 - **Automatic lumped-port width along X/Y**: choosing "Area - as wide as the
   metal" now also widens manually entered, imported and old ports instead of
   leaving a line (Start/Stop differed only along the excitation direction).
