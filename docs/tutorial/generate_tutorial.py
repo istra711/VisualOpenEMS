@@ -1,4 +1,4 @@
-"""Generate the step-by-step IFA tutorial (screenshots, frames, MP4).
+﻿"""Generate the step-by-step IFA tutorial (screenshots, frames, MP4).
 
 The tutorial shows how to build and simulate an inverted-F antenna on a PCB at
 5.8 GHz in VisualOpenEMS.  It uses the real GUI widgets (dialogs, mesh viewer,
@@ -553,6 +553,14 @@ def _grab_dialogs(project, primitives, dump):
     gnd_prim = next(p for p in primitives if p["name"] == "GND_top")
     gnd_dlg = PrimitiveBoxDialog(None, prim=gnd_prim)
     paths["box_gnd"] = _grab(gnd_dlg, "dialog_box_gnd.png")
+
+    bottom_prim = next(p for p in primitives if p["name"] == "GND_bottom")
+    bottom_dlg = PrimitiveBoxDialog(None, prim=bottom_prim)
+    paths["box_gnd_bottom"] = _grab(bottom_dlg, "dialog_box_gnd_bottom.png")
+
+    short_prim = next(p for p in primitives if p["name"] == "IFA_short")
+    short_dlg = PrimitiveBoxDialog(None, prim=short_prim)
+    paths["box_short"] = _grab(short_dlg, "dialog_box_short.png")
 
     feed_prim = next(p for p in primitives if p["name"] == "IFA_feed")
     feed_dlg = PrimitiveBoxDialog(None, prim=feed_prim)
@@ -1265,7 +1273,7 @@ def _compose_title(index: int, total: int, hero) -> object:
     for line in _wrap_text(draw, body, _font(21), 620):
         draw.text((64, y), line, font=_font(21), fill=(203, 213, 225))
         y += 30
-    draw.text((64, 560), "10 steps  ·  about 2 minutes", font=_font(18, True), fill=(148, 163, 184))
+    draw.text((64, 560), "10 steps  Â·  about 2 minutes", font=_font(18, True), fill=(148, 163, 184))
 
     _paste_card(canvas, hero, (760, 130, W - 64, 780))
     _draw_footer(canvas, index, total)
@@ -1790,12 +1798,12 @@ def main() -> int:
     FRAMES.mkdir(parents=True, exist_ok=True)
     _setup_environment()
     _asset_main()
-    slides = _build_slides2()
+    slides = _build_slides3()
     for index, slide in enumerate(slides, start=1):
         slide.save(FRAMES / f"{index:02d}.png")
     poster = FRAMES / "01.png"
     video = _encode_video(slides)
-    storyboard = _write_storyboard2(slides, poster)
+    storyboard = _write_storyboard3(slides, poster)
     print("slides:", len(slides))
     print("poster:", poster)
     print("video:", video, f"{video.stat().st_size / 1e6:.1f} MB")
@@ -1814,81 +1822,81 @@ def _grab_menu_assets(meta: dict) -> dict[str, Path]:
         "file_new": (
             "File",
             [
-                "New Project", "Open…", "Recent projects", "Save", "Save As…",
-                "Import Geometry…", "Import Gerber/Excellon…", "Import KiCad PCB…",
-                "Import CST Studio Package…", "FreeCAD…", "Open Work Folder", "Exit",
+                "New Project", "Openâ€¦", "Recent projects", "Save", "Save Asâ€¦",
+                "Import Geometryâ€¦", "Import Gerber/Excellonâ€¦", "Import KiCad PCBâ€¦",
+                "Import CST Studio Packageâ€¦", "FreeCADâ€¦", "Open Work Folder", "Exit",
             ],
             "New Project",
         ),
         "geometry_material": (
             "Geometry",
             [
-                "Add Box…", "Add Cylinder…", "Add Sphere…",
-                "Add Lumped Element (R/L/C)…", "Add Polygon…", "Add Extruded Polygon…",
-                "Add Wire…", "Add Curve…", "", "Variables…", "",
-                "Add Assignment…", "Add Material…", "", "Add Port…",
-                "Add Field Dump…", "", "Ports / Dumps…", "",
-                "Edit NF2FF Box…", "Fit NF2FF to Geometry",
+                "Add Boxâ€¦", "Add Cylinderâ€¦", "Add Sphereâ€¦",
+                "Add Lumped Element (R/L/C)â€¦", "Add Polygonâ€¦", "Add Extruded Polygonâ€¦",
+                "Add Wireâ€¦", "Add Curveâ€¦", "", "Variablesâ€¦", "",
+                "Add Assignmentâ€¦", "Add Materialâ€¦", "", "Add Portâ€¦",
+                "Add Field Dumpâ€¦", "", "Ports / Dumpsâ€¦", "",
+                "Edit NF2FF Boxâ€¦", "Fit NF2FF to Geometry",
             ],
-            "Add Material…",
+            "Add Materialâ€¦",
         ),
         "geometry_box": (
             "Geometry",
             [
-                "Add Box…", "Add Cylinder…", "Add Sphere…",
-                "Add Lumped Element (R/L/C)…", "Add Polygon…", "Add Extruded Polygon…",
-                "Add Wire…", "Add Curve…", "", "Variables…", "",
-                "Add Assignment…", "Add Material…", "", "Add Port…",
-                "Add Field Dump…", "", "Ports / Dumps…", "",
-                "Edit NF2FF Box…", "Fit NF2FF to Geometry",
+                "Add Boxâ€¦", "Add Cylinderâ€¦", "Add Sphereâ€¦",
+                "Add Lumped Element (R/L/C)â€¦", "Add Polygonâ€¦", "Add Extruded Polygonâ€¦",
+                "Add Wireâ€¦", "Add Curveâ€¦", "", "Variablesâ€¦", "",
+                "Add Assignmentâ€¦", "Add Materialâ€¦", "", "Add Portâ€¦",
+                "Add Field Dumpâ€¦", "", "Ports / Dumpsâ€¦", "",
+                "Edit NF2FF Boxâ€¦", "Fit NF2FF to Geometry",
             ],
-            "Add Box…",
+            "Add Boxâ€¦",
         ),
         "geometry_port": (
             "Geometry",
             [
-                "Add Box…", "Add Cylinder…", "Add Sphere…",
-                "Add Lumped Element (R/L/C)…", "Add Polygon…", "Add Extruded Polygon…",
-                "Add Wire…", "Add Curve…", "", "Variables…", "",
-                "Add Assignment…", "Add Material…", "", "Add Port…",
-                "Add Field Dump…", "", "Ports / Dumps…", "",
-                "Edit NF2FF Box…", "Fit NF2FF to Geometry",
+                "Add Boxâ€¦", "Add Cylinderâ€¦", "Add Sphereâ€¦",
+                "Add Lumped Element (R/L/C)â€¦", "Add Polygonâ€¦", "Add Extruded Polygonâ€¦",
+                "Add Wireâ€¦", "Add Curveâ€¦", "", "Variablesâ€¦", "",
+                "Add Assignmentâ€¦", "Add Materialâ€¦", "", "Add Portâ€¦",
+                "Add Field Dumpâ€¦", "", "Ports / Dumpsâ€¦", "",
+                "Edit NF2FF Boxâ€¦", "Fit NF2FF to Geometry",
             ],
-            "Add Port…",
+            "Add Portâ€¦",
         ),
         "geometry_dump": (
             "Geometry",
             [
-                "Add Box…", "Add Cylinder…", "Add Sphere…",
-                "Add Lumped Element (R/L/C)…", "Add Polygon…", "Add Extruded Polygon…",
-                "Add Wire…", "Add Curve…", "", "Variables…", "",
-                "Add Assignment…", "Add Material…", "", "Add Port…",
-                "Add Field Dump…", "", "Ports / Dumps…", "",
-                "Edit NF2FF Box…", "Fit NF2FF to Geometry",
+                "Add Boxâ€¦", "Add Cylinderâ€¦", "Add Sphereâ€¦",
+                "Add Lumped Element (R/L/C)â€¦", "Add Polygonâ€¦", "Add Extruded Polygonâ€¦",
+                "Add Wireâ€¦", "Add Curveâ€¦", "", "Variablesâ€¦", "",
+                "Add Assignmentâ€¦", "Add Materialâ€¦", "", "Add Portâ€¦",
+                "Add Field Dumpâ€¦", "", "Ports / Dumpsâ€¦", "",
+                "Edit NF2FF Boxâ€¦", "Fit NF2FF to Geometry",
             ],
-            "Add Field Dump…",
+            "Add Field Dumpâ€¦",
         ),
         "simulation_params": (
             "Simulation",
             [
                 "Run Simulation", "Run All Ports (full S-matrix)", "Abort", "",
                 "Commit staged results", "Discard staged results",
-                "Open staged results folder", "Run history…", "",
-                "Simulation Status…", "", "Simulation Parameters…",
-                "Solver Parameters…", "Script…", "", "S-Params Viewer",
+                "Open staged results folder", "Run historyâ€¦", "",
+                "Simulation Statusâ€¦", "", "Simulation Parametersâ€¦",
+                "Solver Parametersâ€¦", "Scriptâ€¦", "", "S-Params Viewer",
                 "Pop-out S-Graph", "", "Antenna Pattern Viewer",
                 "Pop-out Antenna Graph", "", "3D Design Viewer", "Field Viewer",
             ],
-            "Simulation Parameters…",
+            "Simulation Parametersâ€¦",
         ),
         "simulation_run": (
             "Simulation",
             [
                 "Run Simulation", "Run All Ports (full S-matrix)", "Abort", "",
                 "Commit staged results", "Discard staged results",
-                "Open staged results folder", "Run history…", "",
-                "Simulation Status…", "", "Simulation Parameters…",
-                "Solver Parameters…", "Script…", "", "S-Params Viewer",
+                "Open staged results folder", "Run historyâ€¦", "",
+                "Simulation Statusâ€¦", "", "Simulation Parametersâ€¦",
+                "Solver Parametersâ€¦", "Scriptâ€¦", "", "S-Params Viewer",
                 "Pop-out S-Graph", "", "Antenna Pattern Viewer",
                 "Pop-out Antenna Graph", "", "3D Design Viewer", "Field Viewer",
             ],
@@ -1897,20 +1905,20 @@ def _grab_menu_assets(meta: dict) -> dict[str, Path]:
         "mesh_params": (
             "Mesh",
             [
-                "Build Mesh", "Rebuild from scratch…", "Delete Mesh…",
-                "New Scene (no mesh)…", "", "Mesh Parameters…", "Critical cells",
-                "Mesh Report", "Show Mesh Viewer", "Export CSX XML…",
-                "Open in AppCSXCAD (3D)…",
+                "Build Mesh", "Rebuild from scratchâ€¦", "Delete Meshâ€¦",
+                "New Scene (no mesh)â€¦", "", "Mesh Parametersâ€¦", "Critical cells",
+                "Mesh Report", "Show Mesh Viewer", "Export CSX XMLâ€¦",
+                "Open in AppCSXCAD (3D)â€¦",
             ],
-            "Mesh Parameters…",
+            "Mesh Parametersâ€¦",
         ),
         "mesh_build": (
             "Mesh",
             [
-                "Build Mesh", "Rebuild from scratch…", "Delete Mesh…",
-                "New Scene (no mesh)…", "", "Mesh Parameters…", "Critical cells",
-                "Mesh Report", "Show Mesh Viewer", "Export CSX XML…",
-                "Open in AppCSXCAD (3D)…",
+                "Build Mesh", "Rebuild from scratchâ€¦", "Delete Meshâ€¦",
+                "New Scene (no mesh)â€¦", "", "Mesh Parametersâ€¦", "Critical cells",
+                "Mesh Report", "Show Mesh Viewer", "Export CSX XMLâ€¦",
+                "Open in AppCSXCAD (3D)â€¦",
             ],
             "Build Mesh",
         ),
@@ -2048,7 +2056,9 @@ def _load_assets2() -> tuple[dict, dict]:
         "dialog_material.png",
         "dialog_box_pcb.png",
         "dialog_box_gnd.png",
+        "dialog_box_gnd_bottom.png",
         "dialog_box_arm.png",
+        "dialog_box_short.png",
         "dialog_box_feed.png",
         "dialog_port.png",
         "dialog_mesh_params.png",
@@ -2145,8 +2155,8 @@ def _build_slides2() -> list:
                 [
                     "File -> New Project (Ctrl+N)",
                     "File -> Save (Ctrl+S)",
-                    "File -> Save As… (Ctrl+Shift+S)",
-                    "Settings -> Settings… for the work folder",
+                    "File -> Save Asâ€¦ (Ctrl+Shift+S)",
+                    "Settings -> Settingsâ€¦ for the work folder",
                 ],
             ),
         )
@@ -2159,7 +2169,7 @@ def _build_slides2() -> list:
             step_label="STEP 03 / 18",
             title="Set the frequency range",
             caption=(
-                "Simulation -> Simulation Parameters… (Ctrl+Shift+P): drawing "
+                "Simulation -> Simulation Parametersâ€¦ (Ctrl+Shift+P): drawing "
                 "unit mm, start 5.0 GHz, stop 6.6 GHz, target 5.8 GHz. The target "
                 "drives the mesh and the NF2FF evaluation."
             ),
@@ -2167,7 +2177,7 @@ def _build_slides2() -> list:
                 menu(
                     "simulation_params",
                     "Simulation",
-                    "Simulation -> Simulation Parameters…  (Ctrl+Shift+P)",
+                    "Simulation -> Simulation Parametersâ€¦  (Ctrl+Shift+P)",
                 ),
                 assets["dialog_sim_params.png"],
             ],
@@ -2184,12 +2194,12 @@ def _build_slides2() -> list:
             step_label="STEP 04 / 18",
             title="Create the FR4 material",
             caption=(
-                "Geometry -> Add Material…: kind dielectric, eps_r = 4.4, "
+                "Geometry -> Add Materialâ€¦: kind dielectric, eps_r = 4.4, "
                 "tan_d = 0.02. Materials are listed in the project tree and can "
                 "be reused by every primitive."
             ),
             images=[
-                menu("geometry_material", "Geometry", "Geometry -> Add Material…"),
+                menu("geometry_material", "Geometry", "Geometry -> Add Materialâ€¦"),
                 assets["dialog_material.png"],
             ],
             weights=[0.46, 0.54],
@@ -2203,12 +2213,12 @@ def _build_slides2() -> list:
             step_label="STEP 05 / 18",
             title="Add the PCB substrate",
             caption=(
-                "Geometry -> Add Box…: name PCB_FR4, material FR4, start 0/0/0, "
+                "Geometry -> Add Boxâ€¦: name PCB_FR4, material FR4, start 0/0/0, "
                 "stop 25/45/1.6. This box is the 1.6 mm FR4 board; it has the "
                 "lowest priority so copper stays on top."
             ),
             images=[
-                menu("geometry_box", "Geometry", "Geometry -> Add Box…"),
+                menu("geometry_box", "Geometry", "Geometry -> Add Boxâ€¦"),
                 assets["dialog_box_pcb.png"],
             ],
             weights=[0.46, 0.54],
@@ -2270,12 +2280,12 @@ def _build_slides2() -> list:
             step_label="STEP 09 / 18",
             title="Add the 50 ohm feed port",
             caption=(
-                "Geometry -> Add Port…: lumped, 50 ohm, direction y, width "
+                "Geometry -> Add Portâ€¦: lumped, 50 ohm, direction y, width "
                 "\"Area - as wide as the metal (x)\". Start 35.5 / stop 35.0 mm "
                 "and metal reference IFA_feed."
             ),
             images=[
-                menu("geometry_port", "Geometry", "Geometry -> Add Port…"),
+                menu("geometry_port", "Geometry", "Geometry -> Add Portâ€¦"),
                 assets["dialog_port.png"],
             ],
             weights=[0.43, 0.57],
@@ -2291,12 +2301,12 @@ def _build_slides2() -> list:
             step_label="STEP 10 / 18",
             title="Add the E-field dump",
             caption=(
-                "Geometry -> Add Field Dump…: quantity E, frequency 5.8 GHz, "
+                "Geometry -> Add Field Dumpâ€¦: quantity E, frequency 5.8 GHz, "
                 "file type VTK, box around the antenna. The Field Viewer reads "
                 "this .vtr file later."
             ),
             images=[
-                menu("geometry_dump", "Geometry", "Geometry -> Add Field Dump…"),
+                menu("geometry_dump", "Geometry", "Geometry -> Add Field Dumpâ€¦"),
                 assets["dialog_dump.png"],
             ],
             weights=[0.43, 0.57],
@@ -2311,7 +2321,7 @@ def _build_slides2() -> list:
             step_label="STEP 11 / 18",
             title="Enable the NF2FF far field",
             caption=(
-                "Simulation -> Simulation Parameters… -> NF2FF-Parameter: enable "
+                "Simulation -> Simulation Parametersâ€¦ -> NF2FF-Parameter: enable "
                 "far-field, frequency list 5.8 GHz, box automatic, theta = 181, "
                 "phi = 361. This produces the antenna-pattern data."
             ),
@@ -2319,7 +2329,7 @@ def _build_slides2() -> list:
                 menu(
                     "simulation_params",
                     "Simulation",
-                    "Simulation -> Simulation Parameters… -> NF2FF",
+                    "Simulation -> Simulation Parametersâ€¦ -> NF2FF",
                 ),
                 assets["dialog_nf2ff.png"],
             ],
@@ -2335,12 +2345,12 @@ def _build_slides2() -> list:
             step_label="STEP 12 / 18",
             title="Set the mesh parameters",
             caption=(
-                "Mesh -> Mesh Parameters… (Ctrl+Shift+M): max cell 1.2 mm, min "
+                "Mesh -> Mesh Parametersâ€¦ (Ctrl+Shift+M): max cell 1.2 mm, min "
                 "cell 0.15 mm, min z 0.08 mm, refined cell 0.2 mm, 18 cells per "
                 "wavelength. Apply writes them into the project."
             ),
             images=[
-                menu("mesh_params", "Mesh", "Mesh -> Mesh Parameters…  (Ctrl+Shift+M)"),
+                menu("mesh_params", "Mesh", "Mesh -> Mesh Parametersâ€¦  (Ctrl+Shift+M)"),
                 assets["dialog_mesh_params.png"],
             ],
             weights=[0.46, 0.54],
@@ -2849,6 +2859,617 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
     path = TUTORIAL / "README.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+
+def _build_slides3() -> list:
+    assets, meta = _load_assets2()
+    total = 22
+
+    def menu(key: str, title: str, label: str):
+        return _menu_card(
+            meta,
+            assets["main_window.png"],
+            assets[f"menu_{key}.png"],
+            title,
+            label,
+        )
+
+    menu_file = menu("file_new", "File", "File -> New Project  (Ctrl+N)")
+    menu_sim = menu(
+        "simulation_params",
+        "Simulation",
+        "Simulation -> Simulation Parameters…  (Ctrl+Shift+P)",
+    )
+    menu_mat = menu(
+        "geometry_material", "Geometry", "Geometry -> Add Material…"
+    )
+    menu_box = menu("geometry_box", "Geometry", "Geometry -> Add Box…")
+    menu_port = menu("geometry_port", "Geometry", "Geometry -> Add Port…")
+    menu_dump = menu("geometry_dump", "Geometry", "Geometry -> Add Field Dump…")
+    menu_meshp = menu(
+        "mesh_params", "Mesh", "Mesh -> Mesh Parameters…  (Ctrl+Shift+M)"
+    )
+    menu_meshb = menu("mesh_build", "Mesh", "Mesh -> Build Mesh  (Ctrl+M)")
+    menu_run = menu(
+        "simulation_run", "Simulation", "Simulation -> Run Simulation  (Ctrl+R)"
+    )
+
+    s_tab = _with_tab_strip(assets["sparam_viewer.png"], assets["tab_sparams.png"])
+    a_tab = _with_tab_strip(assets["antenna_3d.png"], assets["tab_antenna.png"])
+    f_tab = _with_tab_strip(assets["field_viewer.png"], assets["tab_field.png"])
+
+    specs: list[dict] = []
+
+    def add(
+        step: int | None,
+        title: str,
+        caption: str,
+        images: list,
+        *,
+        weights: list[float] | None = None,
+        callouts: list | None = None,
+        markers: list | None = None,
+        side_card: tuple[str, list[str]] | None = None,
+    ) -> None:
+        specs.append(
+            {
+                "step": step,
+                "title": title,
+                "caption": caption,
+                "images": images,
+                "weights": weights,
+                "callouts": callouts,
+                "markers": markers,
+                "side_card": side_card,
+            }
+        )
+
+    add(
+        1,
+        "The main window",
+        "Menu bar, Project/Geometry tree, workspace tabs and the status/log area. "
+        "Most commands live in the Geometry, Mesh and Simulation menus; the tabs "
+        "open the mesh and result viewers.",
+        [assets["main_window.png"]],
+        side_card=(
+            "Window map",
+            [
+                "1  Menu bar: File, Geometry, Mesh, Simulation",
+                "2  Project / Geometry tree: objects, materials, ports",
+                "3  Tabs: Geometry, Mesh Viewer, 3D Design, S-Params, Antenna, Field",
+                "4  Status bar: progress, runtime and log toggle",
+            ],
+        ),
+        markers=[
+            (0, 0.78, 0.012, 1),
+            (0, 0.06, 0.12, 2),
+            (0, 0.25, 0.045, 3),
+            (0, 0.42, 0.975, 4),
+        ],
+    )
+
+    add(
+        2,
+        "Start a new project",
+        "File -> New Project (Ctrl+N). The project stores the drawing unit, geometry, "
+        "mesh, ports and results in one .fcsim.json file; save it with Ctrl+S.",
+        [menu_file],
+        side_card=(
+            "Project basics",
+            [
+                "File -> New Project (Ctrl+N)",
+                "File -> Save (Ctrl+S)",
+                "File -> Save As… (Ctrl+Shift+S)",
+                "Settings -> Settings… for the work folder",
+            ],
+        ),
+    )
+
+    add(
+        3,
+        "Set the frequency range",
+        "Simulation -> Simulation Parameters… (Ctrl+Shift+P): drawing unit mm, "
+        "start 5.0 GHz, stop 6.6 GHz, target 5.8 GHz. The target drives the mesh "
+        "and the NF2FF evaluation.",
+        [menu_sim, assets["dialog_sim_params.png"]],
+        weights=[0.43, 0.57],
+        callouts=[(1, 0.02, 0.16, 0.95, 0.23, "f_start / f_stop / f_target")],
+    )
+
+    add(
+        4,
+        "Create the FR4 material",
+        "Geometry -> Add Material…: kind dielectric, eps_r = 4.4, tan_d = 0.02. "
+        "The material is used by the substrate box; copper is a separate PEC material.",
+        [menu_mat, assets["dialog_material.png"]],
+        weights=[0.46, 0.54],
+    )
+
+    add(
+        5,
+        "Add the PCB substrate",
+        "Geometry -> Add Box…: name PCB_FR4, material FR4, priority 1. Start "
+        "0/0/0 mm, stop 25/45/1.6 mm. Start is the lower corner, Stop the upper "
+        "corner; x is board width, y board length, z through the substrate.",
+        [menu_box, assets["dialog_box_pcb.png"]],
+        weights=[0.46, 0.54],
+        side_card=(
+            "Box input",
+            [
+                "Start = lower corner (x, y, z)",
+                "Stop = upper corner (x, y, z)",
+                "x right, y along the board, z up",
+                "Copper priority 10 > substrate 1",
+                "All values in the drawing unit (mm)",
+            ],
+        ),
+    )
+
+    add(
+        6,
+        "Bottom ground plane (GND_bottom)",
+        "Second box: Start 0/0/0, Stop 25/45/0.035 mm, material copper, priority 10. "
+        "It covers the whole board and is the return/reference plane; the zmin "
+        "boundary is PEC as well.",
+        [assets["layout_diagram.png"], assets["dialog_box_gnd_bottom.png"]],
+        weights=[0.62, 0.38],
+    )
+
+    add(
+        7,
+        "Top ground plane (GND_top)",
+        "Third box: Start 0/0/1.6, Stop 25/35/1.635 mm, copper, priority 10. It stops "
+        "at y = 35 mm; y = 35...45 mm is the 10 mm antenna clearance (no box). It is "
+        "the local feed reference; a production board would stitch it to the bottom "
+        "ground with vias.",
+        [assets["layout_diagram.png"], assets["dialog_box_gnd.png"]],
+        weights=[0.62, 0.38],
+    )
+
+    add(
+        8,
+        "Radiating arm (IFA_arm)",
+        "Fourth box: Start 10/38/1.6, Stop 17/40/1.635 mm, copper, priority 10. "
+        "7 mm long, 2 mm wide; the open end is at x = 17 mm. This is the main radiator.",
+        [assets["layout_diagram.png"], assets["dialog_box_arm.png"]],
+        weights=[0.62, 0.38],
+    )
+
+    add(
+        9,
+        "Shorting stub (IFA_short)",
+        "Fifth box: Start 10/35/1.6, Stop 12/40/1.635 mm, copper, priority 10. "
+        "2 mm wide and 5 mm high; it connects the arm at y = 40 to the top ground at "
+        "y = 35 and sets the quarter-wave resonance.",
+        [assets["layout_diagram.png"], assets["dialog_box_short.png"]],
+        weights=[0.62, 0.38],
+    )
+
+    add(
+        10,
+        "Feed strip and feed gap (IFA_feed)",
+        "Sixth box: Start 12.5/35.5/1.6, Stop 14.5/38/1.635 mm, copper, priority 10. "
+        "2 mm wide; it connects the arm at y = 38 to the feed point at y = 35.5. The "
+        "y = 35.0...35.5 mm gap to GND_top is the 0.5 mm port gap (no box).",
+        [assets["layout_diagram.png"], assets["dialog_box_feed.png"]],
+        weights=[0.62, 0.38],
+    )
+
+    add(
+        11,
+        "Add the 50 ohm feed port",
+        "Geometry -> Add Port…: lumped, 50 ohm, direction y, width area along x. "
+        "Start 13.5/35.5/1.6, Stop 13.5/35.0/1.6 mm; metal reference IFA_feed. "
+        "It spans the 0.5 mm gap and is 2 mm wide.",
+        [menu_port, assets["dialog_port.png"]],
+        weights=[0.43, 0.57],
+        side_card=(
+            "Port input",
+            [
+                "Type: lumped",
+                "Resistance: 50 ohm",
+                "Direction: y across the gap",
+                "Width: Area - as wide as the metal (x)",
+                "Start 35.5 / Stop 35.0 mm",
+            ],
+        ),
+        callouts=[(1, 0.36, 0.20, 0.62, 0.07, "Area along x - 2 mm")],
+    )
+
+    add(
+        12,
+        "Add the E-field dump",
+        "Geometry -> Add Field Dump…: quantity E, frequency 5.8 GHz, file type VTK, "
+        "box around the antenna. The Field Viewer reads this .vtr file later.",
+        [menu_dump, assets["dialog_dump.png"]],
+        weights=[0.43, 0.57],
+        callouts=[(1, 0.0, 0.30, 1.0, 0.06, "5.8 GHz")],
+    )
+
+    add(
+        13,
+        "Enable the NF2FF far field",
+        "Simulation -> Simulation Parameters… -> NF2FF-Parameter: enable far-field, "
+        "frequency list 5.8 GHz, box automatic, theta = 181, phi = 361. This produces "
+        "the antenna-pattern data.",
+        [menu_sim, assets["dialog_nf2ff.png"]],
+        weights=[0.43, 0.57],
+        callouts=[(1, 0.0, 0.38, 1.0, 0.08, "eval frequency 5.8 GHz")],
+    )
+
+    add(
+        14,
+        "Set the mesh parameters",
+        "Mesh -> Mesh Parameters… (Ctrl+Shift+M): max 1.2 mm, min 0.15 mm, min z "
+        "0.08 mm, refined 0.2 mm, 18 cells per wavelength. Apply writes them into "
+        "the project.",
+        [menu_meshp, assets["dialog_mesh_params.png"]],
+        weights=[0.46, 0.54],
+    )
+
+    add(
+        15,
+        "Build the mesh",
+        "Mesh -> Build Mesh (Ctrl+M). easyMesh resolves the feed gap and the copper "
+        "edges; the Mesh Viewer opens the XY slice at z = 1.6 mm.",
+        [menu_meshb, assets["mesh_viewer_xy.png"]],
+        weights=[0.36, 0.64],
+        callouts=[(1, 0.31, 0.30, 0.28, 0.45, "fine cells at the gap")],
+    )
+
+    add(
+        16,
+        "Check the mesh quality",
+        "In the Mesh Viewer use the Cell sizes tab (or the right-click menu) to see "
+        "the cell-size distribution. The gap and the metal edges need the finest cells; "
+        "air can stay coarse.",
+        [assets["mesh_viewer_xy.png"], assets["mesh_viewer_cells.png"]],
+        weights=[0.52, 0.48],
+    )
+
+    add(
+        17,
+        "Run the FDTD simulation",
+        "Simulation -> Run Simulation (Ctrl+R). Watch the TS and energy bars; the run "
+        "stops at the energy criterion. The log lists the S-parameter and NF2FF files.",
+        [menu_run, assets["main_run_crop.png"]],
+        weights=[0.36, 0.64],
+        callouts=[
+            (1, 0.0, 0.18, 0.73, 0.68, "run log"),
+            (1, 0.37, 0.93, 0.58, 0.06, "TS / energy / runtime"),
+        ],
+    )
+
+    add(
+        18,
+        "Read the S-parameters",
+        "Open the S-Params tab. Plot |S| dB, click the plot to add a marker at 5.8 GHz, "
+        "and use the trace preset for return loss. Smith, VSWR, phase and Re/Im are in "
+        "the same Plot menu.",
+        [s_tab],
+        callouts=[(0, 0.60, 0.62, 0.14, 0.29, "-28 dB @ 5.80 GHz")],
+    )
+
+    add(
+        19,
+        "Read the antenna pattern",
+        "Open the Antenna tab. The 3D Pattern view colours gain in dBi; the Plot "
+        "selector adds E-/H-plane and azimuth cuts. Markers read gain, angle and HPBW.",
+        [a_tab],
+        callouts=[(0, 0.43, 0.50, 0.20, 0.35, "max 2.6 dBi")],
+    )
+
+    add(
+        20,
+        "Inspect the E-field",
+        "Open the Field Viewer tab. In the Data panel choose pt:magnitude, the XY slice "
+        "at z = 1.6 mm, or a YZ cut through the feed. The hot spot sits at the 0.5 mm "
+        "gap and along the arm.",
+        [f_tab],
+        callouts=[(0, 0.26, 0.67, 0.18, 0.18, "feed gap hot spot")],
+    )
+
+    add(
+        None,
+        "Done - and what to tune next",
+        "Change one dimension at a time, rebuild the mesh and compare S11 and the "
+        "pattern. The same workflow scales to other PCB antennas and feed structures.",
+        [assets["summary.png"]],
+    )
+
+    slides = [_compose_title(0, total, assets["layout_diagram.png"])]
+    for index, spec in enumerate(specs, start=1):
+        step = spec["step"]
+        label = "SUMMARY" if step is None else f"STEP {step:02d} / 20"
+        slides.append(
+            _compose_regular(
+                index=index,
+                total=total,
+                step_label=label,
+                title=spec["title"],
+                caption=spec["caption"],
+                images=spec["images"],
+                weights=spec["weights"],
+                callouts=spec["callouts"],
+                markers=spec["markers"],
+                side_card=spec["side_card"],
+            )
+        )
+    return slides
+
+
+
+def _write_storyboard3(slides: list, poster: Path) -> Path:
+    steps = [
+        ("The main window", "the window that opens when VisualOpenEMS starts",
+         ["Menu bar: **File**, **Presets**, **Geometry**, **Mesh**, **Simulation**, **View**, **Settings**, **Help**.",
+          "Left panel **Project / Geometry**: every primitive, material, port, dump and NF2FF box.",
+          "Tabs: **Geometry**, **Mesh Viewer**, **3D Design**, **S-Params**, **Antenna**, **Field Viewer**.",
+          "Bottom bar: run status, timestep/energy bars, runtime and the log toggle."],
+         "The project tree and the tabs are the two places you will use most.",
+         ["assets/main_window.png"]),
+        ("Start a new project", "**File -> New Project** (Ctrl+N)",
+         ["Choose a work folder under **Settings -> Settings...** if needed.",
+          "Save with **File -> Save** (Ctrl+S); geometry, mesh, ports and results are stored in one `.fcsim.json`."],
+         "The window title shows the project name; the tree is ready for objects.",
+         ["assets/menu_file_new.png"]),
+        ("Set the frequency range", "**Simulation -> Simulation Parameters...** (Ctrl+Shift+P), tab **Simulation-Parameter**",
+         ["Drawing unit **mm**; start **5.0 GHz**, stop **6.6 GHz**, target **5.8 GHz**.",
+          "Boundary: PML on all sides, **zmin = PEC** (ground reference).",
+          "Press **Apply**; the computed block shows max cell 1.2 mm and the air margin."],
+         "The computed block lists 5.0 / 6.6 / 5.8 GHz and max cell lambda/10 = 1.2 mm.",
+         ["assets/menu_simulation_params.png", "assets/dialog_sim_params.png"]),
+        ("Create the FR4 material", "**Geometry -> Add Material...**",
+         ["Name **FR4**, kind **dielectric**.",
+          "eps_r = **4.4**, kappa = 0, tan_d = **0.02**.",
+          "Press **OK**; FR4 appears under Materials."],
+         "The material row shows FR4 (dielectric) with eps_r 4.4.",
+         ["assets/menu_geometry_material.png", "assets/dialog_material.png"]),
+        ("Add the PCB substrate", "**Geometry -> Add Box...**",
+         ["Name **PCB_FR4**, material **FR4**, priority **1**.",
+          "Start **0 / 0 / 0 mm**, Stop **25 / 45 / 1.6 mm**.",
+          "Start is the lower corner, Stop the upper corner; x = board width, y = board length, z = through the substrate."],
+         "The tree shows Prim: PCB_FR4; the mesh viewer draws the blue substrate.",
+         ["assets/menu_geometry_box.png", "assets/dialog_box_pcb.png"]),
+        ("Bottom ground plane - GND_bottom", "**Geometry -> Add Box...**",
+         ["Start **0 / 0 / 0 mm**, Stop **25 / 45 / 0.035 mm**.",
+          "Material **copper**, priority **10**.",
+          "It covers the whole board: return/reference plane; the zmin boundary is also PEC."],
+         "The bottom copper covers the full board and is visible as the reference plane.",
+         ["assets/layout_diagram.png", "assets/dialog_box_gnd_bottom.png"]),
+        ("Top ground plane - GND_top", "**Geometry -> Add Box...**",
+         ["Start **0 / 0 / 1.6 mm**, Stop **25 / 35 / 1.635 mm**.",
+          "Material **copper**, priority **10**.",
+          "It stops at y = 35 mm. The strip **y = 35...45 mm** is the 10 mm antenna clearance - no box, just the absence of top copper.",
+          "It is the local feed reference. A production board would stitch it to the bottom ground with vias."],
+         "In the XY slice at z = 1.6 mm the top copper covers y = 0...35 only.",
+         ["assets/layout_diagram.png", "assets/dialog_box_gnd.png"]),
+        ("Radiating arm - IFA_arm", "**Geometry -> Add Box...**",
+         ["Start **10 / 38 / 1.6 mm**, Stop **17 / 40 / 1.635 mm**.",
+          "Material **copper**, priority **10**; 7 mm long, 2 mm wide.",
+          "The open end is at x = 17 mm; this is the main radiator."],
+         "The top view shows the horizontal arm at the ground edge.",
+         ["assets/layout_diagram.png", "assets/dialog_box_arm.png"]),
+        ("Shorting stub - IFA_short", "**Geometry -> Add Box...**",
+         ["Start **10 / 35 / 1.6 mm**, Stop **12 / 40 / 1.635 mm**.",
+          "Material **copper**, priority **10**; 2 mm wide, 5 mm high.",
+          "It connects the arm at y = 40 to the top ground at y = 35 and sets the quarter-wave resonance."],
+         "The short is the vertical strip at the left end of the arm.",
+         ["assets/layout_diagram.png", "assets/dialog_box_short.png"]),
+        ("Feed strip and feed gap - IFA_feed", "**Geometry -> Add Box...**",
+         ["Start **12.5 / 35.5 / 1.6 mm**, Stop **14.5 / 38 / 1.635 mm**.",
+          "Material **copper**, priority **10**; 2 mm wide.",
+          "It connects the arm at y = 38 to the feed point at y = 35.5. The **0.5 mm gap** y = 35.0...35.5 to GND_top is the port gap - no box."],
+         "The feed is the middle vertical strip; the gap to the top ground is clearly visible.",
+         ["assets/layout_diagram.png", "assets/dialog_box_feed.png"]),
+        ("Add the 50 ohm feed port", "**Geometry -> Add Port...** (also Ports / Dumps, Ctrl+Shift+D)",
+         ["Type **lumped**, resistance **50 ohm**, direction **y**.",
+          "Width (lumped): **Area - as wide as the metal (x)**.",
+          "Start **13.5 / 35.5 / 1.6 mm**, Stop **13.5 / 35.0 / 1.6 mm**.",
+          "Metal reference **IFA_feed**; the list marks `area along X`."],
+         "The port spans the 0.5 mm gap and is 2 mm wide, exactly the feed strip width.",
+         ["assets/menu_geometry_port.png", "assets/dialog_port.png"]),
+        ("Add the E-field dump", "**Geometry -> Add Field Dump...**",
+         ["Name **E_5p8**, quantity **E**, frequency **5.8 GHz**, file type **VTK (.vtr)**.",
+          "Box **-5 / 28 / -3** to **30 / 47 / 14 mm**; optional resolution 0.2 mm.",
+          "Enable **Frequency domain** and **Enabled**."],
+         "The tree lists Dump: E_5p8 (E); the Field Viewer will read the .vtr file.",
+         ["assets/menu_geometry_dump.png", "assets/dialog_dump.png"]),
+        ("Enable the NF2FF far field", "**Simulation -> Simulation Parameters...** -> tab **NF2FF-Parameter**",
+         ["Tick **Enable far-field (NF2FF)**.",
+          "Mode **Frequency list**, frequencies **5.8 GHz**.",
+          "Box placement **Automatic**, theta steps **181**, phi steps **361**."],
+         "The tree shows NF2FF: on; the pattern will be evaluated at 5.8 GHz.",
+         ["assets/menu_simulation_params.png", "assets/dialog_nf2ff.png"]),
+        ("Set the mesh parameters", "**Mesh -> Mesh Parameters...** (Ctrl+Shift+M)",
+         ["Max cell **1.2 mm**, min cell **0.15 mm**, min z cell **0.08 mm**.",
+          "Refined cell **0.2 mm**, max grading ratio **2.0**, 18 cells per wavelength.",
+          "Press **Apply** to write them into the project."],
+         "The dialog shows the values above; the mesh report will quote them.",
+         ["assets/menu_mesh_params.png", "assets/dialog_mesh_params.png"]),
+        ("Build the mesh", "**Mesh -> Build Mesh** (Ctrl+M), or the **Build Mesh** button",
+         ["easyMesh resolves the 0.5 mm gap and the copper edges.",
+          "The Mesh Viewer opens the XY slice at z = 1.6 mm.",
+          "Toggle **Mesh grid** to inspect the lines."],
+         "The gap and the metal edges contain several grid lines; air cells are larger.",
+         ["assets/menu_mesh_build.png", "assets/mesh_viewer_xy.png"]),
+        ("Check the mesh quality", "**Mesh Viewer** -> **Slice / Overview** / **Cell sizes**",
+         ["Use **Cell sizes** for the distribution.",
+          "Right-click the viewer for **Critical cells** and the runtime overlay.",
+          "If the gap has too few cells, lower the min cell size and rebuild."],
+         "The finest cells sit at the feed gap and the metal edges; no unexpected slivers.",
+         ["assets/mesh_viewer_xy.png", "assets/mesh_viewer_cells.png"]),
+        ("Run the FDTD simulation", "**Simulation -> Run Simulation** (Ctrl+R)",
+         ["Watch the timestep and energy bars in the status line.",
+          "openEMS stops when the energy criterion is reached.",
+          "The log lists the S-parameter and NF2FF files and the runtime."],
+         "The log ends with `Simulation finished`; S-Params and Antenna have data.",
+         ["assets/menu_simulation_run.png", "assets/main_run_crop.png"]),
+        ("Read the S-parameters", "tab **S-Params**; plot selector at the top, trace list left",
+         ["Plot **|S| dB**; the dip is at **5.80 GHz**.",
+          "Click the plot to add a marker; |S11| = **-28.17 dB**, VSWR **1.08**.",
+          "Use **Preset -> Return loss (Sii)**; the Plot menu also offers Smith, VSWR, phase, Re/Im."],
+         "|S11| < -10 dB from about **5.65 to 5.95 GHz**.",
+         ["assets/tab_sparams.png", "assets/sparam_viewer.png"]),
+        ("Read the antenna pattern", "tab **Antenna**; Plot and Freq selectors at the top",
+         ["Plot **3D Pattern**, field **Gain**, frequency **5.8 GHz**.",
+          "Use **E-Plane (phi=90)** and **H-Plane (phi=0)** for cuts.",
+          "Markers read gain, angle and HPBW; the details panel shows Dmax and efficiency."],
+         "Maximum gain about **2.6 dBi**, efficiency **68 %**, Dmax 3.15 dBi.",
+         ["assets/tab_antenna.png", "assets/antenna_3d.png"]),
+        ("Inspect the E-field", "tab **Field Viewer**; **Data** panel on the left",
+         ["Array **pt:magnitude**; Show **Surface**; View **Fit (keep direction)**.",
+          "Slice **XY** at z = 1.6 mm for the top copper.",
+          "A **YZ** cut at x = 13.5 mm shows the field across the feed gap.",
+          "Use **Colour** and the time/frequency slider to animate."],
+         "The hot spot sits at the 0.5 mm gap and along the arm; the field decays into air.",
+         ["assets/tab_field.png", "assets/field_viewer.png"]),
+    ]
+
+    lines = [
+        "# Inverted-F Antenna on a PCB - 5.8 GHz tutorial",
+        "",
+        "[Watch the MP4](IFA_5p8GHz_Tutorial.mp4)",
+        "",
+        f"![Poster]({poster.relative_to(TUTORIAL).as_posix()})",
+        "",
+        "A detailed VisualOpenEMS walkthrough. Every element of the antenna is",
+        "introduced separately: substrate, bottom ground, top ground with the",
+        "antenna clearance, radiating arm, shorting stub, feed strip, feed gap and",
+        "lumped port. Each step names the exact menu path or tab and shows a",
+        "screenshot with the target highlighted.",
+        "",
+        "> The GUI screenshots are real. The S-parameter curve, pattern and",
+        "> field maps use representative IFA data so the viewers can be explained",
+        "> without a long FDTD run; your own results will differ with geometry,",
+        "> mesh and materials.",
+        "",
+        "## Antenna elements",
+        "",
+        "All coordinates are in **mm**, x = board width, y = board length, z = up",
+        "through the substrate. **Start** is the lower corner and **Stop** the",
+        "upper corner. Copper primitives use priority 10; the substrate uses 1.",
+        "",
+        "| Element | Role | Start (mm) | Stop (mm) | Material | Priority |",
+        "| --- | --- | --- | --- | --- | --- |",
+        "| PCB_FR4 | substrate | 0 / 0 / 0 | 25 / 45 / 1.6 | FR4 | 1 |",
+        "| GND_bottom | return/reference plane | 0 / 0 / 0 | 25 / 45 / 0.035 | copper | 10 |",
+        "| GND_top | local feed reference | 0 / 0 / 1.6 | 25 / 35 / 1.635 | copper | 10 |",
+        "| IFA_arm | radiator, 7 x 2 mm | 10 / 38 / 1.6 | 17 / 40 / 1.635 | copper | 10 |",
+        "| IFA_short | shorting stub, 2 x 5 mm | 10 / 35 / 1.6 | 12 / 40 / 1.635 | copper | 10 |",
+        "| IFA_feed | feed strip, 2 x 2.5 mm | 12.5 / 35.5 / 1.6 | 14.5 / 38 / 1.635 | copper | 10 |",
+        "| feed gap | empty 0.5 mm | x 12.5...14.5, y 35.0...35.5, z = 1.6 | - | - | - |",
+        "| port | lumped, 50 ohm | 13.5 / 35.5 / 1.6 | 13.5 / 35.0 / 1.6 | - | - |",
+        "",
+        "The **antenna clearance** is not a separate object: it is the area",
+        "y = 35...45 mm where the top copper is absent. The **feed gap** is the",
+        "0.5 mm empty space between IFA_feed and GND_top; the lumped port spans it.",
+        "",
+        "> **Model simplification:** the top and bottom grounds are separate",
+        "> copper boxes here. A production board would connect them with stitching",
+        "> vias; this tutorial keeps the model small and uses the PEC zmin",
+        "> boundary as the global return.",
+        "",
+        "## GUI map",
+        "",
+        "| Region | What it is for |",
+        "| --- | --- |",
+        "| Menu bar | File, Geometry, Mesh, Simulation, View, Settings, Help |",
+        "| Project / Geometry tree | Primitives, materials, ports, dumps, NF2FF box |",
+        "| Tabs | Geometry, Mesh Viewer, 3D Design, S-Params, Antenna, Field Viewer |",
+        "| Status bar | Timestep/energy progress, runtime, log toggle |",
+        "",
+        "## Video chapters",
+        "",
+        "| Time | Chapter |",
+        "| --- | --- |",
+        "| 00:00 | Title and overview |",
+    ]
+    for index, (title, *_rest) in enumerate(steps, start=1):
+        seconds = int(index * (HOLD_SECONDS + FADE_SECONDS))
+        lines.append(f"| {seconds // 60:02d}:{seconds % 60:02d} | Step {index} - {title} |")
+    lines += [
+        "| 01:36 | Summary and tuning tips |",
+        "",
+        "## Steps",
+        "",
+    ]
+    for index, (title, where, do, check, images) in enumerate(steps, start=1):
+        lines += [
+            f"### Step {index} - {title}",
+            "",
+            f"**Where:** {where}",
+            "",
+            "**Do:**",
+            "",
+        ]
+        lines += [f"- {item}" for item in do]
+        lines += ["", f"**Check:** {check}", ""]
+        for image in images:
+            lines += [f"![Step {index}]({image})", ""]
+
+    lines += [
+        "## Summary and tuning",
+        "",
+        "The example results are |S11| = -28 dB at 5.80 GHz, a -10 dB band",
+        "from about 5.65 to 5.95 GHz, 2.6 dBi gain and 68 % efficiency. To tune:",
+        "",
+        "- **Arm length** shifts the resonance: longer -> lower frequency.",
+        "- **Arm height** changes bandwidth and radiation resistance.",
+        "- **Feed offset** matches the 50 ohm feed without a matching network.",
+        "- **Ground clearance** affects efficiency and the pattern shape.",
+        "",
+        "Change one dimension at a time, rebuild the mesh and compare S11 and the pattern.",
+        "",
+        "## Viewer controls cheat sheet",
+        "",
+        "**S-Params tab.** Top bar: Open, Reload, Scan work dir, Export, Plot,",
+        "Preset, Primary. Left: loaded files, trace checkboxes, markers. Plot",
+        "options: Smith, |S| dB, Return loss, |S| mag, Phase, VSWR, Re/Im,",
+        "Z Re/Im. Click the plot to add a marker; right-click for smart actions.",
+        "",
+        "**Antenna tab.** Top bar: Open, Reload, Polarization, Plot, Freq, cmap.",
+        "Plot options: E-Plane, H-Plane, Azimuth, Axial Ratio, Gain vs Frequency,",
+        "Efficiency, 3D Pattern. The 3D toolbar controls Gain/Dmax, the dB floor,",
+        "Full/zoom, radius mapping and the view preset.",
+        "",
+        "**Field Viewer tab.** Data panel: Show, Array, View, Outline, Geometry.",
+        "Colour panel: Auto, min, max, Log scale, Rescale. Slice panel: axis and",
+        "position. Vectors/Streamlines panels add arrows, tubes or streamlines.",
+        "The time/frequency slider animates a series; File -> Export renders MP4/GIF.",
+        "",
+        "## Reproduce the assets",
+        "",
+        "```bash",
+        "python docs/tutorial/generate_tutorial.py",
+        "```",
+        "",
+        "This regenerates the screenshots, the 22 slides (in `frames/`) and the MP4.",
+        "Install `ffmpeg` for the video step; the PNG frames are written even without it.",
+        "",
+        "## Files",
+        "",
+        "- `IFA_5p8GHz_Tutorial.mp4` - 100 s, 1600 x 900, H.264, no audio.",
+        "- `frames/01.png` ... `frames/22.png` - the 22 slides.",
+        "- `assets/` - GUI screenshots, menu/tab highlight cards, diagrams and field maps.",
+        "- `generate_tutorial.py` - regenerates all of the above.",
+        "",
+        "## Notes",
+        "",
+        "- The geometry is a starting point, not a tuned production antenna.",
+        "  Expect the resonance to move with substrate tolerances and the feed",
+        "  detail; tune the arm length and the feed offset on your own board.",
+        "- Increase `end_criteria` or `max_timesteps` for a smoother S-parameter",
+        "  curve; a finer mesh costs runtime.",
+        "- The Field Viewer can also animate a time series and overlay vectors",
+        "  or streamlines; the same data can be opened in ParaView.",
+        "",
+    ]
+    path = TUTORIAL / "README.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
 
 
 if __name__ == "__main__":

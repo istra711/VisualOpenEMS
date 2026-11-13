@@ -4,22 +4,42 @@
 
 ![Poster](frames/01.png)
 
-A detailed VisualOpenEMS walkthrough: build the PCB and the inverted-F
-metal, add the port, mesh the model, run openEMS and read the
-S-parameters, the 3D antenna pattern and the E-field. Every step names
-the exact menu path or tab and shows a screenshot with the target
-highlighted.
+A detailed VisualOpenEMS walkthrough. Every element of the antenna is
+introduced separately: substrate, bottom ground, top ground with the
+antenna clearance, radiating arm, shorting stub, feed strip, feed gap and
+lumped port. Each step names the exact menu path or tab and shows a
+screenshot with the target highlighted.
 
 > The GUI screenshots are real. The S-parameter curve, pattern and
 > field maps use representative IFA data so the viewers can be explained
 > without a long FDTD run; your own results will differ with geometry,
 > mesh and materials.
 
-## What you need
+## Antenna elements
 
-- VisualOpenEMS with a working openEMS/CSXCAD installation.
-- A work folder for the project and results.
-- About 10 minutes for the build; the FDTD run takes a few minutes.
+All coordinates are in **mm**, x = board width, y = board length, z = up
+through the substrate. **Start** is the lower corner and **Stop** the
+upper corner. Copper primitives use priority 10; the substrate uses 1.
+
+| Element | Role | Start (mm) | Stop (mm) | Material | Priority |
+| --- | --- | --- | --- | --- | --- |
+| PCB_FR4 | substrate | 0 / 0 / 0 | 25 / 45 / 1.6 | FR4 | 1 |
+| GND_bottom | return/reference plane | 0 / 0 / 0 | 25 / 45 / 0.035 | copper | 10 |
+| GND_top | local feed reference | 0 / 0 / 1.6 | 25 / 35 / 1.635 | copper | 10 |
+| IFA_arm | radiator, 7 x 2 mm | 10 / 38 / 1.6 | 17 / 40 / 1.635 | copper | 10 |
+| IFA_short | shorting stub, 2 x 5 mm | 10 / 35 / 1.6 | 12 / 40 / 1.635 | copper | 10 |
+| IFA_feed | feed strip, 2 x 2.5 mm | 12.5 / 35.5 / 1.6 | 14.5 / 38 / 1.635 | copper | 10 |
+| feed gap | empty 0.5 mm | x 12.5...14.5, y 35.0...35.5, z = 1.6 | - | - | - |
+| port | lumped, 50 ohm | 13.5 / 35.5 / 1.6 | 13.5 / 35.0 / 1.6 | - | - |
+
+The **antenna clearance** is not a separate object: it is the area
+y = 35...45 mm where the top copper is absent. The **feed gap** is the
+0.5 mm empty space between IFA_feed and GND_top; the lumped port spans it.
+
+> **Model simplification:** the top and bottom grounds are separate
+> copper boxes here. A production board would connect them with stitching
+> vias; this tutorial keeps the model small and uses the PEC zmin
+> boundary as the global return.
 
 ## GUI map
 
@@ -29,19 +49,6 @@ highlighted.
 | Project / Geometry tree | Primitives, materials, ports, dumps, NF2FF box |
 | Tabs | Geometry, Mesh Viewer, 3D Design, S-Params, Antenna, Field Viewer |
 | Status bar | Timestep/energy progress, runtime, log toggle |
-
-## Geometry
-
-| Part | Dimensions / position |
-| --- | --- |
-| FR4 substrate | 25 x 45 x 1.6 mm, eps_r = 4.4, tan_d = 0.02 |
-| Bottom ground | 25 x 45 mm, z = 0...0.035 mm |
-| Top ground | 25 x 35 mm, z = 1.6...1.635 mm |
-| IFA arm | 7 x 2 mm, y = 38...40 mm, z = 1.6...1.635 mm |
-| Short | 2 x 5 mm, x = 10...12 mm, y = 35...40 mm |
-| Feed strip | 2 x 2.5 mm, x = 12.5...14.5 mm, y = 35.5...38 mm |
-| Port | lumped, 50 ohm, direction y across the 0.5 mm gap, width x = 2 mm |
-| Mesh | max 1.2 mm, min 0.15 mm, 18 cells/lambda at 5.8 GHz |
 
 ## Video chapters
 
@@ -53,20 +60,22 @@ highlighted.
 | 00:13 | Step 3 - Set the frequency range |
 | 00:18 | Step 4 - Create the FR4 material |
 | 00:22 | Step 5 - Add the PCB substrate |
-| 00:27 | Step 6 - Add the ground planes |
-| 00:31 | Step 7 - Add the IFA arm |
-| 00:36 | Step 8 - Add the short and the feed |
-| 00:40 | Step 9 - Add the 50 ohm feed port |
-| 00:45 | Step 10 - Add the E-field dump |
-| 00:50 | Step 11 - Enable the NF2FF far field |
-| 00:54 | Step 12 - Set the mesh parameters |
-| 00:59 | Step 13 - Build the mesh |
-| 01:03 | Step 14 - Check the mesh quality |
-| 01:08 | Step 15 - Run the FDTD simulation |
-| 01:12 | Step 16 - Read the S-parameters |
-| 01:17 | Step 17 - Read the antenna pattern |
-| 01:21 | Step 18 - Inspect the E-field |
-| 01:26 | Summary and tuning tips |
+| 00:27 | Step 6 - Bottom ground plane - GND_bottom |
+| 00:31 | Step 7 - Top ground plane - GND_top |
+| 00:36 | Step 8 - Radiating arm - IFA_arm |
+| 00:40 | Step 9 - Shorting stub - IFA_short |
+| 00:45 | Step 10 - Feed strip and feed gap - IFA_feed |
+| 00:50 | Step 11 - Add the 50 ohm feed port |
+| 00:54 | Step 12 - Add the E-field dump |
+| 00:59 | Step 13 - Enable the NF2FF far field |
+| 01:03 | Step 14 - Set the mesh parameters |
+| 01:08 | Step 15 - Build the mesh |
+| 01:12 | Step 16 - Check the mesh quality |
+| 01:17 | Step 17 - Run the FDTD simulation |
+| 01:21 | Step 18 - Read the S-parameters |
+| 01:26 | Step 19 - Read the antenna pattern |
+| 01:31 | Step 20 - Inspect the E-field |
+| 01:36 | Summary and tuning tips |
 
 ## Steps
 
@@ -91,10 +100,10 @@ highlighted.
 
 **Do:**
 
-- Choose a work folder under **Settings -> Settings...** if you want the results somewhere specific.
-- Save the project with **File -> Save** (Ctrl+S); it stores geometry, mesh, ports and results in one `.fcsim.json` file.
+- Choose a work folder under **Settings -> Settings...** if needed.
+- Save with **File -> Save** (Ctrl+S); geometry, mesh, ports and results are stored in one `.fcsim.json`.
 
-**Check:** The window title shows the project name; the tree is empty except for defaults.
+**Check:** The window title shows the project name; the tree is ready for objects.
 
 ![Step 2](assets/menu_file_new.png)
 
@@ -104,9 +113,8 @@ highlighted.
 
 **Do:**
 
-- Drawing unit: **mm**.
-- Start frequency **5.0 GHz**, stop frequency **6.6 GHz**, target frequency **5.8 GHz**.
-- Boundary conditions: PML on all sides, **zmin = PEC** (the ground plane sits there).
+- Drawing unit **mm**; start **5.0 GHz**, stop **6.6 GHz**, target **5.8 GHz**.
+- Boundary: PML on all sides, **zmin = PEC** (ground reference).
 - Press **Apply**; the computed block shows max cell 1.2 mm and the air margin.
 
 **Check:** The computed block lists 5.0 / 6.6 / 5.8 GHz and max cell lambda/10 = 1.2 mm.
@@ -123,7 +131,7 @@ highlighted.
 
 - Name **FR4**, kind **dielectric**.
 - eps_r = **4.4**, kappa = 0, tan_d = **0.02**.
-- Press **OK**; the material appears under Materials in the project tree.
+- Press **OK**; FR4 appears under Materials.
 
 **Check:** The material row shows FR4 (dielectric) with eps_r 4.4.
 
@@ -138,97 +146,130 @@ highlighted.
 **Do:**
 
 - Name **PCB_FR4**, material **FR4**, priority **1**.
-- Start **0 / 0 / 0 mm**, stop **25 / 45 / 1.6 mm**.
-- This is the 1.6 mm board; the low priority keeps the copper on top.
+- Start **0 / 0 / 0 mm**, Stop **25 / 45 / 1.6 mm**.
+- Start is the lower corner, Stop the upper corner; x = board width, y = board length, z = through the substrate.
 
-**Check:** The tree shows Prim: PCB_FR4 and the mesh viewer draws a blue substrate.
+**Check:** The tree shows Prim: PCB_FR4; the mesh viewer draws the blue substrate.
 
 ![Step 5](assets/menu_geometry_box.png)
 
 ![Step 5](assets/dialog_box_pcb.png)
 
-### Step 6 - Add the ground planes
-
-**Where:** **Geometry -> Add Box...** (twice), or duplicate the box with Ctrl+D
-
-**Do:**
-
-- Bottom ground: **0 / 0 / 0** to **25 / 45 / 0.035 mm**, copper, priority 10.
-- Top ground: **0 / 0 / 1.6** to **25 / 35 / 1.635 mm**, copper, priority 10.
-- The top ground stops at y = 35 mm, leaving a **10 mm antenna clearance**.
-
-**Check:** In the XY slice at z = 1.6 mm the copper covers y = 0...35 only.
-
-![Step 6](assets/layout_diagram.png)
-
-![Step 6](assets/dialog_box_gnd.png)
-
-### Step 7 - Add the IFA arm
+### Step 6 - Bottom ground plane - GND_bottom
 
 **Where:** **Geometry -> Add Box...**
 
 **Do:**
 
-- Name **IFA_arm**, material **copper_antenna** (or copper), priority 10.
-- Start **10 / 38 / 1.6 mm**, stop **17 / 40 / 1.635 mm**.
-- The arm is 7 x 2 mm and sits on top of the substrate.
+- Start **0 / 0 / 0 mm**, Stop **25 / 45 / 0.035 mm**.
+- Material **copper**, priority **10**.
+- It covers the whole board: return/reference plane; the zmin boundary is also PEC.
 
-**Check:** The top view shows the horizontal arm at the ground edge.
+**Check:** The bottom copper covers the full board and is visible as the reference plane.
 
-![Step 7](assets/layout_diagram.png)
+![Step 6](assets/layout_diagram.png)
 
-![Step 7](assets/dialog_box_arm.png)
+![Step 6](assets/dialog_box_gnd_bottom.png)
 
-### Step 8 - Add the short and the feed
+### Step 7 - Top ground plane - GND_top
 
-**Where:** **Geometry -> Add Box...** (two more boxes)
+**Where:** **Geometry -> Add Box...**
 
 **Do:**
 
-- Short: **10 / 35 / 1.6** to **12 / 40 / 1.635 mm**.
-- Feed: **12.5 / 35.5 / 1.6** to **14.5 / 38 / 1.635 mm**.
-- Leave a **0.5 mm gap** between the feed (y = 35.5) and the top ground (y = 35.0).
+- Start **0 / 0 / 1.6 mm**, Stop **25 / 35 / 1.635 mm**.
+- Material **copper**, priority **10**.
+- It stops at y = 35 mm. The strip **y = 35...45 mm** is the 10 mm antenna clearance - no box, just the absence of top copper.
+- It is the local feed reference. A production board would stitch it to the bottom ground with vias.
 
-**Check:** The three copper boxes form the F shape; the gap is clearly visible.
+**Check:** In the XY slice at z = 1.6 mm the top copper covers y = 0...35 only.
+
+![Step 7](assets/layout_diagram.png)
+
+![Step 7](assets/dialog_box_gnd.png)
+
+### Step 8 - Radiating arm - IFA_arm
+
+**Where:** **Geometry -> Add Box...**
+
+**Do:**
+
+- Start **10 / 38 / 1.6 mm**, Stop **17 / 40 / 1.635 mm**.
+- Material **copper**, priority **10**; 7 mm long, 2 mm wide.
+- The open end is at x = 17 mm; this is the main radiator.
+
+**Check:** The top view shows the horizontal arm at the ground edge.
 
 ![Step 8](assets/layout_diagram.png)
 
-![Step 8](assets/dialog_box_feed.png)
+![Step 8](assets/dialog_box_arm.png)
 
-### Step 9 - Add the 50 ohm feed port
+### Step 9 - Shorting stub - IFA_short
 
-**Where:** **Geometry -> Add Port...** (also in the Ports / Dumps window, Ctrl+Shift+D)
+**Where:** **Geometry -> Add Box...**
+
+**Do:**
+
+- Start **10 / 35 / 1.6 mm**, Stop **12 / 40 / 1.635 mm**.
+- Material **copper**, priority **10**; 2 mm wide, 5 mm high.
+- It connects the arm at y = 40 to the top ground at y = 35 and sets the quarter-wave resonance.
+
+**Check:** The short is the vertical strip at the left end of the arm.
+
+![Step 9](assets/layout_diagram.png)
+
+![Step 9](assets/dialog_box_short.png)
+
+### Step 10 - Feed strip and feed gap - IFA_feed
+
+**Where:** **Geometry -> Add Box...**
+
+**Do:**
+
+- Start **12.5 / 35.5 / 1.6 mm**, Stop **14.5 / 38 / 1.635 mm**.
+- Material **copper**, priority **10**; 2 mm wide.
+- It connects the arm at y = 38 to the feed point at y = 35.5. The **0.5 mm gap** y = 35.0...35.5 to GND_top is the port gap - no box.
+
+**Check:** The feed is the middle vertical strip; the gap to the top ground is clearly visible.
+
+![Step 10](assets/layout_diagram.png)
+
+![Step 10](assets/dialog_box_feed.png)
+
+### Step 11 - Add the 50 ohm feed port
+
+**Where:** **Geometry -> Add Port...** (also Ports / Dumps, Ctrl+Shift+D)
 
 **Do:**
 
 - Type **lumped**, resistance **50 ohm**, direction **y**.
 - Width (lumped): **Area - as wide as the metal (x)**.
-- Start **13.5 / 35.5 / 1.6 mm**, stop **13.5 / 35.0 / 1.6 mm**.
-- The metal reference is **IFA_feed**; the port list shows `area along X`.
+- Start **13.5 / 35.5 / 1.6 mm**, Stop **13.5 / 35.0 / 1.6 mm**.
+- Metal reference **IFA_feed**; the list marks `area along X`.
 
-**Check:** The port spans the 0.5 mm gap and is as wide as the 2 mm feed strip.
+**Check:** The port spans the 0.5 mm gap and is 2 mm wide, exactly the feed strip width.
 
-![Step 9](assets/menu_geometry_port.png)
+![Step 11](assets/menu_geometry_port.png)
 
-![Step 9](assets/dialog_port.png)
+![Step 11](assets/dialog_port.png)
 
-### Step 10 - Add the E-field dump
+### Step 12 - Add the E-field dump
 
 **Where:** **Geometry -> Add Field Dump...**
 
 **Do:**
 
 - Name **E_5p8**, quantity **E**, frequency **5.8 GHz**, file type **VTK (.vtr)**.
-- Box: **-5 / 28 / -3** to **30 / 47 / 14 mm**; optional resolution 0.2 mm.
+- Box **-5 / 28 / -3** to **30 / 47 / 14 mm**; optional resolution 0.2 mm.
 - Enable **Frequency domain** and **Enabled**.
 
 **Check:** The tree lists Dump: E_5p8 (E); the Field Viewer will read the .vtr file.
 
-![Step 10](assets/menu_geometry_dump.png)
+![Step 12](assets/menu_geometry_dump.png)
 
-![Step 10](assets/dialog_dump.png)
+![Step 12](assets/dialog_dump.png)
 
-### Step 11 - Enable the NF2FF far field
+### Step 13 - Enable the NF2FF far field
 
 **Where:** **Simulation -> Simulation Parameters...** -> tab **NF2FF-Parameter**
 
@@ -236,100 +277,97 @@ highlighted.
 
 - Tick **Enable far-field (NF2FF)**.
 - Mode **Frequency list**, frequencies **5.8 GHz**.
-- Box placement **Automatic (fit to geometry + air margin)**.
-- theta steps **181**, phi steps **361**.
+- Box placement **Automatic**, theta steps **181**, phi steps **361**.
 
-**Check:** The tree shows NF2FF: on; the antenna pattern will be evaluated at 5.8 GHz.
+**Check:** The tree shows NF2FF: on; the pattern will be evaluated at 5.8 GHz.
 
-![Step 11](assets/menu_simulation_params.png)
+![Step 13](assets/menu_simulation_params.png)
 
-![Step 11](assets/dialog_nf2ff.png)
+![Step 13](assets/dialog_nf2ff.png)
 
-### Step 12 - Set the mesh parameters
+### Step 14 - Set the mesh parameters
 
 **Where:** **Mesh -> Mesh Parameters...** (Ctrl+Shift+M)
 
 **Do:**
 
 - Max cell **1.2 mm**, min cell **0.15 mm**, min z cell **0.08 mm**.
-- Refined cell **0.2 mm**, max grading ratio **2.0**.
-- Cells per wavelength **18**; mesh directions **xyz**.
-- Press **Apply** to write the values into the project.
+- Refined cell **0.2 mm**, max grading ratio **2.0**, 18 cells per wavelength.
+- Press **Apply** to write them into the project.
 
 **Check:** The dialog shows the values above; the mesh report will quote them.
 
-![Step 12](assets/menu_mesh_params.png)
+![Step 14](assets/menu_mesh_params.png)
 
-![Step 12](assets/dialog_mesh_params.png)
+![Step 14](assets/dialog_mesh_params.png)
 
-### Step 13 - Build the mesh
+### Step 15 - Build the mesh
 
-**Where:** **Mesh -> Build Mesh** (Ctrl+M), or the **Build Mesh** button on the Mesh tab
+**Where:** **Mesh -> Build Mesh** (Ctrl+M), or the **Build Mesh** button
 
 **Do:**
 
 - easyMesh resolves the 0.5 mm gap and the copper edges.
 - The Mesh Viewer opens the XY slice at z = 1.6 mm.
-- Toggle **Mesh grid** in the viewer to inspect the lines.
+- Toggle **Mesh grid** to inspect the lines.
 
-**Check:** The gap and the metal edges contain several grid lines; the air cells are larger.
+**Check:** The gap and the metal edges contain several grid lines; air cells are larger.
 
-![Step 13](assets/menu_mesh_build.png)
+![Step 15](assets/menu_mesh_build.png)
 
-![Step 13](assets/mesh_viewer_xy.png)
+![Step 15](assets/mesh_viewer_xy.png)
 
-### Step 14 - Check the mesh quality
+### Step 16 - Check the mesh quality
 
-**Where:** **Mesh Viewer** -> tab **Slice / Overview** / **Cell sizes**
+**Where:** **Mesh Viewer** -> **Slice / Overview** / **Cell sizes**
 
 **Do:**
 
-- Use **Cell sizes** for the cell-size distribution.
+- Use **Cell sizes** for the distribution.
 - Right-click the viewer for **Critical cells** and the runtime overlay.
 - If the gap has too few cells, lower the min cell size and rebuild.
 
 **Check:** The finest cells sit at the feed gap and the metal edges; no unexpected slivers.
 
-![Step 14](assets/mesh_viewer_xy.png)
+![Step 16](assets/mesh_viewer_xy.png)
 
-![Step 14](assets/mesh_viewer_cells.png)
+![Step 16](assets/mesh_viewer_cells.png)
 
-### Step 15 - Run the FDTD simulation
+### Step 17 - Run the FDTD simulation
 
-**Where:** **Simulation -> Run Simulation** (Ctrl+R), or the **Run Simulation** button
+**Where:** **Simulation -> Run Simulation** (Ctrl+R)
 
 **Do:**
 
-- Watch the timestep bar and the energy bar in the status line.
+- Watch the timestep and energy bars in the status line.
 - openEMS stops when the energy criterion is reached.
 - The log lists the S-parameter and NF2FF files and the runtime.
 
-**Check:** The log ends with `Simulation finished`; the S-Params and Antenna tabs have data.
+**Check:** The log ends with `Simulation finished`; S-Params and Antenna have data.
 
-![Step 15](assets/menu_simulation_run.png)
+![Step 17](assets/menu_simulation_run.png)
 
-![Step 15](assets/main_run_crop.png)
+![Step 17](assets/main_run_crop.png)
 
-### Step 16 - Read the S-parameters
+### Step 18 - Read the S-parameters
 
-**Where:** tab **S-Params**; plot selector at the top, trace list on the left
+**Where:** tab **S-Params**; plot selector at the top, trace list left
 
 **Do:**
 
 - Plot **|S| dB**; the dip is at **5.80 GHz**.
-- Click the plot to add a marker; the marker list shows |S11| = **-28.17 dB**, VSWR **1.08**.
-- Use **Preset -> Return loss (Sii)** for a single curve.
-- The **Plot** selector also offers Smith, VSWR, phase and Re/Im.
+- Click the plot to add a marker; |S11| = **-28.17 dB**, VSWR **1.08**.
+- Use **Preset -> Return loss (Sii)**; the Plot menu also offers Smith, VSWR, phase, Re/Im.
 
 **Check:** |S11| < -10 dB from about **5.65 to 5.95 GHz**.
 
-![Step 16](assets/tab_sparams.png)
+![Step 18](assets/tab_sparams.png)
 
-![Step 16](assets/sparam_viewer.png)
+![Step 18](assets/sparam_viewer.png)
 
-### Step 17 - Read the antenna pattern
+### Step 19 - Read the antenna pattern
 
-**Where:** tab **Antenna**; Plot selector and Freq selector at the top
+**Where:** tab **Antenna**; Plot and Freq selectors at the top
 
 **Do:**
 
@@ -339,26 +377,38 @@ highlighted.
 
 **Check:** Maximum gain about **2.6 dBi**, efficiency **68 %**, Dmax 3.15 dBi.
 
-![Step 17](assets/tab_antenna.png)
+![Step 19](assets/tab_antenna.png)
 
-![Step 17](assets/antenna_3d.png)
+![Step 19](assets/antenna_3d.png)
 
-### Step 18 - Inspect the E-field
+### Step 20 - Inspect the E-field
 
 **Where:** tab **Field Viewer**; **Data** panel on the left
 
 **Do:**
 
 - Array **pt:magnitude**; Show **Surface**; View **Fit (keep direction)**.
-- Slice **XY** at z = 1.6 mm for the top-copper distribution.
+- Slice **XY** at z = 1.6 mm for the top copper.
 - A **YZ** cut at x = 13.5 mm shows the field across the feed gap.
-- Use **Colour** (auto/min/max/log) and the time/frequency slider to animate.
+- Use **Colour** and the time/frequency slider to animate.
 
-**Check:** The hot spot sits at the 0.5 mm gap and along the arm; the field decays into the air.
+**Check:** The hot spot sits at the 0.5 mm gap and along the arm; the field decays into air.
 
-![Step 18](assets/tab_field.png)
+![Step 20](assets/tab_field.png)
 
-![Step 18](assets/field_viewer.png)
+![Step 20](assets/field_viewer.png)
+
+## Summary and tuning
+
+The example results are |S11| = -28 dB at 5.80 GHz, a -10 dB band
+from about 5.65 to 5.95 GHz, 2.6 dBi gain and 68 % efficiency. To tune:
+
+- **Arm length** shifts the resonance: longer -> lower frequency.
+- **Arm height** changes bandwidth and radiation resistance.
+- **Feed offset** matches the 50 ohm feed without a matching network.
+- **Ground clearance** affects efficiency and the pattern shape.
+
+Change one dimension at a time, rebuild the mesh and compare S11 and the pattern.
 
 ## Viewer controls cheat sheet
 
@@ -383,14 +433,13 @@ The time/frequency slider animates a series; File -> Export renders MP4/GIF.
 python docs/tutorial/generate_tutorial.py
 ```
 
-This regenerates the screenshots, the twenty slides (in `frames/`) and
-the MP4. Install `ffmpeg` for the video step; the PNG frames are
-written even without it.
+This regenerates the screenshots, the 22 slides (in `frames/`) and the MP4.
+Install `ffmpeg` for the video step; the PNG frames are written even without it.
 
 ## Files
 
-- `IFA_5p8GHz_Tutorial.mp4` - 90 s, 1600 x 900, H.264, no audio.
-- `frames/01.png` ... `frames/20.png` - the twenty slides.
+- `IFA_5p8GHz_Tutorial.mp4` - 100 s, 1600 x 900, H.264, no audio.
+- `frames/01.png` ... `frames/22.png` - the 22 slides.
 - `assets/` - GUI screenshots, menu/tab highlight cards, diagrams and field maps.
 - `generate_tutorial.py` - regenerates all of the above.
 
