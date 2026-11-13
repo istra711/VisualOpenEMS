@@ -1,159 +1,159 @@
 {
-  "duration": 410.157,
+  "duration": 523.928,
   "slides": [
     {
       "step": 0,
       "title": "Inverted-F Antenna on a PCB",
       "start": 0.0,
-      "hold": 12.492,
-      "voice": 10.842
+      "hold": 16.706,
+      "voice": 15.056
     },
     {
       "step": 1,
       "title": "The main window",
-      "start": 13.192,
-      "hold": 30.408,
-      "voice": 28.758
+      "start": 17.406,
+      "hold": 39.41,
+      "voice": 37.76
     },
     {
       "step": 2,
       "title": "Start a new project",
-      "start": 44.3,
-      "hold": 13.969,
-      "voice": 12.319
+      "start": 57.516,
+      "hold": 16.586,
+      "voice": 14.936
     },
     {
       "step": 3,
       "title": "Set the frequency range",
-      "start": 58.969,
-      "hold": 16.83,
-      "voice": 15.18
+      "start": 74.802,
+      "hold": 22.202,
+      "voice": 20.552
     },
     {
       "step": 4,
       "title": "Create the FR4 material",
-      "start": 76.499,
-      "hold": 15.39,
-      "voice": 13.74
+      "start": 97.704,
+      "hold": 20.09,
+      "voice": 18.44
     },
     {
       "step": 5,
       "title": "Add the PCB substrate",
-      "start": 92.588,
-      "hold": 22.129,
-      "voice": 20.479
+      "start": 118.494,
+      "hold": 27.866,
+      "voice": 26.216
     },
     {
       "step": 6,
       "title": "Bottom ground plane (GND_bottom)",
-      "start": 115.417,
-      "hold": 19.137,
-      "voice": 17.487
+      "start": 147.06,
+      "hold": 23.666,
+      "voice": 22.016
     },
     {
       "step": 7,
       "title": "Top ground plane (GND_top)",
-      "start": 135.254,
-      "hold": 25.151,
-      "voice": 23.501
+      "start": 171.426,
+      "hold": 32.546,
+      "voice": 30.896
     },
     {
       "step": 8,
       "title": "Radiating arm (IFA_arm)",
-      "start": 161.105,
-      "hold": 20.272,
-      "voice": 18.622
+      "start": 204.672,
+      "hold": 25.466,
+      "voice": 23.816
     },
     {
       "step": 9,
       "title": "Shorting stub (IFA_short)",
-      "start": 182.077,
-      "hold": 20.831,
-      "voice": 19.181
+      "start": 230.838,
+      "hold": 27.29,
+      "voice": 25.64
     },
     {
       "step": 10,
       "title": "Feed strip and feed gap (IFA_feed)",
-      "start": 203.608,
-      "hold": 27.903,
-      "voice": 26.253
+      "start": 258.828,
+      "hold": 36.962,
+      "voice": 35.312
     },
     {
       "step": 11,
       "title": "Add the 50 ohm feed port",
-      "start": 232.211,
-      "hold": 21.947,
-      "voice": 20.297
+      "start": 296.49,
+      "hold": 29.066,
+      "voice": 27.416
     },
     {
       "step": 12,
       "title": "Add the E-field dump",
-      "start": 254.858,
-      "hold": 13.959,
-      "voice": 12.309
+      "start": 326.256,
+      "hold": 17.786,
+      "voice": 16.136
     },
     {
       "step": 13,
       "title": "Enable the NF2FF far field",
-      "start": 269.517,
-      "hold": 18.793,
-      "voice": 17.143
+      "start": 344.742,
+      "hold": 25.13,
+      "voice": 23.48
     },
     {
       "step": 14,
       "title": "Set the mesh parameters",
-      "start": 289.009,
-      "hold": 17.281,
-      "voice": 15.631
+      "start": 370.572,
+      "hold": 22.418,
+      "voice": 20.768
     },
     {
       "step": 15,
       "title": "Build the mesh",
-      "start": 306.991,
-      "hold": 12.482,
-      "voice": 10.832
+      "start": 393.69,
+      "hold": 16.13,
+      "voice": 14.48
     },
     {
       "step": 16,
       "title": "Check the mesh quality",
-      "start": 320.173,
-      "hold": 13.168,
-      "voice": 11.518
+      "start": 410.52,
+      "hold": 16.13,
+      "voice": 14.48
     },
     {
       "step": 17,
       "title": "Run the FDTD simulation",
-      "start": 334.041,
-      "hold": 14.692,
-      "voice": 13.042
+      "start": 427.35,
+      "hold": 18.722,
+      "voice": 17.072
     },
     {
       "step": 18,
       "title": "Read the S-parameters",
-      "start": 349.433,
-      "hold": 17.259,
-      "voice": 15.609
+      "start": 446.772,
+      "hold": 21.938,
+      "voice": 20.288
     },
     {
       "step": 19,
       "title": "Read the antenna pattern",
-      "start": 367.392,
-      "hold": 14.254,
-      "voice": 12.604
+      "start": 469.41,
+      "hold": 18.266,
+      "voice": 16.616
     },
     {
       "step": 20,
       "title": "Inspect the E-field",
-      "start": 382.346,
-      "hold": 15.882,
-      "voice": 14.232
+      "start": 488.376,
+      "hold": 20.354,
+      "voice": 18.704
     },
     {
       "step": null,
       "title": "Done - and what to tune next",
-      "start": 398.929,
-      "hold": 11.228,
-      "voice": 9.578
+      "start": 509.43,
+      "hold": 14.498,
+      "voice": 12.848
     }
   ]
 }

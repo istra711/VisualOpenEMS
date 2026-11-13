@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,7 @@ TECHNO_VIDEO = TUTORIAL / "IFA_5p8GHz_Tutorial_DeepTechno.mp4"
 NARRATION_JSON = ASSETS / "narration.json"
 TIMINGS_JSON = ASSETS / "narration_timings.json"
 WORK = Path(tempfile.mkdtemp(prefix="ifa_tutorial_voice_"))
+VOICE_CACHE = Path(tempfile.gettempdir()) / "ifa_tutorial_voice_cache"
 
 SR = 48_000
 FPS = 24
@@ -49,8 +51,10 @@ MIN_HOLD = 8.4        # twice the old 4.2 s
 FADE = 0.7            # twice the old 0.35 s
 START_PAD = 0.45
 END_PAD = 1.2
-VOICE_RATE = 3        # SAPI rate: -10...+10, clear tutorial pace
-VOICE_NAME = "David"
+VOICE_RATE = "-5%"    # edge-tts neural voice rate
+VOICE_PITCH = "-2Hz"
+VOICE_NAME = "en-US-AndrewNeural"
+SAPI_RATE = 0         # fallback only
 
 if str(TUTORIAL) not in sys.path:
     sys.path.insert(0, str(TUTORIAL))
@@ -138,7 +142,58 @@ def _script(entry: dict) -> str:
     return _clean(" ".join(parts))
 
 
-def _voice():
+def _edge_synthesize(text: str, path: Path, attempts: int = 7) -> None:
+    """Neural Microsoft Edge voice; retries with a long backoff.
+
+    The Edge service occasionally drops a request with "No audio was received".
+    A cached success is reused by the caller, so a rerun only fills the gaps.
+    """
+    import asyncio
+
+    import edge_tts
+
+    delays = (1.0, 2.0, 4.0, 8.0, 12.0, 16.0)
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            async def run() -> None:
+                communicate = edge_tts.Communicate(
+                    text, VOICE_NAME, rate=VOICE_RATE, pitch=VOICE_PITCH
+                )
+                await communicate.save(str(path))
+
+            asyncio.run(run())
+            if path.exists() and path.stat().st_size > 1000:
+                return
+            raise RuntimeError("edge-tts returned an empty file")
+        except Exception as error:  # noqa: BLE001
+            last_error = error
+            if attempt + 1 < attempts:
+                time.sleep(delays[min(attempt, len(delays) - 1)])
+    raise RuntimeError(f"edge-tts failed after {attempts} attempts: {last_error}")
+
+
+def _to_wav(source: Path, target: Path) -> None:
+    subprocess.run(
+        [
+            _ffmpeg(),
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-ar",
+            str(SR),
+            "-ac",
+            "1",
+            str(target),
+        ],
+        check=True,
+    )
+
+
+def _sapi_voice():
+    """Offline fallback: Microsoft David via Windows SAPI."""
     import win32com.client
 
     voice = win32com.client.Dispatch("SAPI.SpVoice")
@@ -146,25 +201,24 @@ def _voice():
     chosen = None
     for index in range(voices.Count):
         description = voices.Item(index).GetDescription()
-        if VOICE_NAME.lower() in description.lower():
+        if "David" in description or "Zira" in description:
             chosen = voices.Item(index)
             break
     if chosen is None:
         for index in range(voices.Count):
-            description = voices.Item(index).GetDescription().lower()
-            if "english" in description or "david" in description:
+            if "english" in voices.Item(index).GetDescription().lower():
                 chosen = voices.Item(index)
                 break
     if chosen is None and voices.Count:
         chosen = voices.Item(0)
     if chosen is not None:
         voice.Voice = chosen
-    voice.Rate = VOICE_RATE
+    voice.Rate = SAPI_RATE
     voice.Volume = 100
     return voice
 
 
-def _synthesize(voice, text: str, path: Path) -> None:
+def _sapi_synthesize(voice, text: str, path: Path) -> None:
     import win32com.client
 
     stream = win32com.client.Dispatch("SAPI.SpFileStream")
@@ -319,16 +373,29 @@ def main() -> int:
             f"slide count mismatch: {len(slide_paths)} PNGs vs {len(entries)} narrations"
         )
 
-    print(f"voice: Microsoft {VOICE_NAME}, rate {VOICE_RATE}")
-    voice = _voice()
+    print(f"voice: {VOICE_NAME}, rate {VOICE_RATE}, pitch {VOICE_PITCH}")
+    VOICE_CACHE.mkdir(parents=True, exist_ok=True)
     voice_arrays: list[np.ndarray] = []
     for index, entry in enumerate(entries, start=1):
         text = _script(entry)
         wav = WORK / f"voice_{index:02d}.wav"
-        _synthesize(voice, text, wav)
+        digest = __import__("hashlib").sha1(text.encode("utf-8")).hexdigest()[:10]
+        voice_tag = (
+            f"{VOICE_NAME}_{VOICE_RATE}_{VOICE_PITCH}"
+            .replace("%", "pct")
+            .replace("-", "m")
+        )
+        mp3 = VOICE_CACHE / f"voice_{index:02d}_{digest}_{voice_tag}.mp3"
+        if mp3.exists() and mp3.stat().st_size > 1000:
+            engine = "edge-tts cached"
+        else:
+            _edge_synthesize(text, mp3)
+            time.sleep(0.8)
+            engine = "edge-tts"
+        _to_wav(mp3, wav)
         audio = _read_voice(wav)
         voice_arrays.append(audio)
-        print(f"  {index:02d} {len(audio)/SR:5.2f}s  {text[:70]}...")
+        print(f"  {index:02d} {len(audio)/SR:5.2f}s [{engine}]  {text[:64]}...")
 
     holds, starts, total = _timeline(voice_arrays)
     print(f"total video: {total/60:.1f} min ({total:.1f} s)")
@@ -382,11 +449,16 @@ def main() -> int:
     print(f"  {TECHNO_VIDEO.name}: {TECHNO_VIDEO.stat().st_size/1e6:.1f} MB")
     print(f"  timings: {TIMINGS_JSON}")
 
-    # Refresh the storyboard chapter timings.
+    # Refresh the storyboard chapter timings in a fresh process: importing the
+    # Qt-based tutorial module after scipy/matplotlib can trip the Windows DLL
+    # loader in the same process.
     try:
-        import generate_tutorial
-
-        generate_tutorial._write_storyboard3([], FRAMES / "01.png")
+        code = (
+            "import sys; sys.path.insert(0, r'" + str(TUTORIAL) + "'); "
+            "import generate_tutorial as g; "
+            "g._write_storyboard3([], g.FRAMES / '01.png')"
+        )
+        subprocess.run([sys.executable, "-c", code], check=True)
         print(f"  storyboard: {TUTORIAL / 'README.md'}")
     except Exception as error:  # noqa: BLE001
         print(f"  storyboard refresh skipped: {error}")

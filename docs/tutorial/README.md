@@ -57,27 +57,27 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 | Time | Chapter |
 | --- | --- |
 | 00:00 | Title and overview |
-| 00:13 | Step 1 - The main window |
-| 00:44 | Step 2 - Start a new project |
-| 00:58 | Step 3 - Set the frequency range |
-| 01:16 | Step 4 - Create the FR4 material |
-| 01:32 | Step 5 - Add the PCB substrate |
-| 01:55 | Step 6 - Bottom ground plane - GND_bottom |
-| 02:15 | Step 7 - Top ground plane - GND_top |
-| 02:41 | Step 8 - Radiating arm - IFA_arm |
-| 03:02 | Step 9 - Shorting stub - IFA_short |
-| 03:23 | Step 10 - Feed strip and feed gap - IFA_feed |
-| 03:52 | Step 11 - Add the 50 ohm feed port |
-| 04:14 | Step 12 - Add the E-field dump |
-| 04:29 | Step 13 - Enable the NF2FF far field |
-| 04:49 | Step 14 - Set the mesh parameters |
-| 05:06 | Step 15 - Build the mesh |
-| 05:20 | Step 16 - Check the mesh quality |
-| 05:34 | Step 17 - Run the FDTD simulation |
-| 05:49 | Step 18 - Read the S-parameters |
-| 06:07 | Step 19 - Read the antenna pattern |
-| 06:22 | Step 20 - Inspect the E-field |
-| 06:38 | Summary and tuning tips |
+| 00:17 | Step 1 - The main window |
+| 00:57 | Step 2 - Start a new project |
+| 01:14 | Step 3 - Set the frequency range |
+| 01:37 | Step 4 - Create the FR4 material |
+| 01:58 | Step 5 - Add the PCB substrate |
+| 02:27 | Step 6 - Bottom ground plane - GND_bottom |
+| 02:51 | Step 7 - Top ground plane - GND_top |
+| 03:24 | Step 8 - Radiating arm - IFA_arm |
+| 03:50 | Step 9 - Shorting stub - IFA_short |
+| 04:18 | Step 10 - Feed strip and feed gap - IFA_feed |
+| 04:56 | Step 11 - Add the 50 ohm feed port |
+| 05:26 | Step 12 - Add the E-field dump |
+| 05:44 | Step 13 - Enable the NF2FF far field |
+| 06:10 | Step 14 - Set the mesh parameters |
+| 06:33 | Step 15 - Build the mesh |
+| 06:50 | Step 16 - Check the mesh quality |
+| 07:07 | Step 17 - Run the FDTD simulation |
+| 07:26 | Step 18 - Read the S-parameters |
+| 07:49 | Step 19 - Read the antenna pattern |
+| 08:08 | Step 20 - Inspect the E-field |
+| 08:29 | Summary and tuning tips |
 
 ## Steps
 
@@ -438,16 +438,21 @@ python docs/tutorial/generate_narration.py
 
 The first command regenerates the screenshots, the 22 slides, the silent
 MP4 and the narration metadata. The second speaks every slide with the
-offline Windows voice **Microsoft David**, adapts each slide duration to
-the narration (at least twice the old hold) and mixes the music underneath.
-Install `ffmpeg` for the video step; the PNG frames are written even
-without it.
+neural **en-US-AndrewNeural** voice (Microsoft Edge TTS, rate -5 %),
+adapts each slide duration to the narration (at least twice the old hold)
+and mixes the music underneath. Install `edge-tts` (`pip install edge-tts`)
+and `ffmpeg`; the PNG frames are written even without them.
 
 ## Narrator and music
 
-Every slide is narrated in English by the offline Windows voice
-**Microsoft David**. The script is built from the slide title, the caption
+Every slide is narrated in English by the neural voice
+**en-US-AndrewNeural** (Microsoft Edge TTS, rate -5 %, pitch -2 Hz).
+The script is built from the slide title, the caption
 and the side-card values, so the video says what is on screen.
+
+If the Edge TTS service is unavailable, the generator stops with a clear
+error instead of mixing voices. The neural voice needs internet access when
+the narration is generated; the finished MP4 is fully offline.
 
 The soundtrack is original, programmatically synthesized music - no
 third-party samples. Two versions are provided:
@@ -463,7 +468,7 @@ Temporary WAVs live only in the build folder.
 
 ## Files
 
-- `IFA_5p8GHz_Tutorial.mp4` - 410 s, 1280 x 720, H.264 + AAC, narrated + ambient.
+- `IFA_5p8GHz_Tutorial.mp4` - 523 s, 1280 x 720, H.264 + AAC, narrated + ambient.
 - `IFA_5p8GHz_Tutorial_DeepTechno.mp4` - narrated + deep techno.
 - `frames/01.png` ... `frames/22.png` - the 22 slides.
 - `assets/` - GUI screenshots, highlight cards, diagrams, field maps and narration JSON.
