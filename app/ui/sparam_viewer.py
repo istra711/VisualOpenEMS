@@ -37,10 +37,17 @@ from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as Navigation
 from matplotlib.figure import Figure
 
 from app.postproc.sparams import (
+    align_network_to_frequencies,
     export_network_touchstone,
+    mapped_reference_key,
+    network_z0,
+    normalize_port_map,
+    write_comparison_csv,
+    write_comparison_report,
     write_sparam_ascii,
     write_sparam_csv,
 )
+from app.ui.port_map_dialog import SParamPortMapDialog
 
 
 def load_network_from_path(path: Path | str):
@@ -73,7 +80,13 @@ def load_network_from_path(path: Path | str):
                 s[:, i, j] = np.asarray(block["real"]) + 1j * np.asarray(block["imag"])
             else:
                 s[:, i, j] = np.asarray(block, dtype=complex)
-        return rf.Network(f=freqs, s=s, z0=50.0)
+        try:
+            z0 = float(data.get("z0", 50.0))
+        except (TypeError, ValueError):
+            z0 = 50.0
+        if not np.isfinite(z0) or z0 <= 0:
+            z0 = 50.0
+        return rf.Network(f=freqs, s=s, z0=z0)
     return rf.Network(str(path))
 
 
@@ -143,6 +156,12 @@ class SParamGraphWindow(QMainWindow):
         self.lbl_info.setWordWrap(True)
         layout.addWidget(self.lbl_info)
 
+        self.lbl_reference = QLabel("")
+        self.lbl_reference.setWordWrap(True)
+        self.lbl_reference.setStyleSheet("color: #1565c0; font-weight: 600;")
+        self.lbl_reference.setVisible(False)
+        layout.addWidget(self.lbl_reference)
+
         self.lbl_trust = QLabel("")
         self.lbl_trust.setWordWrap(True)
         self.lbl_trust.setStyleSheet(
@@ -167,6 +186,11 @@ class SParamGraphWindow(QMainWindow):
                 self.cmb_port.setCurrentText(viewer.cmb_port.currentText())
             self.cmb_port.blockSignals(False)
             self.lbl_info.setText(viewer.lbl_info.text())
+            ref = getattr(viewer, "lbl_reference", None)
+            if ref is not None:
+                self.lbl_reference.setText(ref.text())
+                self.lbl_reference.setToolTip(ref.toolTip())
+                self.lbl_reference.setVisible(not ref.isHidden())
             trust = getattr(viewer, "lbl_trust", None)
             if trust is not None:
                 self.lbl_trust.setText(trust.text())
@@ -220,6 +244,11 @@ class SParamViewer(QWidget):
     """Browse S-parameters with Smith chart, Cartesian plots, markers, cursor."""
 
     markers_changed = Signal()
+    #: emitted when the user loads/changes/clears a reference (not on project
+    #: load; the main window suspends this while restoring a project)
+    reference_changed = Signal()
+    #: ask the host application for the newest committed run as reference
+    previous_run_requested = Signal()
 
     PLOT_TYPES = [
         "Smith",
@@ -254,6 +283,7 @@ class SParamViewer(QWidget):
         "Y",
         "VSWR",
         "RL",
+        "Delta",
     )
 
     def __init__(self, work_dir: Path | None = None, parent: QWidget | None = None) -> None:
@@ -264,6 +294,18 @@ class SParamViewer(QWidget):
         self.scan_root: Path | None = None
         self.network = None
         self.network_path: Path | None = None
+        #: Optional comparison network loaded from another run/file.  This is
+        #: deliberately separate from ``network``: comparing must never replace
+        #: or modify the current result.
+        self.reference_network = None
+        self.reference_path: Path | None = None
+        self.reference_label = ""
+        self.reference_meta: dict = {}
+        #: 0-based current→reference port map; -1 = unmapped
+        self.reference_port_map: list[int] = []
+        self._previous_run_available = False
+        self._reference_aligned = None
+        self._reference_aligned_key = None
         self.markers: list[float] = []  # frequencies (Hz)
         self._markers_visible = True
         self._marker_tags: dict[float, str] = {}  # optional "S21 max" labels
@@ -290,7 +332,8 @@ class SParamViewer(QWidget):
             "results JSON of this app."
         )
         self.btn_reload = QPushButton("Reload")
-        self.btn_scan = QPushButton("Scan work dir")
+        self.btn_reload.setToolTip("Reload the currently loaded S-parameter file")
+        self.btn_scan = QPushButton("Scan…")
         self.btn_scan.setToolTip(
             "List all sparams.s*p / sparams.json files in the whole work\n"
             "directory (not only the current project)"
@@ -298,7 +341,8 @@ class SParamViewer(QWidget):
         self.btn_export = QPushButton("Export…")
         self.btn_export.setToolTip(
             "Export the loaded S-parameters as Touchstone (.sNp), CSV or\n"
-            "ASCII table. Touchstone is the standard for CST / VNA / skrf."
+            "ASCII table. With a reference loaded, also comparison CSV and\n"
+            "comparison report. Touchstone is the standard for CST / VNA / skrf."
         )
         self.btn_export.setEnabled(False)
         self.cmb_plot = QComboBox()
@@ -317,11 +361,57 @@ class SParamViewer(QWidget):
             "• All traces: the complete S-matrix"
         )
         self.lbl_info = QLabel("No data loaded")
+
+        # One compact menu instead of a row of comparison buttons.
+        self.btn_compare = QPushButton("Compare \u25be")
+        self.btn_compare.setToolTip(
+            "Compare with a reference file or a committed run.\n"
+            "Also contains the port mapping and reference visibility."
+        )
+        self.btn_compare.setMenu(QMenu(self.btn_compare))
+        self.compare_menu = self.btn_compare.menu()
+        self.act_open_reference = self.compare_menu.addAction(
+            "Open reference file…"
+        )
+        self.act_open_reference.triggered.connect(
+            lambda *_: self._on_compare()
+        )
+        self.act_previous_run = self.compare_menu.addAction(
+            "Previous committed run"
+        )
+        self.act_previous_run.triggered.connect(
+            lambda *_: self.previous_run_requested.emit()
+        )
+        self.act_port_map = self.compare_menu.addAction("Port mapping…")
+        self.act_port_map.triggered.connect(
+            lambda *_: self._on_edit_port_map()
+        )
+        self.compare_menu.addSeparator()
+        self.act_show_reference = self.compare_menu.addAction("Show reference")
+        self.act_show_reference.setCheckable(True)
+        self.act_show_reference.setChecked(True)
+        self.act_show_reference.toggled.connect(
+            self._on_reference_visibility_changed
+        )
+        self.act_clear_reference = self.compare_menu.addAction(
+            "Clear reference"
+        )
+        self.act_clear_reference.triggered.connect(
+            lambda *_: self.clear_reference()
+        )
+        for action in (
+            self.act_open_reference,
+            self.act_previous_run,
+            self.act_port_map,
+            self.act_show_reference,
+            self.act_clear_reference,
+        ):
+            action.setEnabled(False)
+
         for w in (
             self.btn_open,
-            self.btn_reload,
-            self.btn_scan,
             self.btn_export,
+            self.btn_compare,
         ):
             bar.addWidget(w)
         bar.addWidget(QLabel("Plot"))
@@ -339,6 +429,24 @@ class SParamViewer(QWidget):
         bar.addWidget(self.lbl_project)
         root.addLayout(bar)
 
+        # --- reference status row (only visible with a reference) ---------
+        self.reference_bar = QWidget()
+        reference_bar = QHBoxLayout(self.reference_bar)
+        reference_bar.setContentsMargins(0, 0, 0, 0)
+        self.lbl_reference = QLabel("")
+        self.lbl_reference.setStyleSheet("color: #1565c0; font-weight: 600;")
+        self.lbl_reference.setVisible(False)
+        reference_bar.addWidget(self.lbl_reference, 1)
+        self.chk_delta = QCheckBox("Delta")
+        self.chk_delta.setEnabled(False)
+        self.chk_delta.setToolTip(
+            "Plot current minus reference instead of the overlay.\n"
+            "The Smith chart always stays in overlay mode."
+        )
+        reference_bar.addWidget(self.chk_delta)
+        self.reference_bar.setVisible(False)
+        root.addWidget(self.reference_bar)
+
         self.lbl_trust = QLabel("")
         self.lbl_trust.setWordWrap(True)
         self.lbl_trust.setStyleSheet(
@@ -353,8 +461,22 @@ class SParamViewer(QWidget):
 
         left = QWidget()
         lv = QVBoxLayout(left)
-        lv.addWidget(QLabel("Loaded files"))
+        files_header = QHBoxLayout()
+        files_header.addWidget(QLabel("Loaded files"))
+        files_header.addStretch(1)
+        files_header.addWidget(self.btn_reload)
+        files_header.addWidget(self.btn_scan)
+        lv.addLayout(files_header)
         self.file_list = QListWidget()
+        self.file_list.setToolTip(
+            "Click a result to load it as the current S-parameters.\n"
+            "Right-click: load as current or use as reference without\n"
+            "replacing the current result."
+        )
+        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_list.customContextMenuRequested.connect(
+            self._on_file_context_menu
+        )
         lv.addWidget(self.file_list)
         lv.addWidget(QLabel("Traces (check to overlay)"))
         self.trace_list = QListWidget()
@@ -415,14 +537,18 @@ class SParamViewer(QWidget):
         self.btn_reload.clicked.connect(self._reload_current)
         self.btn_scan.clicked.connect(self._on_scan_workdir)
         self.btn_export.clicked.connect(self._on_export)
+        self.chk_delta.toggled.connect(lambda *_: self._redraw())
         self.chk_markers_visible.toggled.connect(self._on_markers_visible_toggled)
         self.cmb_marker_style.currentTextChanged.connect(self._on_marker_style_changed)
-        self.cmb_plot.currentTextChanged.connect(lambda *_: self._redraw())
-        self.cmb_plot.currentIndexChanged.connect(self._redraw)
+        self.cmb_plot.currentTextChanged.connect(self._on_plot_changed)
+        self.cmb_plot.currentIndexChanged.connect(self._on_plot_changed)
         self.cmb_port.currentIndexChanged.connect(self._on_primary_trace_changed)
         self.cmb_trace_set.currentTextChanged.connect(self._on_trace_preset_changed)
         self.trace_list.itemChanged.connect(self._on_trace_item_changed)
-        self.file_list.currentItemChanged.connect(self._on_file_selected)
+        # itemClicked (not currentItemChanged) keeps a right-click for the
+        # context menu from immediately replacing the current result.
+        self.file_list.itemClicked.connect(self._on_file_selected)
+        self.file_list.itemActivated.connect(self._on_file_selected)
         self.canvas.setToolTip(
             "Left-click: add a marker at the nearest data point.\n"
             "Right-click: smart markers (min/max, nearest peak/valley,\n"
@@ -486,6 +612,385 @@ class SParamViewer(QWidget):
         """
         self.work_dir = Path(work_dir)
 
+    # ----- reference / comparison ----------------------------------------
+    def set_previous_run_available(self, available: bool) -> None:
+        """Let the host application offer the run-history quick action."""
+        self._previous_run_available = bool(available)
+        self._update_compare_controls()
+
+    def _current_nports(self) -> int:
+        try:
+            return int(self.network.nports) if self.network is not None else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def port_map_1based(self) -> list[int]:
+        """Current→reference mapping as 1-based values (0 = unmapped)."""
+        return [value + 1 if value >= 0 else 0 for value in self.reference_port_map]
+
+    def set_port_map(self, mapping: list[int] | None, *, emit: bool = True) -> None:
+        """Set the 1-based current→reference port map (``None`` = identity)."""
+        if self.reference_network is None:
+            self.reference_port_map = []
+            return
+        current_n = self._current_nports() or int(self.reference_network.nports)
+        self.reference_port_map = normalize_port_map(
+            mapping, current_n, int(self.reference_network.nports)
+        )
+        self._sync_reference_label()
+        self._refresh_markers()
+        self._redraw()
+        if emit:
+            self.reference_changed.emit()
+
+    def _refresh_reference_port_map(self) -> None:
+        """Keep the map valid after loading a different current network."""
+        if self.reference_network is None:
+            self.reference_port_map = []
+            return
+        current_n = self._current_nports() or int(self.reference_network.nports)
+        if self.reference_port_map:
+            mapping = self.port_map_1based()
+        else:
+            mapping = None
+        self.reference_port_map = normalize_port_map(
+            mapping, current_n, int(self.reference_network.nports)
+        )
+
+    def _mapped_reference_key(self, key: str) -> str | None:
+        if self.reference_network is None:
+            return None
+        return mapped_reference_key(key, self.reference_port_map)
+
+    def _reference_trace_from_matrix(self, matrix, key: str) -> np.ndarray | None:
+        mapped = self._mapped_reference_key(key)
+        if mapped is None:
+            return None
+        return self._trace_from_matrix(matrix, mapped)
+
+    def _port_map_summary(self) -> str:
+        if self.reference_network is None:
+            return ""
+        mapped = [
+            f"{i + 1}→{ref + 1}"
+            for i, ref in enumerate(self.reference_port_map)
+            if ref >= 0
+        ]
+        if not mapped:
+            return "no ports mapped"
+        identity = [
+            (i + 1 if i < self.reference_network.nports else 0)
+            for i in range(self._current_nports())
+        ]
+        if mapped == [f"{i + 1}→{i + 1}" for i in range(len(mapped))] and identity == [
+            i + 1 for i in range(len(identity))
+        ]:
+            return ""
+        text = ", ".join(mapped[:4])
+        if len(mapped) > 4:
+            text += ", …"
+        unmapped = sum(1 for ref in self.reference_port_map if ref < 0)
+        if unmapped:
+            text += f" ({unmapped} unmapped)"
+        return text
+
+    def _on_edit_port_map(self) -> None:
+        if self.reference_network is None:
+            return
+        current_n = self._current_nports() or int(self.reference_network.nports)
+        dlg = SParamPortMapDialog(
+            current_n,
+            int(self.reference_network.nports),
+            self.port_map_1based(),
+            self,
+        )
+        if dlg.exec():
+            self.set_port_map(dlg.selected_map())
+
+    def _on_compare(self) -> None:
+        """Pick a second S-parameter file and show it as a reference."""
+        if self.network is None:
+            QMessageBox.information(
+                self,
+                "Compare S-parameters",
+                "Load the current S-parameters first, then choose a reference.",
+            )
+            return
+        start = self.reference_path.parent if self.reference_path else (
+            self.network_path.parent if self.network_path else (self.work_dir or Path.cwd())
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Compare with S-parameters",
+            str(start),
+            "S-params (*.s1p *.s2p *.s3p *.s4p *.s*p *.json);;All (*.*)",
+        )
+        if path:
+            self.load_reference_path(path)
+
+    def load_reference_path(
+        self,
+        path: Path | str,
+        *,
+        label: str | None = None,
+        meta: dict | None = None,
+        quiet: bool = False,
+    ) -> bool:
+        """Load ``path`` as the read-only comparison network."""
+        path = Path(path)
+        try:
+            ntwk = load_network_from_path(path)
+        except Exception as e:  # noqa: BLE001
+            if not quiet:
+                QMessageBox.warning(self, "Reference load failed", str(e))
+            return False
+        self.set_reference(ntwk, path, label=label, meta=meta)
+        return True
+
+    def set_reference(
+        self,
+        network,
+        path: Path | str | None = None,
+        *,
+        label: str | None = None,
+        meta: dict | None = None,
+    ) -> None:
+        """Attach a comparison network without touching the current result."""
+        if network is None:
+            self.clear_reference()
+            return
+        self.reference_network = network
+        self.reference_path = Path(path) if path else None
+        self.reference_meta = dict(meta or {})
+        if self.reference_path is not None:
+            self.reference_meta["path"] = str(self.reference_path)
+        self._reference_aligned = None
+        self._reference_aligned_key = None
+        self.reference_label = str(
+            label
+            or self.reference_meta.get("label")
+            or (self.reference_path.name if self.reference_path is not None else "reference")
+        )
+        current_n = self._current_nports() or int(network.nports)
+        self.reference_port_map = normalize_port_map(
+            self.reference_meta.get("port_map"),
+            current_n,
+            int(network.nports),
+        )
+        if hasattr(self, "act_show_reference"):
+            self.act_show_reference.blockSignals(True)
+            self.act_show_reference.setChecked(True)
+            self.act_show_reference.blockSignals(False)
+        self._update_compare_controls()
+        self._sync_reference_label()
+        self._refresh_markers()
+        self._redraw()
+        self.reference_changed.emit()
+
+    def clear_reference(self) -> None:
+        """Remove the comparison network; the current network stays loaded."""
+        had_reference = self.reference_network is not None
+        self.reference_network = None
+        self.reference_path = None
+        self.reference_label = ""
+        self.reference_meta = {}
+        self.reference_port_map = []
+        self._reference_aligned = None
+        self._reference_aligned_key = None
+        self._update_compare_controls()
+        self._sync_reference_label()
+        self._refresh_markers()
+        self._redraw()
+        if had_reference:
+            self.reference_changed.emit()
+
+    def reference_descriptor(self) -> dict | None:
+        """JSON-serialisable provenance of the loaded reference."""
+        if self.reference_network is None:
+            return None
+        desc = dict(self.reference_meta or {})
+        path = (
+            str(self.reference_path)
+            if self.reference_path is not None
+            else str(desc.get("path") or "")
+        )
+        desc["path"] = path
+        desc["label"] = self.reference_label or (
+            Path(path).name if path else "reference"
+        )
+        desc.setdefault("kind", "file")
+        desc["port_map"] = self.port_map_1based()
+        try:
+            desc["nports"] = int(self.reference_network.nports)
+            desc["z0"] = float(network_z0(self.reference_network))
+        except Exception:  # noqa: BLE001
+            pass
+        return desc
+
+    def _on_reference_visibility_changed(self, *_args) -> None:
+        self._update_compare_controls()
+        self._redraw()
+
+    def _on_plot_changed(self, *_args) -> None:
+        self._update_compare_controls()
+        self._redraw()
+
+    def _update_compare_controls(self) -> None:
+        """Enable compare widgets to match the loaded data and plot type."""
+        if not hasattr(self, "chk_delta"):
+            return
+        has_ref = self.reference_network is not None
+        has_current = self.network is not None
+        self.btn_compare.setEnabled(has_current)
+        self.act_open_reference.setEnabled(has_current)
+        self.act_previous_run.setEnabled(
+            has_current and self._previous_run_available
+        )
+        self.act_port_map.setEnabled(has_ref and has_current)
+        self.act_show_reference.setEnabled(has_ref)
+        self.act_clear_reference.setEnabled(has_ref)
+        self.reference_bar.setVisible(has_ref)
+        self.lbl_reference.setVisible(has_ref)
+        self.chk_delta.setEnabled(
+            has_ref
+            and self.act_show_reference.isChecked()
+            and self.cmb_plot.currentText() != "Smith"
+        )
+        if not has_ref:
+            if self.chk_delta.isChecked():
+                self.chk_delta.blockSignals(True)
+                self.chk_delta.setChecked(False)
+                self.chk_delta.blockSignals(False)
+
+    def _sync_reference_label(self) -> None:
+        if not hasattr(self, "lbl_reference"):
+            return
+        ref = self.reference_network
+        if ref is None:
+            self.lbl_reference.setText("")
+            self.lbl_reference.setToolTip("")
+            self.lbl_reference.setVisible(False)
+        else:
+            name = self.reference_label or (
+                self.reference_path.name if self.reference_path else "reference"
+            )
+            text = f"Ref: {name}"
+            status = str(self.reference_meta.get("status") or "").strip()
+            if status and status != "complete":
+                text += f"  [{status}]"
+            if self.network is not None and ref.nports != self.network.nports:
+                text += "  ⚠"
+            map_summary = self._port_map_summary()
+            if map_summary:
+                text += "  · mapped"
+            tooltip = str(self.reference_path) if self.reference_path else name
+            tooltip += (
+                f"\n{ref.nports} port(s), {len(ref.f)} points"
+                f"\nZ0 {network_z0(ref):g} Ω"
+            )
+            run_id = str(self.reference_meta.get("run_id") or "").strip()
+            created = str(self.reference_meta.get("created") or "").strip()
+            if run_id:
+                tooltip += f"\nRun: {run_id}"
+            if created:
+                tooltip += f"\nCreated: {created[:19].replace('T', ' ')}"
+            if status:
+                tooltip += f"\nStatus: {status}"
+            if self.network is not None and ref.nports != self.network.nports:
+                tooltip += (
+                    f"\nPort count: current {self.network.nports}, "
+                    f"reference {ref.nports}"
+                )
+            if self.reference_port_map:
+                mapped_text = ", ".join(
+                    f"S{i + 1}->S{ref_idx + 1}"
+                    for i, ref_idx in enumerate(self.reference_port_map)
+                    if ref_idx >= 0
+                )
+                unmapped_text = ", ".join(
+                    f"S{i + 1}"
+                    for i, ref_idx in enumerate(self.reference_port_map)
+                    if ref_idx < 0
+                )
+                tooltip += f"\nPort map: {mapped_text or 'none'}"
+                if unmapped_text:
+                    tooltip += f"\nUnmapped: {unmapped_text}"
+            if self.network is not None and len(ref.f) and len(self.network.f):
+                lo = max(float(np.min(ref.f)), float(np.min(self.network.f)))
+                hi = min(float(np.max(ref.f)), float(np.max(self.network.f)))
+                if lo <= hi:
+                    tooltip += f"\nOverlap {lo / 1e9:.4g}–{hi / 1e9:.4g} GHz"
+                else:
+                    tooltip += "\nNo overlapping frequency range"
+            self.lbl_reference.setText(text)
+            self.lbl_reference.setToolTip(tooltip)
+            self.lbl_reference.setVisible(True)
+
+        win = getattr(self, "_graph_win", None)
+        if win is not None and hasattr(win, "lbl_reference"):
+            win.lbl_reference.setText(self.lbl_reference.text())
+            win.lbl_reference.setToolTip(self.lbl_reference.toolTip())
+            win.lbl_reference.setVisible(not self.lbl_reference.isHidden())
+
+    def _reference_visible(self) -> bool:
+        return (
+            self.reference_network is not None
+            and hasattr(self, "act_show_reference")
+            and self.act_show_reference.isChecked()
+        )
+
+    def _delta_active(self, plot: str | None = None) -> bool:
+        plot = plot if plot is not None else self.cmb_plot.currentText()
+        return (
+            self._reference_visible()
+            and self.chk_delta.isChecked()
+            and plot != "Smith"
+        )
+
+    def _aligned_reference_s(self) -> np.ndarray | None:
+        """Reference S-matrix interpolated onto the current frequency grid."""
+        if self.reference_network is None or self.network is None:
+            return None
+        key = (
+            id(self.reference_network),
+            id(self.network),
+            int(np.asarray(self.network.f).size),
+            self._z0_from_network(),
+        )
+        if self._reference_aligned_key == key:
+            return self._reference_aligned
+        try:
+            aligned = align_network_to_frequencies(
+                self.reference_network,
+                self.network.f,
+                z0=key[-1],
+            )
+        except Exception as e:  # noqa: BLE001
+            print("Reference alignment failed:", e)
+            return None
+        self._reference_aligned = aligned
+        self._reference_aligned_key = key
+        return aligned
+
+    @staticmethod
+    def _trace_from_matrix(matrix, key: str) -> np.ndarray | None:
+        if matrix is None:
+            return None
+        try:
+            if len(key) == 3 and key[0] == "S" and key[1].isdigit() and key[2].isdigit():
+                i = int(key[1]) - 1
+                j = int(key[2]) - 1
+                if matrix.ndim == 3 and matrix.shape[1] > i and matrix.shape[2] > j:
+                    return np.asarray(matrix[:, i, j], dtype=complex)
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    def _reference_trace(self, key: str) -> np.ndarray | None:
+        return self._reference_trace_from_matrix(
+            self._aligned_reference_s(), key
+        )
+
     def set_untrusted(self, note: str | None) -> None:
         """Show/hide the red result-trust banner (failed/partial run)."""
         text = str(note or "").strip()
@@ -501,12 +1006,23 @@ class SParamViewer(QWidget):
         """Drop the loaded network (empty diagram) — e.g. project without results."""
         self.network = None
         self.network_path = None
+        self.reference_network = None
+        self.reference_path = None
+        self.reference_label = ""
+        self.reference_meta = {}
+        self.reference_port_map = []
+        self._reference_aligned = None
+        self._reference_aligned_key = None
         self.markers = []
         self._marker_tags.clear()
         self._delta_refs.clear()
         self._selected_marker = None
         if hasattr(self, "btn_export"):
             self.btn_export.setEnabled(False)
+        if hasattr(self, "btn_compare"):
+            self.btn_compare.setEnabled(False)
+        self._update_compare_controls()
+        self._sync_reference_label()
         self._populate_ports()
         self._refresh_markers()
         self.lbl_info.setText("")
@@ -525,12 +1041,20 @@ class SParamViewer(QWidget):
             return
         self.network = ntwk
         self.network_path = path
+        self._reference_aligned = None
+        self._reference_aligned_key = None
+        if self.reference_network is not None:
+            self._refresh_reference_port_map()
         self.markers = []
         self._marker_tags.clear()
         self._delta_refs.clear()
         self._selected_marker = None
         if hasattr(self, "btn_export"):
             self.btn_export.setEnabled(True)
+        if hasattr(self, "btn_compare"):
+            self.btn_compare.setEnabled(True)
+        self._update_compare_controls()
+        self._sync_reference_label()
         self.set_untrusted(None)
         self._populate_ports()
         self._refresh_markers()
@@ -770,6 +1294,23 @@ class SParamViewer(QWidget):
         raw = current.data(Qt.ItemDataRole.UserRole) or current.text()
         self.load_path(Path(raw))
 
+    def _on_file_context_menu(self, pos) -> None:
+        """Right-click a scanned result: load current or use as reference."""
+        item = self.file_list.itemAt(pos)
+        if item is None:
+            return
+        raw = item.data(Qt.ItemDataRole.UserRole) or item.text()
+        path = Path(str(raw))
+        menu = QMenu(self.file_list)
+        act_current = menu.addAction("Load as current")
+        act_reference = menu.addAction("Use as reference")
+        act_reference.setEnabled(self.network is not None)
+        chosen = menu.exec(self.file_list.viewport().mapToGlobal(pos))
+        if chosen is act_current:
+            self.load_path(path)
+        elif chosen is act_reference:
+            self.load_reference_path(path)
+
     def _reload_current(self) -> None:
         if self.network_path:
             self.load_path(self.network_path)
@@ -805,6 +1346,12 @@ class SParamViewer(QWidget):
         act_touch = menu.addAction("Touchstone (.sNp)…")
         act_csv = menu.addAction("CSV (dB / phase / real / imag)…")
         act_ascii = menu.addAction("ASCII table (.txt)…")
+        act_cmp_csv = None
+        act_cmp_report = None
+        if self.reference_network is not None:
+            menu.addSeparator()
+            act_cmp_csv = menu.addAction("Comparison CSV…")
+            act_cmp_report = menu.addAction("Comparison report (.txt)…")
         chosen = menu.exec(
             self.btn_export.mapToGlobal(self.btn_export.rect().bottomLeft())
         )
@@ -814,6 +1361,10 @@ class SParamViewer(QWidget):
             self._export_csv()
         elif chosen is act_ascii:
             self._export_ascii()
+        elif act_cmp_csv is not None and chosen is act_cmp_csv:
+            self._export_comparison_csv()
+        elif act_cmp_report is not None and chosen is act_cmp_report:
+            self._export_comparison_report()
 
     def _export_done(self, path: Path) -> None:
         self.lbl_info.setText(f"Exported: {path}")
@@ -893,6 +1444,84 @@ class SParamViewer(QWidget):
             return
         self._export_done(out)
 
+    def _comparison_basename(self) -> str:
+        current = (
+            self.network_path.stem if self.network_path is not None else "current"
+        )
+        reference = (
+            self.reference_path.stem
+            if self.reference_path is not None
+            else "reference"
+        )
+        return f"{current}_vs_{reference}"
+
+    def _comparison_meta(self) -> dict:
+        meta = dict(self.reference_meta or {})
+        meta["label"] = self.reference_label
+        meta["current"] = (
+            self.network_path.name if self.network_path is not None else "current"
+        )
+        meta["current_path"] = str(self.network_path or "")
+        meta["reference"] = self.reference_label
+        meta["reference_path"] = str(self.reference_path or "")
+        meta["reference_run"] = str(meta.get("run_id") or "")
+        meta["reference_status"] = str(meta.get("status") or "")
+        return meta
+
+    def _export_comparison_csv(self) -> None:
+        if self.network is None or self.reference_network is None:
+            return
+        default = self._export_default_dir() / (
+            f"{self._comparison_basename()}.csv"
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export S-parameter comparison (CSV)",
+            str(default),
+            "CSV (*.csv);;All (*.*)",
+        )
+        if not path:
+            return
+        try:
+            out = write_comparison_csv(
+                self.network,
+                self.reference_network,
+                path,
+                port_map=self.port_map_1based(),
+                meta=self._comparison_meta(),
+            )
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Comparison CSV failed", str(e))
+            return
+        self._export_done(out)
+
+    def _export_comparison_report(self) -> None:
+        if self.network is None or self.reference_network is None:
+            return
+        default = self._export_default_dir() / (
+            f"{self._comparison_basename()}_report.txt"
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export S-parameter comparison report",
+            str(default),
+            "Text / Markdown (*.txt *.md);;All (*.*)",
+        )
+        if not path:
+            return
+        try:
+            out = write_comparison_report(
+                self.network,
+                self.reference_network,
+                path,
+                port_map=self.port_map_1based(),
+                meta=self._comparison_meta(),
+            )
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Comparison report failed", str(e))
+            return
+        self._export_done(out)
+
     # ----- markers / cursor ---------------------------------------------
     @staticmethod
     def _fmt_ohm(z: complex) -> str:
@@ -957,18 +1586,38 @@ class SParamViewer(QWidget):
         mag = max(abs(s), 1e-15)
         return float(-20.0 * math.log10(mag))
 
-    def _marker_list_text(self, key: str, val: complex, f_ghz: float, z0: float) -> str:
-        """List row: all formats combined, or the selected marker style only."""
+    def _marker_list_text(
+        self,
+        key: str,
+        val: complex,
+        f_ghz: float,
+        z0: float,
+        ref_val: complex | None = None,
+        ref_active: bool = False,
+    ) -> str:
+        """List row: all formats combined, or the selected marker style only.
+
+        With an active reference the row also carries its value and the
+        magnitude difference; ``ref_val=None`` means the reference exists but
+        the corresponding S-matrix cell is missing.
+        """
         head = f"{f_ghz:.4f} GHz {key}"
+        ref_db: float | None = None
+        if ref_active and ref_val is not None and (
+            math.isfinite(ref_val.real) and math.isfinite(ref_val.imag)
+        ):
+            ref_db = 20.0 * math.log10(max(abs(ref_val), 1e-15))
         if not (math.isfinite(val.real) and math.isfinite(val.imag)):
-            return f"{head}  no data"
+            text = f"{head}  no data"
+            if ref_active:
+                text += "  |  ref —" if ref_db is None else f"  |  ref {ref_db:.2f} dB"
+            return text
         mag = abs(val)
         db = 20 * math.log10(max(mag, 1e-15))
         vswr = self._s_to_vswr(val)
         rl = self._s_to_rl_db(val)
         ang = math.degrees(math.atan2(val.imag, val.real))
         refl = self._is_reflection_key(key)
-        head = f"{f_ghz:.4f} GHz {key}"
         style = getattr(self, "cmb_marker_style", None)
         style = style.currentText() if style is not None else "All formats"
         if style == "All formats":
@@ -977,7 +1626,23 @@ class SParamViewer(QWidget):
                 parts.append(f"Z={self._fmt_ohm(self._s_to_z(val, z0))}")
             else:
                 parts.append(f"S={self._fmt_s_complex(val)}")
+            if ref_active:
+                if ref_db is None:
+                    parts.append("ref —")
+                else:
+                    parts.extend(
+                        [f"ref {ref_db:.2f} dB", f"Δ {db - ref_db:+.2f} dB"]
+                    )
             return "  ".join(parts)
+        if style == "Delta":
+            if not ref_active:
+                return f"{head}  no reference"
+            if ref_db is None:
+                return f"{head}  ref no data"
+            return (
+                f"{head}  Δ {db - ref_db:+.2f} dB"
+                f"  (ref {ref_db:.2f} dB)"
+            )
         if style == "dB":
             detail = f"{db:.2f} dB"
         elif style == "|S|":
@@ -1001,7 +1666,16 @@ class SParamViewer(QWidget):
             detail = f"RL {rl:.3f} dB"
         else:
             detail = f"{db:.2f} dB"
-        return f"{head}  {detail}"
+        text = f"{head}  {detail}"
+        if ref_active:
+            if ref_db is None:
+                text += "  |  ref —"
+            else:
+                text += (
+                    f"  |  ref {ref_db:.2f} dB"
+                    f"  |  Δ {db - ref_db:+.2f} dB"
+                )
+        return text
 
     def marker_state(self) -> list[dict]:
         """JSON-serialisable marker list for the project file."""
@@ -1526,6 +2200,9 @@ class SParamViewer(QWidget):
                 keys = [primary] if primary else ["S11"]
             z0 = self._z0_from_network()
             self._marker_z0 = z0
+            reference_s = (
+                self._aligned_reference_s() if self._reference_visible() else None
+            )
             for f in self.markers:
                 idx = int(np.argmin(np.abs(self.network.f - f)))
                 f_ghz = float(self.network.f[idx]) / 1e9
@@ -1544,7 +2221,22 @@ class SParamViewer(QWidget):
                             if has_data and idx < len(s)
                             else complex("nan")
                         )
-                        text = self._marker_list_text(key, val, f_ghz, z0)
+                        ref_trace = self._reference_trace_from_matrix(
+                            reference_s, key
+                        )
+                        ref_val = (
+                            complex(ref_trace[idx])
+                            if ref_trace is not None and idx < len(ref_trace)
+                            else complex("nan")
+                        )
+                        text = self._marker_list_text(
+                            key,
+                            val,
+                            f_ghz,
+                            z0,
+                            ref_val=ref_val,
+                            ref_active=reference_s is not None,
+                        )
                     if tag:
                         text = f"{tag}  |  {text}"
                     item = QListWidgetItem(text)
@@ -1695,12 +2387,154 @@ class SParamViewer(QWidget):
         self._redraw()
 
     # ----- plotting -----------------------------------------------------
+    def _series_for(
+        self, plot: str, s: np.ndarray | None, key: str, z0: float
+    ) -> tuple[list[tuple[str, np.ndarray]], list[tuple[str, np.ndarray]]]:
+        """Scalar plot series for one network: ``(main, phase-axis)``.
+
+        Smith charts are drawn separately.  Keeping the conversion in one
+        place lets the current network, the reference and the delta view use
+        exactly the same definitions.
+        """
+        if s is None:
+            return [], []
+        arr = np.asarray(s, dtype=complex)
+        if plot == "|S| dB":
+            return [(key, 20.0 * np.log10(np.maximum(np.abs(arr), 1e-15)))], []
+        if plot == "Return loss [dB]":
+            return [(key, -20.0 * np.log10(np.maximum(np.abs(arr), 1e-15)))], []
+        if plot == "|S| mag":
+            return [(key, np.abs(arr))], []
+        if plot == "Phase deg":
+            return [(key, np.degrees(np.angle(arr)))], []
+        if plot == "VSWR":
+            mag = np.abs(arr)
+            return [(key, (1.0 + mag) / np.maximum(1.0 - mag, 1e-12))], []
+        if plot == "Complex Re/Im":
+            return [
+                (f"{key} Re", np.real(arr)),
+                (f"{key} Im", np.imag(arr)),
+            ], []
+        if plot == "Re/Im + Phase":
+            return [
+                (f"{key} Re", np.real(arr)),
+                (f"{key} Im", np.imag(arr)),
+            ], [(f"{key} Phase", np.degrees(np.angle(arr)))]
+        if plot == "Z Re/Im":
+            if self._is_reflection_key(key):
+                z = np.array([self._s_to_z(complex(v), z0) for v in arr], dtype=complex)
+                return [("R", np.real(z)), ("X", np.imag(z))], []
+            return [("S Re", np.real(arr)), ("S Im", np.imag(arr))], []
+        return [], []
+
+    @staticmethod
+    def _phase_delta(current_s, reference_s) -> np.ndarray:
+        """Wrapped phase difference in degrees, masked below the noise floor."""
+        cur = np.asarray(current_s, dtype=complex)
+        ref = np.asarray(reference_s, dtype=complex)
+        if cur.shape != ref.shape:
+            return np.full(cur.shape, np.nan)
+        valid = (
+            np.isfinite(cur)
+            & np.isfinite(ref)
+            & (np.abs(cur) > 1e-12)
+            & (np.abs(ref) > 1e-12)
+        )
+        out = np.full(cur.shape, np.nan, dtype=float)
+        out[valid] = np.degrees(np.angle(cur[valid] * np.conj(ref[valid])))
+        return out
+
+    def _delta_main(
+        self,
+        plot: str,
+        current_series: list[tuple[str, np.ndarray]],
+        reference_series: list[tuple[str, np.ndarray]],
+        key: str,
+        current_s: np.ndarray,
+        reference_s: np.ndarray,
+    ) -> list[tuple[str, np.ndarray]]:
+        if plot == "Phase deg":
+            return [(f"Δ{key}", self._phase_delta(current_s, reference_s))]
+        out: list[tuple[str, np.ndarray]] = []
+        for (label, y_cur), (_ref_label, y_ref) in zip(current_series, reference_series):
+            out.append((f"Δ{label}", np.asarray(y_cur) - np.asarray(y_ref)))
+        return out
+
+    def _delta_phase_series(
+        self, key: str, current_s: np.ndarray, reference_s: np.ndarray
+    ) -> list[tuple[str, np.ndarray]]:
+        return [(f"Δ{key} Phase", self._phase_delta(current_s, reference_s))]
+
+    def _plot_series(
+        self,
+        ax,
+        f_ghz: np.ndarray,
+        series: list[tuple[str, np.ndarray]],
+        *,
+        color: str | None = None,
+        linestyle: str = "-",
+        lw: float = 1.4,
+        alpha: float = 1.0,
+    ) -> None:
+        for label, y in series:
+            ax.plot(
+                f_ghz,
+                np.asarray(y),
+                lw=lw,
+                color=color,
+                ls=linestyle,
+                alpha=alpha,
+                label=label,
+            )
+
+    @staticmethod
+    def _display_label(plot: str, label: str, key: str, extra: bool) -> str:
+        """Keep the existing legend labels for extra Z traces."""
+        if plot == "Z Re/Im" and extra:
+            return f"{key} {label}"
+        return label
+
+    def _style_axes(self, ax, plot: str, delta: bool, key: str = "") -> None:
+        ax.grid(True, alpha=0.3)
+        ylabels = {
+            "|S| dB": "Δ|S| [dB]" if delta else "|S| [dB]",
+            "Return loss [dB]": "Δ Return loss [dB]" if delta else "Return loss [dB]",
+            "|S| mag": "Δ|S|" if delta else "|S|",
+            "Phase deg": "Δ Phase [deg]" if delta else "Phase [deg]",
+            "VSWR": "Δ VSWR" if delta else "VSWR",
+            "Complex Re/Im": "Δ S (linear)" if delta else "S (linear)",
+            "Re/Im + Phase": "Δ S Re/Im (linear)" if delta else "S Re/Im (linear)",
+            "Z Re/Im": "Z [Ω]",
+        }
+        if plot == "Z Re/Im" and key and not self._is_reflection_key(key):
+            ylabels["Z Re/Im"] = "S (Z needs Sii)"
+        if plot in ylabels:
+            ax.set_ylabel(ylabels[plot])
+        if plot == "VSWR" and not delta:
+            ax.set_ylim(bottom=1.0)
+        if delta:
+            ax.axhline(0.0, color="0.45", lw=0.8, alpha=0.7, zorder=1)
+
+    def _style_phase_axis(self, ax, delta: bool) -> None:
+        ax.set_ylabel("Δ Phase [deg]" if delta else "Phase [deg]", color="tab:green")
+        ax.tick_params(axis="y", colors="tab:green")
+
+    def _update_legend(self, ax, ax_ph=None) -> None:
+        handles, labels = ax.get_legend_handles_labels()
+        if ax_ph is not None:
+            h2, l2 = ax_ph.get_legend_handles_labels()
+            handles += h2
+            labels += l2
+        if handles:
+            ax.legend(handles, labels, loc="best", fontsize=8)
+
     def _redraw(self) -> None:
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         self._cursor_line = None
         self._cursor_text = None
         self._marker_artists = []
+        self._update_compare_controls()
         if self.network is None:
             ax.text(0.5, 0.5, "Load Touchstone or JSON", ha="center", va="center")
             self.canvas.draw_idle()
@@ -1725,7 +2559,7 @@ class SParamViewer(QWidget):
                 f"This {self.network.nports}-{ports} network stores the cell, but it\n"
                 "was never simulated (each FDTD run measures only the\n"
                 "column of its excited port).\n\n"
-                "Simulation ▸ Run All Ports (full S-matrix)\n"
+                "Simulation \u25b8 Run All Ports (full S-matrix)\n"
                 "runs one FDTD run per port and merges the columns.",
                 ha="center",
                 va="center",
@@ -1741,154 +2575,170 @@ class SParamViewer(QWidget):
         f_ghz = self.network.f / 1e9
         z0 = self._z0_from_network()
         self._marker_z0 = z0
+        delta = self._delta_active(plot)
+        reference_s = self._aligned_reference_s() if self._reference_visible() else None
+        ax_ph = None
+
         if plot == "Smith":
             self._draw_smith(ax, s, key)
-        elif plot == "|S| dB":
-            db = 20 * np.log10(np.maximum(np.abs(s), 1e-15))
-            ax.plot(f_ghz, db, lw=1.4, label=key)
-            ax.set_ylabel("|S| [dB]")
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="best")
-        elif plot == "Return loss [dB]":
-            rl = -20 * np.log10(np.maximum(np.abs(s), 1e-15))
-            ax.plot(f_ghz, rl, lw=1.4, label=key)
-            ax.set_ylabel("Return loss [dB]")
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="best")
-        elif plot == "|S| mag":
-            ax.plot(f_ghz, np.abs(s), lw=1.4, label=key)
-            ax.set_ylabel("|S|")
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="best")
-        elif plot == "Phase deg":
-            ax.plot(f_ghz, np.degrees(np.angle(s)), lw=1.4, label=key)
-            ax.set_ylabel("Phase [deg]")
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="best")
-        elif plot == "VSWR":
-            mag = np.abs(s)
-            vswr = (1 + mag) / np.maximum(1 - mag, 1e-12)
-            ax.plot(f_ghz, vswr, lw=1.4, label=key)
-            ax.set_ylabel("VSWR")
-            ax.set_ylim(bottom=1.0)
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="best")
-        elif plot == "Complex Re/Im":
-            ax.plot(f_ghz, np.real(s), lw=1.3, label=f"{key} Re")
-            ax.plot(f_ghz, np.imag(s), lw=1.3, label=f"{key} Im")
-            ax.set_ylabel("S (linear)")
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="best")
-        elif plot == "Re/Im + Phase":
-            # Real + imaginary parts on the left axis, phase on the right one
-            # (two different scales, so a twin axis instead of a second plot).
-            ax.plot(f_ghz, np.real(s), lw=1.3, label=f"{key} Re")
-            ax.plot(f_ghz, np.imag(s), lw=1.3, label=f"{key} Im")
-            ax.set_ylabel("S Re/Im (linear)")
-            ax.grid(True, alpha=0.3)
-            ax_ph = ax.twinx()
-            ax_ph.plot(
-                f_ghz,
-                np.degrees(np.angle(s)),
-                lw=1.2,
-                ls="--",
-                color="tab:green",
-                label=f"{key} Phase",
-            )
-            ax_ph.set_ylabel("Phase [deg]", color="tab:green")
-            ax_ph.tick_params(axis="y", colors="tab:green")
-            handles, labels = ax.get_legend_handles_labels()
-            h2, l2 = ax_ph.get_legend_handles_labels()
-            ax.legend(handles + h2, labels + l2, loc="best")
-        elif plot == "Z Re/Im":
-            if self._is_reflection_key(key):
-                z = np.array([self._s_to_z(complex(v), z0) for v in s], dtype=complex)
-                ax.plot(f_ghz, np.real(z), lw=1.3, label="R")
-                ax.plot(f_ghz, np.imag(z), lw=1.3, label="X")
-                ax.set_ylabel("Z [Ω]")
-            else:
-                ax.plot(f_ghz, np.real(s), lw=1.3, label="S Re")
-                ax.plot(f_ghz, np.imag(s), lw=1.3, label="S Im")
-                ax.set_ylabel("S (Z needs Sii)")
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="best")
-
-        # --- overlay the other checked traces -----------------------------
-        if len(traces) > 1 and plot == "Smith":
             for idx, (extra_key, extra_s) in enumerate(traces[1:], start=1):
                 self._draw_smith_extra(ax, extra_s, extra_key, f"C{idx % 10}")
+            if reference_s is not None:
+                for idx, (name, _current_s) in enumerate(traces):
+                    ref_trace = self._reference_trace_from_matrix(
+                        reference_s, name
+                    )
+                    if ref_trace is not None and self._trace_has_data(ref_trace):
+                        self._draw_smith_extra(
+                            ax,
+                            ref_trace,
+                            f"{name} (ref)",
+                            f"C{idx % 10}",
+                            linestyle="--",
+                            alpha=0.75,
+                        )
+            n_traces = len(traces)
+            label = "trace" if n_traces == 1 else "traces"
             ax.set_title(
-                f"Smith chart — {len(traces)} traces  "
-                f"[Z0={z0:g} Ω]"
+                f"Smith chart — {n_traces} {label}  [Z0={z0:g} \u03a9]"
             )
-            ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
-        elif len(traces) > 1 and plot in (
-            "|S| dB",
-            "Return loss [dB]",
-            "|S| mag",
-            "Phase deg",
-            "VSWR",
-            "Complex Re/Im",
-            "Z Re/Im",
-        ):
+            self._update_legend(ax)
+        else:
+            current_main, current_phase = self._series_for(plot, s, key, z0)
+            if delta and reference_s is not None:
+                ref_trace = self._reference_trace_from_matrix(
+                    reference_s, key
+                )
+                if ref_trace is not None:
+                    reference_main, _ref_phase = self._series_for(
+                        plot, ref_trace, key, z0
+                    )
+                    current_main = self._delta_main(
+                        plot, current_main, reference_main, key, s, ref_trace
+                    )
+                    if current_phase:
+                        current_phase = self._delta_phase_series(
+                            key, s, ref_trace
+                        )
+            self._plot_series(ax, f_ghz, current_main, lw=1.4)
+            if current_phase:
+                ax_ph = ax.twinx()
+                self._plot_series(
+                    ax_ph,
+                    f_ghz,
+                    current_phase,
+                    linestyle="--",
+                    lw=1.2,
+                    color="tab:green",
+                )
+                self._style_phase_axis(ax_ph, delta)
+
+            # --- overlay the other checked current traces -----------------
             for idx, (extra_key, extra_s) in enumerate(traces[1:], start=1):
                 color = f"C{idx % 10}"
-                if plot == "|S| dB":
-                    extra_db = 20 * np.log10(np.maximum(np.abs(extra_s), 1e-15))
-                    ax.plot(f_ghz, extra_db, lw=1.3, color=color, label=extra_key)
-                elif plot == "Return loss [dB]":
-                    extra_rl = -20 * np.log10(np.maximum(np.abs(extra_s), 1e-15))
-                    ax.plot(f_ghz, extra_rl, lw=1.3, color=color, label=extra_key)
-                elif plot == "|S| mag":
-                    ax.plot(f_ghz, np.abs(extra_s), lw=1.3, color=color, label=extra_key)
-                elif plot == "Phase deg":
-                    ax.plot(
+                extra_main, extra_phase = self._series_for(
+                    plot, extra_s, extra_key, z0
+                )
+                if delta and reference_s is not None:
+                    ref_trace = self._reference_trace_from_matrix(
+                        reference_s, extra_key
+                    )
+                    if ref_trace is not None:
+                        reference_main, _ref_phase = self._series_for(
+                            plot, ref_trace, extra_key, z0
+                        )
+                        extra_main = self._delta_main(
+                            plot,
+                            extra_main,
+                            reference_main,
+                            extra_key,
+                            extra_s,
+                            ref_trace,
+                        )
+                        if extra_phase:
+                            extra_phase = self._delta_phase_series(
+                                extra_key, extra_s, ref_trace
+                            )
+                if delta and plot == "Z Re/Im":
+                    extra_main = [
+                        (
+                            f"Δ{extra_key} {label[1:].strip()}"
+                            if label.startswith("Δ")
+                            else label,
+                            y,
+                        )
+                        for label, y in extra_main
+                    ]
+                else:
+                    extra_main = [
+                        (self._display_label(plot, label, extra_key, True), y)
+                        for label, y in extra_main
+                    ]
+                self._plot_series(ax, f_ghz, extra_main, color=color, lw=1.3)
+                if extra_phase:
+                    if ax_ph is None:
+                        ax_ph = ax.twinx()
+                        self._style_phase_axis(ax_ph, delta)
+                    self._plot_series(
+                        ax_ph,
                         f_ghz,
-                        np.degrees(np.angle(extra_s)),
-                        lw=1.3,
+                        extra_phase,
                         color=color,
-                        label=extra_key,
+                        lw=1.0,
+                        linestyle="--",
                     )
-                elif plot == "VSWR":
-                    mag = np.abs(extra_s)
-                    vswr = (1 + mag) / np.maximum(1 - mag, 1e-12)
-                    ax.plot(f_ghz, vswr, lw=1.3, color=color, label=extra_key)
-                elif plot == "Complex Re/Im":
-                    ax.plot(
-                        f_ghz, np.real(extra_s), lw=1.2, color=color,
-                        label=f"{extra_key} Re",
+
+            # --- dashed reference overlay ---------------------------------
+            if reference_s is not None and not delta:
+                for idx, (name, _current_s) in enumerate(traces):
+                    ref_trace = self._reference_trace_from_matrix(
+                        reference_s, name
                     )
-                    ax.plot(
-                        f_ghz, np.imag(extra_s), lw=1.0, ls="--", color=color,
-                        label=f"{extra_key} Im",
+                    if ref_trace is None:
+                        continue
+                    reference_main, reference_phase = self._series_for(
+                        plot, ref_trace, name, z0
                     )
-                elif plot == "Z Re/Im":
-                    if self._is_reflection_key(extra_key):
-                        z = np.array(
-                            [self._s_to_z(complex(v), z0) for v in extra_s],
-                            dtype=complex,
+                    color = f"C{idx % 10}"
+                    reference_main = [
+                        (
+                            f"{self._display_label(plot, label, name, idx > 0)} (ref)",
+                            y,
                         )
-                        ax.plot(
-                            f_ghz, np.real(z), lw=1.2, color=color,
-                            label=f"{extra_key} R",
+                        for label, y in reference_main
+                    ]
+                    self._plot_series(
+                        ax,
+                        f_ghz,
+                        reference_main,
+                        color=color,
+                        linestyle="--",
+                        lw=1.2,
+                        alpha=0.75,
+                    )
+                    if reference_phase:
+                        if ax_ph is None:
+                            ax_ph = ax.twinx()
+                            self._style_phase_axis(ax_ph, delta)
+                        reference_phase = [
+                            (f"{label} (ref)", y)
+                            for label, y in reference_phase
+                        ]
+                        self._plot_series(
+                            ax_ph,
+                            f_ghz,
+                            reference_phase,
+                            color=color,
+                            linestyle=":",
+                            lw=1.0,
+                            alpha=0.75,
                         )
-                        ax.plot(
-                            f_ghz, np.imag(z), lw=1.0, ls="--", color=color,
-                            label=f"{extra_key} X",
-                        )
-                    else:
-                        ax.plot(
-                            f_ghz, np.real(extra_s), lw=1.2, color=color,
-                            label=f"{extra_key} Re",
-                        )
-                        ax.plot(
-                            f_ghz, np.imag(extra_s), lw=1.0, ls="--", color=color,
-                            label=f"{extra_key} Im",
-                        )
-            ax.legend(loc="best", fontsize=8)
+
+            self._style_axes(ax, plot, delta, key=key)
+            self._update_legend(ax, ax_ph)
+            ax.set_xlabel("Frequency [GHz]")
 
         if plot != "Smith":
-            ax.set_xlabel("Frequency [GHz]")
             # markers as vertical cursors; the selected row gets a bold line
             for f in (self.markers if self._markers_visible else []):
                 x = f / 1e9
@@ -2043,7 +2893,14 @@ class SParamViewer(QWidget):
         ax.grid(False)
 
     def _draw_smith_extra(
-        self, ax, s: np.ndarray, key: str, color: str
+        self,
+        ax,
+        s: np.ndarray,
+        key: str,
+        color: str,
+        *,
+        linestyle: str = "-",
+        alpha: float = 1.0,
     ) -> None:
         """Overlay one more reflection trace on an existing Smith chart."""
         ok = np.isfinite(s)
@@ -2052,9 +2909,10 @@ class SParamViewer(QWidget):
         ax.plot(
             np.real(s),
             np.imag(s),
-            "-",
+            linestyle,
             color=color,
             lw=1.3,
+            alpha=alpha,
             zorder=4,
             label=key,
         )
@@ -2092,28 +2950,42 @@ class SParamViewer(QWidget):
             return
         mag = abs(val)
         db = 20 * np.log10(max(mag, 1e-15))
-        ang = float(np.degrees(np.angle(val)))
+        z0 = self._z0_from_network()
         if plot == "Smith":
             self._cursor_line = ax.plot(
                 np.real(val), np.imag(val), "o", color="darkorange", ms=7, zorder=6
             )[0]
         else:
             x = self.network.f[idx] / 1e9
-            if plot == "|S| dB":
-                y = db
-            elif plot == "Return loss [dB]":
-                y = -db
-            elif plot == "|S| mag":
-                y = mag
-            elif plot == "Phase deg":
-                y = ang
-            elif plot == "VSWR":
-                y = (1 + mag) / max(1 - mag, 1e-12)
+            delta = self._delta_active(plot)
+            main, _phase = self._series_for(plot, s, key, z0)
+            if delta and self.reference_network is not None:
+                ref_s = self._aligned_reference_s()
+                ref_trace = self._reference_trace_from_matrix(ref_s, key)
+                if ref_trace is not None:
+                    ref_main, _ = self._series_for(plot, ref_trace, key, z0)
+                    main = self._delta_main(
+                        plot, main, ref_main, key, s, ref_trace
+                    )
+            if not main:
+                self.canvas.draw_idle()
+                return
+            y = float(np.asarray(main[0][1])[idx])
+            if not math.isfinite(y):
+                self.canvas.draw_idle()
+                return
+            if delta:
+                if plot in ("|S| dB", "Return loss [dB]"):
+                    detail = f"Δ {y:+.2f} dB"
+                elif plot == "Phase deg":
+                    detail = f"Δ {y:+.1f}°"
+                else:
+                    detail = f"Δ {y:+.4g}"
             else:
-                y = np.real(val)
+                detail = f"{db:.2f} dB"
             self._cursor_line = ax.axvline(x, color="darkorange", lw=1.0, alpha=0.9)
             self._cursor_text = ax.annotate(
-                f"{self.network.f[idx]/1e9:.4f} GHz\n{db:.2f} dB",
+                f"{self.network.f[idx]/1e9:.4f} GHz\n{detail}",
                 xy=(x, y),
                 xytext=(8, 8),
                 textcoords="offset points",

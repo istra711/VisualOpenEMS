@@ -15,7 +15,7 @@
 | Antenne zeichnen | FreeCAD | FCStd / STEP |
 | Export | FreeCAD → Export STEP | `.step` |
 | Import | GUI **Import Geometry…** oder **FreeCAD…** | Triangle-Meshes + stl-Primitives |
-| Anbindung | **Add Port…**, **Add Assignment…** | 50 Ω Port, Material |
+| Anbindung | **Geometry → Add → Port…**, **Geometry → Add → Assignment…** | 50 Ω Port, Material |
 | Simulation | **Build Mesh** → **Run Simulation** | S-Params, Field |
 | Auswertung | **S-Params Viewer**; **Antenna**-Tab | S11/S21, Smith, Marker; Muster (Gain/Direktivität) |
 
@@ -281,6 +281,14 @@ Hinweise:
 
 ## 5. Projekt konfigurieren
 
+Das **Geometry**-Menü ist nach Aufgaben gruppiert: **Add ▸** legt Objekte an
+(Box, Cylinder, Sphere, Polygon, Wire, Curve, Lumped Element, dann Material,
+Assignment, Port, Field Dump), **Import ▸** liest CAD/PCB-Daten ein (Gerber,
+KiCad, CST, Port-Vorschläge), **NF2FF ▸** enthält die Far-Field-Box. Darunter
+stehen nur noch *Edit/Duplicate/Delete Selected*, *Variables…* und
+*Ports / Dumps…* (Ctrl+Shift+D) — dieselben Befehle wie im Rechtsklick-Menü des
+Projektbaums.
+
 ### 5.0 Simulations-Parameter (eigenes Fenster)
 
 ![Simulation Parameters](images/dialog_sim_params.png)
@@ -399,8 +407,8 @@ Reparatur-Dialog und Help → „Mesh repair (critical cells)…").
 
 **Material.** Art (dielectric / pec), εr, κ und tan δ — für FR4: εr 4,4, tan δ 0,02; Kupfer als pec.
 
-1. **Add Material…** — z. B. `substrate` (εr=4,4, tanδ=0,02), `copper`
-2. **Add Assignment…**
+1. **Geometry → Add → Material…** — z. B. `substrate` (εr=4,4, tanδ=0,02), `copper`
+2. **Geometry → Add → Assignment…**
    - Object: `substrate` (oder Substrat-Name aus Import)
    - Role: `dielectric` / `pec` / `conductor` …
    - Material wählen
@@ -412,7 +420,7 @@ Reparatur-Dialog und Help → „Mesh repair (critical cells)…").
 
 **Port.** lumped, 50 Ω, Richtung, Mesh dirs und Start/Stop in mm. Beispiel: der Probe-Port des GPS-Presets — 1 mm × 1 mm von der Ground-Ebene (z = 0) bis zur Patch-Oberkante (z = 1,6 mm).
 
-1. **Add Port…**
+1. **Geometry → Add → Port…**
 2. Typ: **lumped** (Patch) — Resistanz **50**
 3. start / stop: Kante des Patches (mm), z. B.  
    `start=[-1.0, 0.0, -1.0]`, `stop=[1.0, 0.0, 1.0]`
@@ -478,6 +486,76 @@ Warning) — der Mesh Viewer umrahmt solche Primitive rot und schreibt
 *OUTSIDE DOMAIN* in die Übersicht.
 
 ---
+
+### 5.7 Variablen-Sweep
+
+Ein Sweep ist ein **Projektobjekt im Projektbaum**, kein CSX-Geometrieelement.
+Der Eintrag `Sweep: …` lässt sich per Doppelklick konfigurieren und über
+`Sweep enabled` ein- oder ausschalten. Es gibt zwei Zieltypen:
+
+* **Geometry variable** – eine Variable aus *Geometry → Variables…*. Der Wert
+  wird pro Punkt gesetzt und alle Ausdrücke in Primitives, Ports, Dumps und der
+  NF2FF-Box werden neu ausgewertet. Abhängige Variablen folgen automatisch.
+  Bei einer Formelvariable ersetzt der Sweep-Wert für diesen Punkt die Formel;
+  der Dialog weist ausdrücklich darauf hin.
+* **Port excitation phase** – die Erregungsphase eines aktiven Ports in Grad.
+  Geometrie, Mesh und Variablen bleiben unverändert. Dieser Modus ist für
+  Antennenmuster gedacht; NF2FF wird automatisch eingeschaltet und eine
+  vollständige S-Matrix ist deaktiviert, weil S-Parameter in einem linearen
+  Netzwerk nicht von der globalen Erregungsphase abhängen. Der aktuelle Runner
+  startet trotzdem pro Phase ein normales Skript; die Wiederverwendung eines
+  gemeinsamen Meshes ist eine spätere Optimierung.
+
+Werte werden über **Start / Stop / Points** oder eine **explizite Liste**
+eingegeben (maximal 200 Punkte). Der Dialog zeigt:
+* ob die Variable überhaupt in einem Feld verwendet wird,
+* wie viele Punkte × Ports als FDTD-Läufe entstehen,
+* ob ein neues Mesh pro Punkt nötig ist,
+* bei Port-Phase: ob der Port `excite_port` ist und warum ein einzelner Port
+  nur eine globale Phasenverschiebung erzeugt.
+
+**Simulation → Run Sweep** legt einen gestagten Run mit einem Unterordner pro
+Punkt an (`sweep/point-000`, `sweep/point-001`, …). Jeder Punkt enthält einen
+eigenen Projekt-Snapshot, ein eigenes Skript und – wenn aktiviert – ein eigenes
+`nf2ff/nf2ff.json`; das geöffnete Projekt selbst wird nicht verändert. Bei
+mehreren Ports kann pro Punkt die vollständige S-Matrix über alle Erregungen
+berechnet werden. Für Geometriepunkte wird das Mesh pro Punkt/Port-Lauf neu
+gebaut; der Dialog warnt vor Laufzeit und Plattenplatz. Feld-Dumps sind
+standardmäßig aus, NF2FF ist bei Port-Phase verpflichtend.
+
+Nach dem Lauf öffnet **Simulation → Sweep Results…** die Punktübersicht:
+Sij auswählen, alle Punkte überlagern, als CSV/PNG exportieren oder einen Punkt
+als aktuelles S-Parameter-Netzwerk bzw. als Referenz laden. Der Run wird wie
+jeder andere Lauf committed oder verworfen; `sweep.json` bleibt Teil des Runs.
+
+### 5.8 Antennenmuster im Sweep
+
+Wenn pro Punkt NF2FF gesammelt wurde, öffnet **Sweep Results… → Antenna
+patterns…** oder **Simulation → Sweep Antenna Patterns…** einen eigenen
+Muster-Browser. Er benötigt `nf2ff/nf2ff.json` pro Punkt.
+
+* **2D-Schnitte** (E-Plane, H-Plane, Azimuth) werden für alle angehakten Punkte
+  in **einem Diagramm** überlagert und nach Sweep-Wert eingefärbt. Bei einer
+  Phasen-Sweep ist die Farbskala zyklisch (hsv, 0…360°).
+* **Gain vs Frequency** und **Radiated Efficiency vs Frequency** zeigen alle
+  Punkte als Kurvenschar.
+* **3D Pattern** wird nicht als Stapel überlagert, sondern als **Film**
+  abgespielt: Slider, Play/Pause, fps und Frame-Anzeige. Ein 0…360°-Sweep kann
+  nahtlos loopen. GIF/MP4-Export zeichnet genau diese Frames auf.
+* CSV/PNG-Export, Help-Button und Erklärungen zu Achsen, Feldern und
+  Phasen-Caveats sind direkt im Dialog.
+
+**Wichtig zur Phase:** `excite_phase_deg` wirkt nur auf Ports mit
+`excite_port=True`. Bei **einem** erregten Port verschiebt eine Phasenänderung
+nur das gesamte komplexe Fernfeld; die Gain-/Directivity-Magnitude bleibt
+gleich. Für eine sichtbare Musteränderung müssen **mindestens zwei Ports
+gleichzeitig** erregt werden und die **relative Phase** eines Ports gesweept
+werden (typisch: Dual-Feed einer CP-Antenne). S-Parameter sind für diesen
+Vergleich nicht das richtige Ergebnis; NF2FF und der Muster-Browser sind es.
+
+Die ausführliche Hilfe ist außerdem über **Help → Variable Sweep** und
+**Help → Sweep Antenna Patterns** sowie über die Help-Buttons in beiden
+Dialogen erreichbar.
 
 ## 6. Simulieren
 
@@ -558,6 +636,25 @@ bzw. nachdem der Solver gelaufen ist:
    - **Export…** / Rechtsklick → Export S-parameters: Touchstone (.sNp),
      CSV (Frequenz + jedes Sij als dB/Phase/Real/Imaginär) und ASCII-Tabelle;
      der Dateiname folgt der aktuell geladenen S-Parameter-Datei
+   - **Compare ▾ → Open reference file…** lädt eine zweite Touchstone- oder
+     `sparams.json`-Datei als gestrichelte Vergleichsspur (z. B. aus einem
+     früheren Lauf oder einem anderen Projekt). **Delta** zeichnet die Differenz
+     zum aktuellen Lauf, die Markerliste zeigt zusätzlich Referenzwert und Δ dB.
+     Verglichen wird nur der gemeinsame Frequenzbereich; die Referenzimpedanz
+     wird auf die aktuelle Z0 umgerechnet. **Compare ▾ → Previous committed
+     run** bzw. **Simulation → Compare with previous run** nimmt den neuesten
+     festgeschriebenen Lauf vor dem aktiven; **Simulation → Run history… → Use
+     as S-param reference** erlaubt jeden anderen Lauf, ohne den aktiven Run zu
+     wechseln. In der Liste **Scan…** lädt ein Rechtsklick eine Datei als
+     aktuellen Lauf oder über **Use as reference** als Vergleichsspur.
+     **Compare ▾ → Port mapping…** ordnet die aktuellen Ports den Referenzports
+     zu (bei unterschiedlicher Portzahl oder anderer Reihenfolge); die Zuordnung
+     wird mitgespeichert. **Compare ▾ → Show reference / Clear reference** blendet
+     die Spur aus oder verwirft sie. **Export… → Comparison CSV** schreibt
+     aktuelle/referenzierte Werte und Δ-Spalten, **Comparison report** eine
+     Zusammenfassung mit max/RMS ΔdB, Frequenz bei max, ΔPhase und max|ΔS|. Die
+     gewählte Referenz wird im Projekt gespeichert und beim Öffnen
+     wiederhergestellt.
 2. **Pop-out S-Graph** — Plot in Extra-Fenster
 3. **Antenna**-Tab / **Simulation → Antenna Pattern Viewer** — NF2FF-Fernfeld:
    3D-Polar des Gewinns, 2D-Polarschnitte (E/H-Ebene), Direktivität/Gain/η
@@ -643,8 +740,8 @@ Unter `Settings` → **Viewer settings…** liegen alle Field-Viewer-Defaults (A
 - [ ] GUI: **New Project**
 - [ ] Mesh: 2,2–2,7 GHz, target 2,45e9, unit mm
 - [ ] **Import Geometry…** → STEP / FCStd
-- [ ] **Add Assignment…** Substrat (dielectric) + copper
-- [ ] **Add Port…** lumped 50 Ω am Feed (oder FreeCAD-Ports prüfen)
+- [ ] **Geometry → Add → Assignment…** Substrat (dielectric) + copper
+- [ ] **Geometry → Add → Port…** lumped 50 Ω am Feed (oder FreeCAD-Ports prüfen)
 - [ ] **Fit NF2FF to Geometry** + enabled
 - [ ] **Save…**
 - [ ] **Build Mesh** → **Run Simulation**

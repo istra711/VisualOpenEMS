@@ -127,7 +127,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 4 - Create the FR4 material
 
-**Where:** **Geometry -> Add Material...**
+**Where:** **Geometry -> Add -> Material...**
 
 **Do:**
 
@@ -143,7 +143,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 5 - Add the PCB substrate
 
-**Where:** **Geometry -> Add Box...**
+**Where:** **Geometry -> Add -> Box...**
 
 **Do:**
 
@@ -159,7 +159,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 6 - Bottom ground plane - GND_bottom
 
-**Where:** **Geometry -> Add Box...**
+**Where:** **Geometry -> Add -> Box...**
 
 **Do:**
 
@@ -175,7 +175,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 7 - Top ground plane - GND_top
 
-**Where:** **Geometry -> Add Box...**
+**Where:** **Geometry -> Add -> Box...**
 
 **Do:**
 
@@ -192,7 +192,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 8 - Radiating arm - IFA_arm
 
-**Where:** **Geometry -> Add Box...**
+**Where:** **Geometry -> Add -> Box...**
 
 **Do:**
 
@@ -208,7 +208,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 9 - Shorting stub - IFA_short
 
-**Where:** **Geometry -> Add Box...**
+**Where:** **Geometry -> Add -> Box...**
 
 **Do:**
 
@@ -224,7 +224,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 10 - Feed strip and feed gap - IFA_feed
 
-**Where:** **Geometry -> Add Box...**
+**Where:** **Geometry -> Add -> Box...**
 
 **Do:**
 
@@ -240,7 +240,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 11 - Add the 50 ohm feed port
 
-**Where:** **Geometry -> Add Port...** (also Ports / Dumps, Ctrl+Shift+D)
+**Where:** **Geometry -> Add -> Port...** (also Ports / Dumps, Ctrl+Shift+D)
 
 **Do:**
 
@@ -257,7 +257,7 @@ y = 35...45 mm where the top copper is absent. The **feed gap** is the
 
 ### Step 12 - Add the E-field dump
 
-**Where:** **Geometry -> Add Field Dump...**
+**Where:** **Geometry -> Add -> Field Dump...**
 
 **Do:**
 

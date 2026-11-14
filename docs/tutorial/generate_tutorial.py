@@ -1830,6 +1830,13 @@ def main() -> int:
     return 0
 
 
+_GEOMETRY_ADD_ITEMS = [
+    "Box…", "Cylinder…", "Sphere…", "Lumped Element (R/L/C)…", "Polygon…",
+    "Extruded Polygon…", "Wire…", "Curve…", "", "Material…", "Assignment…",
+    "Port…", "Field Dump…",
+]
+
+
 def _grab_menu_assets(meta: dict) -> dict[str, Path]:
     """Real QMenu screenshots with the target entry highlighted."""
     from PIL import Image, ImageDraw
@@ -1849,51 +1856,23 @@ def _grab_menu_assets(meta: dict) -> dict[str, Path]:
         ),
         "geometry_material": (
             "Geometry",
-            [
-                "Add Boxâ€¦", "Add Cylinderâ€¦", "Add Sphereâ€¦",
-                "Add Lumped Element (R/L/C)â€¦", "Add Polygonâ€¦", "Add Extruded Polygonâ€¦",
-                "Add Wireâ€¦", "Add Curveâ€¦", "", "Variablesâ€¦", "",
-                "Add Assignmentâ€¦", "Add Materialâ€¦", "", "Add Portâ€¦",
-                "Add Field Dumpâ€¦", "", "Ports / Dumpsâ€¦", "",
-                "Edit NF2FF Boxâ€¦", "Fit NF2FF to Geometry",
-            ],
-            "Add Materialâ€¦",
+            _GEOMETRY_ADD_ITEMS,
+            "Material…",
         ),
         "geometry_box": (
             "Geometry",
-            [
-                "Add Boxâ€¦", "Add Cylinderâ€¦", "Add Sphereâ€¦",
-                "Add Lumped Element (R/L/C)â€¦", "Add Polygonâ€¦", "Add Extruded Polygonâ€¦",
-                "Add Wireâ€¦", "Add Curveâ€¦", "", "Variablesâ€¦", "",
-                "Add Assignmentâ€¦", "Add Materialâ€¦", "", "Add Portâ€¦",
-                "Add Field Dumpâ€¦", "", "Ports / Dumpsâ€¦", "",
-                "Edit NF2FF Boxâ€¦", "Fit NF2FF to Geometry",
-            ],
-            "Add Boxâ€¦",
+            _GEOMETRY_ADD_ITEMS,
+            "Box…",
         ),
         "geometry_port": (
             "Geometry",
-            [
-                "Add Boxâ€¦", "Add Cylinderâ€¦", "Add Sphereâ€¦",
-                "Add Lumped Element (R/L/C)â€¦", "Add Polygonâ€¦", "Add Extruded Polygonâ€¦",
-                "Add Wireâ€¦", "Add Curveâ€¦", "", "Variablesâ€¦", "",
-                "Add Assignmentâ€¦", "Add Materialâ€¦", "", "Add Portâ€¦",
-                "Add Field Dumpâ€¦", "", "Ports / Dumpsâ€¦", "",
-                "Edit NF2FF Boxâ€¦", "Fit NF2FF to Geometry",
-            ],
-            "Add Portâ€¦",
+            _GEOMETRY_ADD_ITEMS,
+            "Port…",
         ),
         "geometry_dump": (
             "Geometry",
-            [
-                "Add Boxâ€¦", "Add Cylinderâ€¦", "Add Sphereâ€¦",
-                "Add Lumped Element (R/L/C)â€¦", "Add Polygonâ€¦", "Add Extruded Polygonâ€¦",
-                "Add Wireâ€¦", "Add Curveâ€¦", "", "Variablesâ€¦", "",
-                "Add Assignmentâ€¦", "Add Materialâ€¦", "", "Add Portâ€¦",
-                "Add Field Dumpâ€¦", "", "Ports / Dumpsâ€¦", "",
-                "Edit NF2FF Boxâ€¦", "Fit NF2FF to Geometry",
-            ],
-            "Add Field Dumpâ€¦",
+            _GEOMETRY_ADD_ITEMS,
+            "Field Dump…",
         ),
         "simulation_params": (
             "Simulation",
@@ -2213,12 +2192,12 @@ def _build_slides2() -> list:
             step_label="STEP 04 / 18",
             title="Create the FR4 material",
             caption=(
-                "Geometry -> Add Materialâ€¦: kind dielectric, eps_r = 4.4, "
+                "Geometry -> Add -> Materialâ€¦: kind dielectric, eps_r = 4.4, "
                 "tan_d = 0.02. Materials are listed in the project tree and can "
                 "be reused by every primitive."
             ),
             images=[
-                menu("geometry_material", "Geometry", "Geometry -> Add Materialâ€¦"),
+                menu("geometry_material", "Geometry", "Geometry -> Add -> Materialâ€¦"),
                 assets["dialog_material.png"],
             ],
             weights=[0.46, 0.54],
@@ -2232,12 +2211,12 @@ def _build_slides2() -> list:
             step_label="STEP 05 / 18",
             title="Add the PCB substrate",
             caption=(
-                "Geometry -> Add Boxâ€¦: name PCB_FR4, material FR4, start 0/0/0, "
+                "Geometry -> Add -> Boxâ€¦: name PCB_FR4, material FR4, start 0/0/0, "
                 "stop 25/45/1.6. This box is the 1.6 mm FR4 board; it has the "
                 "lowest priority so copper stays on top."
             ),
             images=[
-                menu("geometry_box", "Geometry", "Geometry -> Add Boxâ€¦"),
+                menu("geometry_box", "Geometry", "Geometry -> Add -> Boxâ€¦"),
                 assets["dialog_box_pcb.png"],
             ],
             weights=[0.46, 0.54],
@@ -2299,12 +2278,12 @@ def _build_slides2() -> list:
             step_label="STEP 09 / 18",
             title="Add the 50 ohm feed port",
             caption=(
-                "Geometry -> Add Portâ€¦: lumped, 50 ohm, direction y, width "
+                "Geometry -> Add -> Portâ€¦: lumped, 50 ohm, direction y, width "
                 "\"Area - as wide as the metal (x)\". Start 35.5 / stop 35.0 mm "
                 "and metal reference IFA_feed."
             ),
             images=[
-                menu("geometry_port", "Geometry", "Geometry -> Add Portâ€¦"),
+                menu("geometry_port", "Geometry", "Geometry -> Add -> Portâ€¦"),
                 assets["dialog_port.png"],
             ],
             weights=[0.43, 0.57],
@@ -2320,12 +2299,12 @@ def _build_slides2() -> list:
             step_label="STEP 10 / 18",
             title="Add the E-field dump",
             caption=(
-                "Geometry -> Add Field Dumpâ€¦: quantity E, frequency 5.8 GHz, "
+                "Geometry -> Add -> Field Dumpâ€¦: quantity E, frequency 5.8 GHz, "
                 "file type VTK, box around the antenna. The Field Viewer reads "
                 "this .vtr file later."
             ),
             images=[
-                menu("geometry_dump", "Geometry", "Geometry -> Add Field Dumpâ€¦"),
+                menu("geometry_dump", "Geometry", "Geometry -> Add -> Field Dumpâ€¦"),
                 assets["dialog_dump.png"],
             ],
             weights=[0.43, 0.57],
@@ -2552,7 +2531,7 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
         },
         {
             "title": "Create the FR4 material",
-            "where": "**Geometry -> Add Material...**",
+            "where": "**Geometry -> Add -> Material...**",
             "do": [
                 "Name **FR4**, kind **dielectric**.",
                 "eps_r = **4.4**, kappa = 0, tan_d = **0.02**.",
@@ -2566,7 +2545,7 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
         },
         {
             "title": "Add the PCB substrate",
-            "where": "**Geometry -> Add Box...**",
+            "where": "**Geometry -> Add -> Box...**",
             "do": [
                 "Name **PCB_FR4**, material **FR4**, priority **1**.",
                 "Start **0 / 0 / 0 mm**, stop **25 / 45 / 1.6 mm**.",
@@ -2580,7 +2559,7 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
         },
         {
             "title": "Add the ground planes",
-            "where": "**Geometry -> Add Box...** (twice), or duplicate the box with Ctrl+D",
+            "where": "**Geometry -> Add -> Box...** (twice), or duplicate the box with Ctrl+D",
             "do": [
                 "Bottom ground: **0 / 0 / 0** to **25 / 45 / 0.035 mm**, copper, priority 10.",
                 "Top ground: **0 / 0 / 1.6** to **25 / 35 / 1.635 mm**, copper, priority 10.",
@@ -2591,7 +2570,7 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
         },
         {
             "title": "Add the IFA arm",
-            "where": "**Geometry -> Add Box...**",
+            "where": "**Geometry -> Add -> Box...**",
             "do": [
                 "Name **IFA_arm**, material **copper_antenna** (or copper), priority 10.",
                 "Start **10 / 38 / 1.6 mm**, stop **17 / 40 / 1.635 mm**.",
@@ -2602,7 +2581,7 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
         },
         {
             "title": "Add the short and the feed",
-            "where": "**Geometry -> Add Box...** (two more boxes)",
+            "where": "**Geometry -> Add -> Box...** (two more boxes)",
             "do": [
                 "Short: **10 / 35 / 1.6** to **12 / 40 / 1.635 mm**.",
                 "Feed: **12.5 / 35.5 / 1.6** to **14.5 / 38 / 1.635 mm**.",
@@ -2613,7 +2592,7 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
         },
         {
             "title": "Add the 50 ohm feed port",
-            "where": "**Geometry -> Add Port...** (also in the Ports / Dumps window, Ctrl+Shift+D)",
+            "where": "**Geometry -> Add -> Port...** (also in the Ports / Dumps window, Ctrl+Shift+D)",
             "do": [
                 "Type **lumped**, resistance **50 ohm**, direction **y**.",
                 "Width (lumped): **Area - as wide as the metal (x)**.",
@@ -2628,7 +2607,7 @@ def _write_storyboard2(slides: list, poster: Path) -> Path:
         },
         {
             "title": "Add the E-field dump",
-            "where": "**Geometry -> Add Field Dump...**",
+            "where": "**Geometry -> Add -> Field Dump...**",
             "do": [
                 "Name **E_5p8**, quantity **E**, frequency **5.8 GHz**, file type **VTK (.vtr)**.",
                 "Box: **-5 / 28 / -3** to **30 / 47 / 14 mm**; optional resolution 0.2 mm.",
@@ -2914,11 +2893,11 @@ def _build_slides3() -> list:
         "Simulation -> Simulation Parameters…  (Ctrl+Shift+P)",
     )
     menu_mat = menu(
-        "geometry_material", "Geometry", "Geometry -> Add Material…"
+        "geometry_material", "Geometry", "Geometry -> Add -> Material…"
     )
-    menu_box = menu("geometry_box", "Geometry", "Geometry -> Add Box…")
-    menu_port = menu("geometry_port", "Geometry", "Geometry -> Add Port…")
-    menu_dump = menu("geometry_dump", "Geometry", "Geometry -> Add Field Dump…")
+    menu_box = menu("geometry_box", "Geometry", "Geometry -> Add -> Box…")
+    menu_port = menu("geometry_port", "Geometry", "Geometry -> Add -> Port…")
+    menu_dump = menu("geometry_dump", "Geometry", "Geometry -> Add -> Field Dump…")
     menu_meshp = menu(
         "mesh_params", "Mesh", "Mesh -> Mesh Parameters…  (Ctrl+Shift+M)"
     )
@@ -3020,7 +2999,7 @@ def _build_slides3() -> list:
     add(
         4,
         "Create the FR4 material",
-        "Geometry -> Add Material…: kind dielectric, eps_r = 4.4, tan_d = 0.02. "
+        "Geometry -> Add -> Material…: kind dielectric, eps_r = 4.4, tan_d = 0.02. "
         "The material is used by the substrate box; copper is a separate PEC material.",
         [menu_mat, assets["dialog_material.png"]],
         weights=[0.46, 0.54],
@@ -3029,7 +3008,7 @@ def _build_slides3() -> list:
     add(
         5,
         "Add the PCB substrate",
-        "Geometry -> Add Box…: name PCB_FR4, material FR4, priority 1. Start "
+        "Geometry -> Add -> Box…: name PCB_FR4, material FR4, priority 1. Start "
         "0/0/0 mm, stop 25/45/1.6 mm. Start is the lower corner, Stop the upper "
         "corner; x is board width, y board length, z through the substrate.",
         [menu_box, assets["dialog_box_pcb.png"]],
@@ -3099,7 +3078,7 @@ def _build_slides3() -> list:
     add(
         11,
         "Add the 50 ohm feed port",
-        "Geometry -> Add Port…: lumped, 50 ohm, direction y, width area along x. "
+        "Geometry -> Add -> Port…: lumped, 50 ohm, direction y, width area along x. "
         "Start 13.5/35.5/1.6, Stop 13.5/35.0/1.6 mm; metal reference IFA_feed. "
         "It spans the 0.5 mm gap and is 2 mm wide.",
         [menu_port, assets["dialog_port.png"]],
@@ -3120,7 +3099,7 @@ def _build_slides3() -> list:
     add(
         12,
         "Add the E-field dump",
-        "Geometry -> Add Field Dump…: quantity E, frequency 5.8 GHz, file type VTK, "
+        "Geometry -> Add -> Field Dump…: quantity E, frequency 5.8 GHz, file type VTK, "
         "box around the antenna. The Field Viewer reads this .vtr file later.",
         [menu_dump, assets["dialog_dump.png"]],
         weights=[0.43, 0.57],
@@ -3260,57 +3239,57 @@ def _write_storyboard3(slides: list, poster: Path) -> Path:
           "Press **Apply**; the computed block shows max cell 1.2 mm and the air margin."],
          "The computed block lists 5.0 / 6.6 / 5.8 GHz and max cell lambda/10 = 1.2 mm.",
          ["assets/menu_simulation_params.png", "assets/dialog_sim_params.png"]),
-        ("Create the FR4 material", "**Geometry -> Add Material...**",
+        ("Create the FR4 material", "**Geometry -> Add -> Material...**",
          ["Name **FR4**, kind **dielectric**.",
           "eps_r = **4.4**, kappa = 0, tan_d = **0.02**.",
           "Press **OK**; FR4 appears under Materials."],
          "The material row shows FR4 (dielectric) with eps_r 4.4.",
          ["assets/menu_geometry_material.png", "assets/dialog_material.png"]),
-        ("Add the PCB substrate", "**Geometry -> Add Box...**",
+        ("Add the PCB substrate", "**Geometry -> Add -> Box...**",
          ["Name **PCB_FR4**, material **FR4**, priority **1**.",
           "Start **0 / 0 / 0 mm**, Stop **25 / 45 / 1.6 mm**.",
           "Start is the lower corner, Stop the upper corner; x = board width, y = board length, z = through the substrate."],
          "The tree shows Prim: PCB_FR4; the mesh viewer draws the blue substrate.",
          ["assets/menu_geometry_box.png", "assets/dialog_box_pcb.png"]),
-        ("Bottom ground plane - GND_bottom", "**Geometry -> Add Box...**",
+        ("Bottom ground plane - GND_bottom", "**Geometry -> Add -> Box...**",
          ["Start **0 / 0 / 0 mm**, Stop **25 / 45 / 0.035 mm**.",
           "Material **copper**, priority **10**.",
           "It covers the whole board: return/reference plane; the zmin boundary is also PEC."],
          "The bottom copper covers the full board and is visible as the reference plane.",
          ["assets/layout_diagram.png", "assets/dialog_box_gnd_bottom.png"]),
-        ("Top ground plane - GND_top", "**Geometry -> Add Box...**",
+        ("Top ground plane - GND_top", "**Geometry -> Add -> Box...**",
          ["Start **0 / 0 / 1.6 mm**, Stop **25 / 35 / 1.635 mm**.",
           "Material **copper**, priority **10**.",
           "It stops at y = 35 mm. The strip **y = 35...45 mm** is the 10 mm antenna clearance - no box, just the absence of top copper.",
           "It is the local feed reference. A production board would stitch it to the bottom ground with vias."],
          "In the XY slice at z = 1.6 mm the top copper covers y = 0...35 only.",
          ["assets/layout_diagram.png", "assets/dialog_box_gnd.png"]),
-        ("Radiating arm - IFA_arm", "**Geometry -> Add Box...**",
+        ("Radiating arm - IFA_arm", "**Geometry -> Add -> Box...**",
          ["Start **10 / 38 / 1.6 mm**, Stop **17 / 40 / 1.635 mm**.",
           "Material **copper**, priority **10**; 7 mm long, 2 mm wide.",
           "The open end is at x = 17 mm; this is the main radiator."],
          "The top view shows the horizontal arm at the ground edge.",
          ["assets/layout_diagram.png", "assets/dialog_box_arm.png"]),
-        ("Shorting stub - IFA_short", "**Geometry -> Add Box...**",
+        ("Shorting stub - IFA_short", "**Geometry -> Add -> Box...**",
          ["Start **10 / 35 / 1.6 mm**, Stop **12 / 40 / 1.635 mm**.",
           "Material **copper**, priority **10**; 2 mm wide, 5 mm high.",
           "It connects the arm at y = 40 to the top ground at y = 35 and sets the quarter-wave resonance."],
          "The short is the vertical strip at the left end of the arm.",
          ["assets/layout_diagram.png", "assets/dialog_box_short.png"]),
-        ("Feed strip and feed gap - IFA_feed", "**Geometry -> Add Box...**",
+        ("Feed strip and feed gap - IFA_feed", "**Geometry -> Add -> Box...**",
          ["Start **12.5 / 35.5 / 1.6 mm**, Stop **14.5 / 38 / 1.635 mm**.",
           "Material **copper**, priority **10**; 2 mm wide.",
           "It connects the arm at y = 38 to the feed point at y = 35.5. The **0.5 mm gap** y = 35.0...35.5 to GND_top is the port gap - no box."],
          "The feed is the middle vertical strip; the gap to the top ground is clearly visible.",
          ["assets/layout_diagram.png", "assets/dialog_box_feed.png"]),
-        ("Add the 50 ohm feed port", "**Geometry -> Add Port...** (also Ports / Dumps, Ctrl+Shift+D)",
+        ("Add the 50 ohm feed port", "**Geometry -> Add -> Port...** (also Ports / Dumps, Ctrl+Shift+D)",
          ["Type **lumped**, resistance **50 ohm**, direction **y**.",
           "Width (lumped): **Area - as wide as the metal (x)**.",
           "Start **13.5 / 35.5 / 1.6 mm**, Stop **13.5 / 35.0 / 1.6 mm**.",
           "Metal reference **IFA_feed**; the list marks `area along X`."],
          "The port spans the 0.5 mm gap and is 2 mm wide, exactly the feed strip width.",
          ["assets/menu_geometry_port.png", "assets/dialog_port.png"]),
-        ("Add the E-field dump", "**Geometry -> Add Field Dump...**",
+        ("Add the E-field dump", "**Geometry -> Add -> Field Dump...**",
          ["Name **E_5p8**, quantity **E**, frequency **5.8 GHz**, file type **VTK (.vtr)**.",
           "Box **-5 / 28 / -3** to **30 / 47 / 14 mm**; optional resolution 0.2 mm.",
           "Enable **Frequency domain** and **Enabled**."],

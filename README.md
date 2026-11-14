@@ -417,8 +417,8 @@ python app\main.py
 ### Import your own geometry
 
 1. **File → Import Geometry…** — select `.step`, `.fcstd`, `.stl`, `.obj`, or a folder
-2. **Add Port…** — define lumped/waveguide ports
-3. **Add Assignment…** — assign materials to objects
+2. **Geometry → Add → Port…** — define lumped/waveguide ports
+3. **Geometry → Add → Assignment…** — assign materials to objects
 4. **Build Mesh** (Ctrl+M) — generate the FDTD mesh
 5. **Run Simulation** (Ctrl+R) — execute the FDTD solver into a staging folder
 6. **Simulation → Commit staged results** — publish the run as the active result

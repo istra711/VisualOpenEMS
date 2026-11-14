@@ -13,6 +13,7 @@ from app.models.project import (
     Project,
     SimSpec,
 )
+from app.models.sweep import SweepSpec
 
 __all__ = [
     "Project",
@@ -28,4 +29,5 @@ __all__ = [
     "GerberSpec",
     "KiCadSpec",
     "CstSpec",
+    "SweepSpec",
 ]

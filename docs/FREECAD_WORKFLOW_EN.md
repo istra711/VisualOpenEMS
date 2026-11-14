@@ -188,7 +188,7 @@ Missing start / identical points → the port is skipped (a log warning may appe
 1. **Simulation → Simulation Parameters…** (or **Ctrl+Shift+P**) —
    end_criteria, max_timesteps, boundary ×6 + PML, air margin, NF2FF.
    **Apply** writes to the project.
-2. Optional: **Geometry → Fit NF2FF** (fit the radiation-pattern box to the geometry).
+2. Optional: **Geometry → NF2FF → Fit NF2FF to Geometry** (fit the radiation-pattern box to the geometry).
 3. **Simulation → Run Simulation** (or **Ctrl+R**).
 4. Watch the **Log** tab (openEMS run).
 5. Result: **Simulation → S-Params Viewer** (S-matrix / S11) and/or the

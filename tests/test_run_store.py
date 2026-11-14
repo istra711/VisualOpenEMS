@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from app.models.project import Project
-from app.storage.run_store import ProjectStore
+from app.storage.run_store import ProjectStore, find_sparams_in_run
 
 
 def _write_run(root: Path) -> None:
@@ -14,6 +14,17 @@ def _write_run(root: Path) -> None:
     (root / "sparams" / "sparams.json").write_text("{}", encoding="utf-8")
     (root / "csx.xml").write_text("<xml/>", encoding="utf-8")
     (root / "simulation").mkdir(exist_ok=True)
+
+
+def test_find_sparams_in_run_does_not_cross_run_boundaries(tmp_path):
+    run = tmp_path / "runs" / "run-a"
+    (run / "sparams").mkdir(parents=True)
+    (run / "sparams" / "sparams.json").write_text("{}", encoding="utf-8")
+    touch = run / "sparams" / "sparams.s2p"
+    touch.write_text("# Hz S RI R 50\n", encoding="utf-8")
+
+    assert find_sparams_in_run(run) == touch
+    assert find_sparams_in_run(tmp_path / "runs" / "empty") is None
 
 
 def test_commit_publishes_immutable_run(tmp_path):

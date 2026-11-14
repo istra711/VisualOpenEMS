@@ -43,6 +43,17 @@ def _menu(label: str):
     raise AssertionError(f"menu {label!r} missing")
 
 
+def _submenu(menu, label: str):
+    act = _find(menu, label)
+    sub = act.menu()
+    assert sub is not None, f"{label!r} is not a submenu"
+    return sub
+
+
+def _labels(menu) -> list[str]:
+    return [_strip(a.text()) for a in menu.actions()]
+
+
 def _win():
     """One shared QApplication + MainWindow (a second window aborts Qt)."""
     global _APP, _WIN
@@ -69,10 +80,46 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("File"), "Exit").shortcut().toString() == "Ctrl+Q"
     assert _find(_menu("File"), "Export STEP\u2026") is not None
     assert _find(_menu("File"), "Import CST Studio Package\u2026") is not None
-    assert _find(_menu("Geometry"), "Import CST Studio Package\u2026") is not None
-    assert _find(_menu("Geometry"), "Add Extruded Polygon\u2026") is not None
-    assert _find(_menu("Geometry"), "Add Wire\u2026") is not None
-    assert _find(_menu("Geometry"), "Add Curve\u2026") is not None
+    # Geometry: creation lives in "Add", files in "Import", far field in
+    # "NF2FF" - the top level only keeps the edit actions and the two windows.
+    geom = _menu("Geometry")
+    geom_labels = _labels(geom)
+    assert geom_labels == [
+        "Add",
+        "Import",
+        "",
+        "Edit Selected\u2026",
+        "Duplicate Selected",
+        "Delete Selected",
+        "",
+        "Variables\u2026",
+        "Ports / Dumps\u2026",
+        "NF2FF",
+    ], geom_labels
+    add = _submenu(geom, "Add")
+    assert _labels(add) == [
+        "Box\u2026",
+        "Cylinder\u2026",
+        "Sphere\u2026",
+        "Lumped Element (R/L/C)\u2026",
+        "Polygon\u2026",
+        "Extruded Polygon\u2026",
+        "Wire\u2026",
+        "Curve\u2026",
+        "",
+        "Material\u2026",
+        "Assignment\u2026",
+        "Port\u2026",
+        "Field Dump\u2026",
+    ], _labels(add)
+    imp = _submenu(geom, "Import")
+    assert _find(imp, "CST Studio Package\u2026") is not None
+    assert _find(imp, "Gerber/Excellon\u2026") is not None
+    assert _find(imp, "KiCad PCB\u2026") is not None
+    assert _find(imp, "Ports from KiCad nets\u2026") is not None
+    assert _find(imp, "Ports from Gerber\u2026") is not None
+    nf2ff = _submenu(geom, "NF2FF")
+    assert _labels(nf2ff) == ["Edit NF2FF Box\u2026", "Fit NF2FF to Geometry"], _labels(nf2ff)
     assert _find(_menu("Mesh"), "Build Mesh").shortcut().toString() == "Ctrl+M"
     assert _find(_menu("Mesh"), "Rebuild from scratch\u2026") is not None
     assert _find(_menu("Mesh"), "Delete Mesh\u2026") is not None

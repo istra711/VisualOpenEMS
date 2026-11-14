@@ -87,8 +87,8 @@ class _FakeMaterialDialog:
 
 
 class _FakePortDialog:
-    def __init__(self, parent=None, port=None, coord_system="cartesian"):
-        del coord_system  # accepted for API parity
+    def __init__(self, parent=None, port=None, coord_system="cartesian", **kwargs):
+        del coord_system, kwargs  # accepted for API parity (width_preview)
         from app.models.project import PortDef
 
         self.result_port = PortDef(

@@ -190,7 +190,7 @@ Fehlstart/identische Punkte → Port wird übersprungen (Log-Warnung möglich).
 1. **Simulation → Simulation Parameters…** (oder **Strg+Umschalt+P**) —
    end_criteria, max_timesteps, Boundary ×6 + PML, Air margin, NF2FF.
    **Apply** schreibt ins Projekt.
-2. Optional: **Geometry → Fit NF2FF** (Strahlungsdiagramm-Box an Geometrie anpassen).
+2. Optional: **Geometry → NF2FF → Fit NF2FF to Geometry** (Strahlungsdiagramm-Box an Geometrie anpassen).
 3. **Simulation → Run Simulation** (oder **Strg+R**).
 4. **Log**-Tab beobachten (openEMS-Lauf).
 5. Ergebnis: **Simulation → S-Params Viewer** (S-Matrix / S11) bzw.

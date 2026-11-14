@@ -58,6 +58,21 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             pass
 
 
+def find_sparams_in_run(run: Path | str) -> Path | None:
+    """S-parameter file of one committed run, without falling back elsewhere.
+
+    The normal layout is ``<run>/sparams/sparams.sNp`` (Touchstone preferred);
+    ``<run>/sparams.json`` and old flat run folders are accepted as fallbacks.
+    """
+    run = Path(run)
+    for folder in (run / "sparams", run):
+        for pattern in ("sparams.s*p", "sparams.json"):
+            hits = sorted(folder.glob(pattern))
+            if hits:
+                return hits[-1]
+    return None
+
+
 def _file_inventory(root: Path) -> list[dict[str, Any]]:
     """Portable, cheap manifest of the files in a staged folder."""
     files: list[dict[str, Any]] = []

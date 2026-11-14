@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app import PROJECT_EXT
+from app.models.sweep import SweepSpec
 
 MaterialKind = Literal["pec", "dielectric", "conducting_sheet", "lumped_rlc", "ignore"]
 PortType = Literal["lumped", "msl", "rect_waveguide", "waveguide", "probe"]
@@ -666,6 +667,12 @@ def _map_project_paths(data: dict[str, Any], base: Path, *, relative: bool) -> N
             if key != "time":
                 results[key] = _path_for_json(value, base, relative=relative)
 
+    sparam_ref = data.get("sparam_reference")
+    if isinstance(sparam_ref, dict) and "path" in sparam_ref:
+        sparam_ref["path"] = _path_for_json(
+            sparam_ref["path"], base, relative=relative
+        )
+
     for geom in data.get("geometry_files") or []:
         if isinstance(geom, dict):
             for key in ("path", "mesh_path"):
@@ -723,6 +730,8 @@ class Project:
     #: their numeric values plus an ``expressions`` map; ports/dumps/NF2FF have
     #: the same map as a dataclass field.
     variables: list[VariableDef] = field(default_factory=list)
+    #: Optional project-level variable sweep (not a CSX geometry object).
+    sweep: SweepSpec | None = None
     #: Mesh Viewer appearance per object (edited in the object dialogs):
     #: ``{name: {"color": [r, g, b] | None, "transparency": 0-100,
     #: "visible": bool}}`` — ``color=None`` = the per-kind default colours
@@ -736,6 +745,9 @@ class Project:
     #: S-parameter viewer markers persisted with the project:
     #: [{"f": Hz, "tag": str, "delta_ref": Hz | None}, ...]
     sparam_markers: list[dict[str, Any]] = field(default_factory=list)
+    #: Optional S-param comparison reference, persisted as a portable
+    #: descriptor: {"path", "label", "kind", "run_id", "status", ...}.
+    sparam_reference: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not str(self.project_id or "").strip():
@@ -834,6 +846,11 @@ class Project:
             ]
         else:
             data["variables"] = []
+        sweep_data = data.get("sweep")
+        if isinstance(sweep_data, dict):
+            data["sweep"] = _make(SweepSpec, sweep_data)
+        elif not isinstance(sweep_data, SweepSpec):
+            data["sweep"] = None
         data["mesh"] = _make(MeshSpec, data.get("mesh", {}))
         data["boundary"] = _make(BoundarySpec, data.get("boundary", {}))
         data["sim"] = _make(SimSpec, data.get("sim", {}))

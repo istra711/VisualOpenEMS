@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -124,13 +126,514 @@ def load_sparams_json(path: Path | str) -> dict[str, np.ndarray]:
     data = json.loads(path.read_text(encoding="utf-8"))
     out: dict[str, np.ndarray] = {"freq": np.asarray(data.get("freq", []), dtype=float)}
     for key, block in data.items():
-        if key == "freq":
+        if key in ("freq", "z0"):
             continue
         if isinstance(block, dict) and "real" in block:
             out[key] = np.asarray(block["real"], dtype=float) + 1j * np.asarray(block["imag"], dtype=float)
         else:
             out[key] = np.asarray(block, dtype=complex)
     return out
+
+
+def network_z0(network) -> float:
+    """First finite positive reference impedance of a scikit-rf network."""
+    try:
+        raw = np.asarray(network.z0)
+        if np.iscomplexobj(raw):
+            raw = raw.real
+        values = raw.astype(float).ravel()
+        for value in values:
+            if np.isfinite(value) and value > 0:
+                return float(value)
+    except Exception:  # noqa: BLE001
+        pass
+    return 50.0
+
+
+def renormalize_network(network, z0: float):
+    """Return ``network`` renormalised to ``z0`` without mutating the input."""
+    try:
+        target = float(z0)
+        if not np.isfinite(target) or target <= 0:
+            return network
+        current = np.asarray(network.z0, dtype=complex)
+        if np.allclose(current, target):
+            return network
+        out = copy.deepcopy(network)
+        out.renormalize(target)
+        return out
+    except Exception:  # noqa: BLE001
+        return network
+
+
+def align_complex_trace(
+    reference_freq: np.ndarray,
+    reference_values: np.ndarray,
+    target_freq: np.ndarray,
+) -> np.ndarray:
+    """Interpolate one complex trace onto ``target_freq``.
+
+    Only the overlapping frequency range is filled; everything outside stays
+    ``nan`` (no extrapolation).  A trace with gaps is left as ``nan`` as a
+    whole, because bridging an unmeasured S-matrix cell would invent data.
+    """
+    ref_f = np.asarray(reference_freq, dtype=float).ravel()
+    ref_s = np.asarray(reference_values, dtype=complex).ravel()
+    target = np.asarray(target_freq, dtype=float).ravel()
+    out = np.full(target.shape, np.nan + 1j * np.nan, dtype=complex)
+    if ref_f.size == 0 or ref_s.size != ref_f.size or target.size == 0:
+        return out
+
+    order = np.argsort(ref_f)
+    ref_f = ref_f[order]
+    ref_s = ref_s[order]
+    if not np.all(np.isfinite(ref_s)):
+        return out
+
+    lo = float(ref_f[0])
+    hi = float(ref_f[-1])
+    span = max(abs(hi - lo), 1.0)
+    tol = span * 1e-12
+    mask = (target >= lo - tol) & (target <= hi + tol)
+    if not np.any(mask):
+        return out
+
+    out[mask] = (
+        np.interp(target[mask], ref_f, ref_s.real)
+        + 1j * np.interp(target[mask], ref_f, ref_s.imag)
+    )
+    return out
+
+
+def align_network_to_frequencies(reference, target_freq, z0: float | None = None) -> np.ndarray:
+    """Return the reference S-matrix on ``target_freq``.
+
+    The reference is optionally renormalised to ``z0`` (normally the current
+    network's reference impedance).  Cells outside the common frequency range
+    are ``nan`` so neither the plot nor a marker can pretend they were measured.
+    """
+    try:
+        s = np.asarray(reference.s, dtype=complex)
+    except Exception:  # noqa: BLE001
+        return np.empty((0, 0, 0), dtype=complex)
+    if s.ndim != 3 or s.shape[0] == 0:
+        return np.empty((0, 0, 0), dtype=complex)
+
+    net = renormalize_network(reference, z0) if z0 is not None else reference
+    ref_f = np.asarray(net.f, dtype=float)
+    ref_s = np.asarray(net.s, dtype=complex)
+    target = np.asarray(target_freq, dtype=float).ravel()
+    out = np.full(
+        (target.size, ref_s.shape[1], ref_s.shape[2]),
+        np.nan + 1j * np.nan,
+        dtype=complex,
+    )
+    for i in range(ref_s.shape[1]):
+        for j in range(ref_s.shape[2]):
+            out[:, i, j] = align_complex_trace(ref_f, ref_s[:, i, j], target)
+    return out
+
+
+def normalize_port_map(
+    port_map,
+    current_nports: int,
+    reference_nports: int,
+) -> list[int]:
+    """Return a 0-based current→reference port map.
+
+    ``port_map`` is the user-facing 1-based list (0 or ``None`` = unmapped).
+    ``None``/empty means the natural 1:1 mapping for the common ports.
+    The returned list always has ``current_nports`` entries.
+    """
+    current_nports = max(0, int(current_nports))
+    reference_nports = max(0, int(reference_nports))
+    identity = [
+        i if i < reference_nports else -1 for i in range(current_nports)
+    ]
+    if port_map is None:
+        return identity
+    try:
+        if len(port_map) == 0:
+            return identity
+    except TypeError:
+        return identity
+    out: list[int] = []
+    for i in range(current_nports):
+        value = (
+            port_map[i]
+            if i < len(port_map)
+            else (i + 1 if i < reference_nports else 0)
+        )
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            number = 0
+        out.append(number - 1 if 1 <= number <= reference_nports else -1)
+    return out
+
+
+def mapped_reference_key(key: str, port_map: list[int]) -> str | None:
+    """Map a current ``Sij`` key through a 0-based port map."""
+    if len(key) != 3 or key[0] != "S" or not key[1].isdigit() or not key[2].isdigit():
+        return None
+    i = int(key[1]) - 1
+    j = int(key[2]) - 1
+    if i < 0 or j < 0 or i >= len(port_map) or j >= len(port_map):
+        return None
+    ri = port_map[i]
+    rj = port_map[j]
+    if ri < 0 or rj < 0:
+        return None
+    return f"S{ri + 1}{rj + 1}"
+
+
+def _trace_has_data(values) -> bool:
+    arr = np.asarray(values, dtype=complex)
+    if arr.size == 0 or not np.any(np.isfinite(arr)):
+        return False
+    # Touchstone exports unmeasured cells as 0; sparams.json keeps NaN.
+    return bool(np.any(arr != 0))
+
+
+def _db(values) -> np.ndarray:
+    return 20.0 * np.log10(np.maximum(np.abs(np.asarray(values, dtype=complex)), 1e-15))
+
+
+def _phase_delta_deg(current_values, reference_values) -> np.ndarray:
+    cur = np.asarray(current_values, dtype=complex)
+    ref = np.asarray(reference_values, dtype=complex)
+    out = np.full(cur.shape, np.nan, dtype=float)
+    valid = (
+        np.isfinite(cur)
+        & np.isfinite(ref)
+        & (np.abs(cur) > 1e-12)
+        & (np.abs(ref) > 1e-12)
+    )
+    if np.any(valid):
+        out[valid] = np.degrees(np.angle(cur[valid] * np.conj(ref[valid])))
+    return out
+
+
+def _format_port_map(port_map: list[int]) -> tuple[str, str]:
+    """Human-readable mapped/unmapped port lists (1-based)."""
+    mapped = [
+        f"S{i + 1}->S{ref + 1}"
+        for i, ref in enumerate(port_map)
+        if ref >= 0
+    ]
+    unmapped = [f"S{i + 1}" for i, ref in enumerate(port_map) if ref < 0]
+    return (", ".join(mapped) or "none", ", ".join(unmapped))
+
+
+def compare_networks(
+    current,
+    reference,
+    *,
+    port_map=None,
+    z0: float | None = None,
+) -> dict:
+    """Compare ``current`` with ``reference`` on the current frequency axis.
+
+    Returns per-current-Sij metrics over the common, finite data.  The reference
+    is renormalised to the current Z0 and interpolated only inside the overlap
+    (see :func:`align_network_to_frequencies`).  ``port_map`` uses the
+    user-facing 1-based numbering.
+    """
+    if current is None or reference is None:
+        raise ValueError("compare_networks: current and reference are required")
+    cur_s = np.asarray(current.s, dtype=complex)
+    freq = np.asarray(current.f, dtype=float)
+    target_z0 = network_z0(current) if z0 is None else float(z0)
+    ref_s = align_network_to_frequencies(reference, freq, z0=target_z0)
+    port_map_0 = normalize_port_map(
+        port_map, cur_s.shape[1], int(getattr(reference, "nports", 0))
+    )
+
+    pairs: list[dict] = []
+    for i in range(cur_s.shape[1]):
+        for j in range(cur_s.shape[2]):
+            key = f"S{i + 1}{j + 1}"
+            ref_key = mapped_reference_key(key, port_map_0)
+            pair: dict = {
+                "key": key,
+                "ref_key": ref_key,
+                "points": 0,
+                "max_abs_db": np.nan,
+                "f_at_max_db": np.nan,
+                "rms_db": np.nan,
+                "max_phase_deg": np.nan,
+                "max_complex": np.nan,
+                "s_cur": None,
+                "s_ref": None,
+                "delta_db": None,
+                "delta_phase": None,
+            }
+            if ref_key is None:
+                pair["reason"] = "unmapped"
+                pairs.append(pair)
+                continue
+            try:
+                ref_i = int(ref_key[1]) - 1
+                ref_j = int(ref_key[2]) - 1
+                if (
+                    ref_s.ndim != 3
+                    or ref_s.shape[1] <= ref_i
+                    or ref_s.shape[2] <= ref_j
+                ):
+                    pair["reason"] = "reference missing"
+                    pairs.append(pair)
+                    continue
+                cur_values = np.asarray(cur_s[:, i, j], dtype=complex)
+                ref_values = np.asarray(ref_s[:, ref_i, ref_j], dtype=complex)
+            except Exception:  # noqa: BLE001
+                pair["reason"] = "reference missing"
+                pairs.append(pair)
+                continue
+
+            if not _trace_has_data(cur_values) or not _trace_has_data(ref_values):
+                pair["reason"] = "no data"
+                pairs.append(pair)
+                continue
+
+            valid = np.isfinite(cur_values) & np.isfinite(ref_values)
+            if not np.any(valid):
+                pair["reason"] = "no overlap"
+                pairs.append(pair)
+                continue
+
+            delta_db = _db(cur_values) - _db(ref_values)
+            delta_phase = _phase_delta_deg(cur_values, ref_values)
+            complex_delta = np.abs(cur_values - ref_values)
+            valid_db = delta_db[valid]
+            abs_db = np.abs(valid_db)
+            idx = int(np.argmax(abs_db))
+            pair.update(
+                {
+                    "points": int(np.count_nonzero(valid)),
+                    "max_abs_db": float(abs_db[idx]),
+                    "f_at_max_db": float(freq[valid][idx]),
+                    "rms_db": float(np.sqrt(np.mean(valid_db**2))),
+                    "max_phase_deg": (
+                        float(np.nanmax(np.abs(delta_phase)))
+                        if np.any(np.isfinite(delta_phase))
+                        else np.nan
+                    ),
+                    "max_complex": float(np.max(complex_delta[valid])),
+                    "s_cur": cur_values,
+                    "s_ref": ref_values,
+                    "delta_db": delta_db,
+                    "delta_phase": delta_phase,
+                }
+            )
+            pairs.append(pair)
+
+    try:
+        cur_f = np.asarray(current.f, dtype=float)
+        ref_f = np.asarray(reference.f, dtype=float)
+        lo = max(float(np.min(cur_f)), float(np.min(ref_f)))
+        hi = min(float(np.max(cur_f)), float(np.max(ref_f)))
+        overlap = (lo, hi) if lo <= hi else None
+    except Exception:  # noqa: BLE001
+        overlap = None
+
+    return {
+        "freq": freq,
+        "pairs": pairs,
+        "port_map": port_map_0,
+        "z0": target_z0,
+        "reference_z0": network_z0(reference),
+        "overlap": overlap,
+        "current_nports": int(cur_s.shape[1]),
+        "reference_nports": int(getattr(reference, "nports", 0)),
+    }
+
+
+def _comparison_header(result: dict, meta: dict | None) -> list[str]:
+    meta = dict(meta or {})
+    lines = [
+        "# VisualopenEMS S-parameter comparison",
+        f"# generated={datetime.now().isoformat(timespec='seconds')}",
+    ]
+    for key in (
+        "current",
+        "current_path",
+        "reference",
+        "reference_path",
+        "reference_run",
+        "reference_status",
+    ):
+        value = str(meta.get(key) or "").strip()
+        if value:
+            lines.append(f"# {key}={value}")
+    mapped, unmapped = _format_port_map(result["port_map"])
+    lines.append(f"# port_map={mapped}")
+    if unmapped:
+        lines.append(f"# unmapped_current_ports={unmapped}")
+    overlap = result.get("overlap")
+    if overlap is not None:
+        lines.append(
+            f"# overlap_GHz={overlap[0] / 1e9:.9g}-{overlap[1] / 1e9:.9g}"
+        )
+    lines.append(f"# current_Z0={result['z0']:g}")
+    lines.append(f"# reference_Z0={result['reference_z0']:g}")
+    return lines
+
+
+def write_comparison_csv(
+    current,
+    reference,
+    out_path: Path | str,
+    *,
+    port_map=None,
+    meta: dict | None = None,
+) -> Path:
+    """Write current/reference/delta values as a long-format CSV."""
+    result = compare_networks(current, reference, port_map=port_map)
+    out_path = Path(out_path)
+    if out_path.suffix.lower() != ".csv":
+        out_path = out_path.with_suffix(".csv")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = _comparison_header(result, meta)
+    lines.append(
+        "freq_Hz,freq_GHz,Sij,ref_Sij,S_cur_dB,S_ref_dB,delta_dB,"
+        "S_cur_deg,S_ref_deg,delta_deg,S_cur_re,S_cur_im,S_ref_re,S_ref_im"
+    )
+    freq = np.asarray(result["freq"], dtype=float)
+    for pair in result["pairs"]:
+        if pair.get("s_cur") is None or pair.get("s_ref") is None:
+            continue
+        cur = np.asarray(pair["s_cur"], dtype=complex)
+        ref = np.asarray(pair["s_ref"], dtype=complex)
+        for idx, f_hz in enumerate(freq):
+            cur_val = complex(cur[idx])
+            ref_val = complex(ref[idx])
+            cur_finite = bool(np.isfinite(cur_val))
+            ref_finite = bool(np.isfinite(ref_val))
+            db_cur = float(_db([cur_val])[0]) if cur_finite else np.nan
+            db_ref = float(_db([ref_val])[0]) if ref_finite else np.nan
+            if cur_finite and ref_finite:
+                delta_db = db_cur - db_ref
+            else:
+                delta_db = np.nan
+            phase_cur = (
+                float(np.degrees(np.angle(cur_val))) if cur_finite else np.nan
+            )
+            phase_ref = (
+                float(np.degrees(np.angle(ref_val))) if ref_finite else np.nan
+            )
+            if (
+                cur_finite
+                and ref_finite
+                and abs(cur_val) > 1e-12
+                and abs(ref_val) > 1e-12
+            ):
+                delta_phase = float(
+                    np.degrees(np.angle(cur_val * np.conj(ref_val)))
+                )
+            else:
+                delta_phase = np.nan
+            row = [
+                f_hz,
+                f_hz / 1e9,
+                pair["key"],
+                pair["ref_key"],
+                db_cur,
+                db_ref,
+                delta_db,
+                phase_cur,
+                phase_ref,
+                delta_phase,
+                cur_val.real if cur_finite else np.nan,
+                cur_val.imag if cur_finite else np.nan,
+                ref_val.real if ref_finite else np.nan,
+                ref_val.imag if ref_finite else np.nan,
+            ]
+            lines.append(
+                ",".join(
+                    str(v) if isinstance(v, str) else _fmt_sparam(v)
+                    for v in row
+                )
+            )
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out_path
+
+
+def write_comparison_report(
+    current,
+    reference,
+    out_path: Path | str,
+    *,
+    port_map=None,
+    meta: dict | None = None,
+) -> Path:
+    """Write a human-readable comparison summary (Markdown/text)."""
+    result = compare_networks(current, reference, port_map=port_map)
+    out_path = Path(out_path)
+    if out_path.suffix.lower() not in (".txt", ".md"):
+        out_path = out_path.with_suffix(".txt")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    meta = dict(meta or {})
+    lines = [
+        "VisualopenEMS S-parameter comparison",
+        "====================================",
+        f"Generated: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    for key, label in (
+        ("current", "Current"),
+        ("current_path", "Current path"),
+        ("reference", "Reference"),
+        ("reference_path", "Reference path"),
+        ("reference_run", "Reference run"),
+        ("reference_status", "Reference status"),
+    ):
+        value = str(meta.get(key) or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    lines.append(f"Current Z0: {result['z0']:g} Ω")
+    ref_z0_note = ""
+    if not np.isclose(result["reference_z0"], result["z0"]):
+        ref_z0_note = " (renormalised to current for comparison)"
+    lines.append(
+        f"Reference Z0: {result['reference_z0']:g} Ω{ref_z0_note}"
+    )
+    overlap = result.get("overlap")
+    if overlap is not None:
+        lines.append(
+            "Overlap: "
+            f"{overlap[0] / 1e9:.6g}–{overlap[1] / 1e9:.6g} GHz"
+        )
+    else:
+        lines.append("Overlap: none")
+    mapped, unmapped = _format_port_map(result["port_map"])
+    lines.append(f"Port map: {mapped}")
+    if unmapped:
+        lines.append(f"Unmapped current ports: {unmapped}")
+    lines.append("")
+    lines.append(
+        "Sij  Ref   Points  max|ΔdB|  f@max[GHz]  RMS ΔdB  "
+        "max Δphase[°]  max|ΔS|"
+    )
+    lines.append("-" * 78)
+    for pair in result["pairs"]:
+        if pair.get("points", 0) <= 0:
+            reason = pair.get("reason") or "no data"
+            lines.append(
+                f"{pair['key']:<4} {str(pair.get('ref_key') or '—'):<5} "
+                f"{0:>6}  ({reason})"
+            )
+            continue
+        lines.append(
+            f"{pair['key']:<4} {pair['ref_key']:<5} {pair['points']:>6}  "
+            f"{pair['max_abs_db']:>8.3f}  "
+            f"{pair['f_at_max_db'] / 1e9:>10.4f}  "
+            f"{pair['rms_db']:>7.3f}  "
+            f"{pair['max_phase_deg']:>12.2f}  "
+            f"{pair['max_complex']:>8.4f}"
+        )
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out_path
 
 
 def merge_sparam_tables(*tables: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -425,7 +928,10 @@ def export_sparams(sparams: dict[str, np.ndarray], out_dir: Path | str, basename
 
     import json
 
-    s_json = {"freq": np.asarray(sparams.get("freq", []), dtype=float).tolist()}
+    s_json = {
+        "freq": np.asarray(sparams.get("freq", []), dtype=float).tolist(),
+        "z0": float(z0),
+    }
     for k, v in sparams.items():
         if k == "freq":
             continue

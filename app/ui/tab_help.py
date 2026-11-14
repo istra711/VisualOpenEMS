@@ -19,6 +19,8 @@ TAB_ORDER = [
     "3D Design",
     "S-Params",
     "Antenna",
+    "Variable Sweep",
+    "Sweep Antenna Patterns",
     "Polarization & Phase Center",
     "Antenna Simulation",
     "Cylindrical Mesh",
@@ -40,17 +42,21 @@ Left panel (can be hidden)
     Mesh Viewer visibility of the whole selection at once.
   - Hide the panel only from the narrow handle at the far left edge or via
     View -> Project / Geometry Panel (Ctrl+B).
-  • Add Box / Cylinder / Sphere / Polygon Primitive — openEMS primitives in
+  • Geometry -> Add -> Box / Cylinder / Sphere / Polygon — openEMS primitives in
     mm (project units). Polygon/sphere need the cartesian coordinate system.
     The polygon dialog previews the outline live while you type the points
     (grid in project units, numbered vertices, extruded prisms offset).
-   Add Extruded Polygon. - the same point editor with a positive extrusion
-    length preset: CSXCAD AddLinPoly (a solid prism along the chosen normal).
-    Add Polygon remains the flat-sheet variant; setting Length to 0 in the
-    dialog switches an extruded polygon back to a flat AddPolygon.
-  - Add Wire. / Add Curve. - 3-D polylines entered as "x, y, z" points.
-    Wire is a round conductor (CSXCAD AddWire, radius in project units);
-    Curve is a zero-thickness PEC path (AddCurve). Both are cartesian-only.
+  • Geometry -> Add -> Extruded Polygon… — the same point editor with a positive
+    extrusion length preset: CSXCAD AddLinPoly (a solid prism along the chosen
+    normal). Add -> Polygon… remains the flat-sheet variant; setting Length to
+    0 in the dialog switches an extruded polygon back to a flat AddPolygon.
+  • Geometry -> Add -> Wire… / Curve… — 3-D polylines entered as "x, y, z"
+    points. Wire is a round conductor (CSXCAD AddWire, radius in project
+    units); Curve is a zero-thickness PEC path (AddCurve). Both are
+    cartesian-only.
+  • Geometry -> Add -> Lumped Element (R/L/C)… — openEMS AddLumpedElement:
+    resistor/inductor/capacitor (R in Ω, L in nH, C in pF) acting along x/y/z
+    between Start/Stop, with optional PEC end caps.
   • Geometry -> Variables… (also in the project panel right-click Add menu) —
     named drawing-unit values such as L = 20, W = 10. Type a name instead of a
     number in Start/Stop, Center, Radius, waveguide a/b, dump/NF2FF boxes or
@@ -64,45 +70,53 @@ Left panel (can be hidden)
     renames are re-evaluated everywhere at once and are only accepted when all
     expressions resolve. Settings -> Geometry variables controls the optional
     name-completion popup while typing.
-  • Add Assignment — bind FreeCAD mesh names to materials / boundary roles.
-  • Add Material — PEC, dielectric, conducting sheet, lumped RLC, or ignore.
-  • Add Port — lumped / MSL / waveguide port (also in the Ports / Dumps window).
-  • Import Gerber/Excellon… — import a PCB fabrication folder, ZIP or single
-    file as copper polygon sheets and via cylinders. The stackup dialog asks for
-    board/copper thickness, εr/tanδ, per-layer z and the via diameter limit;
-    these values are stored in the project file. Per-diameter Via-Spans
-    (through / blind / buried), Excellon slots and an optional solder-mask
-    dielectric are supported in the same dialog. The dialog lists the selected
-    folder/ZIP contents and marks each file as copper/outline/drill/mask or
-    ignored (CSV, JSON and pick-and-place data); the form scrolls and the
-    OK/Cancel buttons stay fixed.
-  • Import KiCad PCB… — native `.kicad_pcb` import with the real stackup,
-    tracks/arcs, SMD/PTH/NPTH pads, filled zones and exact per-via layer spans.
-    Gerber/Excellon is only needed for boards exported from other CAD tools.
-    Copper modes: sheet (AddPolygon), prism (AddLinPoly) or mesh (one
-    STL/Polyhedron per copper layer, best for large zones with many cutouts).
-  - Import CST Studio Package... - reads a CST *export package*, not the native
-    `.cst` container. The package is a folder or ZIP with `manifest.json` and
-    one STL per solid (`stl/<component>__<solid>.stl`; CST writes STL in
-    metres and the manifest declares the unit). The dialog previews objects,
-    materials, ports and warnings and lets you choose whether to import
-    materials, ports, the frequency range and boundary conditions. Object
-    names such as `PEC/trace1` are kept, STLs become Polyhedron primitives,
-    and a re-import replaces only primitives from the same package.
-    Floquet/unit-cell ports, dispersive/anisotropic materials, CST's own mesh,
-    schematic and field monitors are reported as warnings and are not guessed.
-    The matching CST VBA macro is `app/freecad_io/cst_export_macro.bas`; run it
-    with the 3D project open. Waveguide-port coordinates require a built CST
-    mesh, otherwise the macro writes a warning and skips that port.
-  • Ports from KiCad nets… — auto-suggest lumped/MSL/probe ports from RF/port
-    net names, connector footprints, pads, track endpoints and explicit
-    footprint properties (`openems_port`, `openems_port_type`). Review the
-    candidates in the table before adding them to the project.
-  • Ports from Gerber… — same confirmation dialog for Gerber/Excellon sets.
-    Uses Gerber X2 object attributes (`.Net`, `.ComponentRef`, `.Pin`), an
-    IPC-D-356 netlist if present, or a low-confidence board-edge fallback when
-    no net data exists.
-  • Edit / Fit NF2FF box — far-field box around the antenna.
+  • Geometry -> Add -> Assignment… — bind FreeCAD mesh names to materials /
+    boundary roles.
+  • Geometry -> Add -> Material… — PEC, dielectric, conducting sheet, lumped
+    RLC, or ignore.
+  • Geometry -> Add -> Port… — lumped / MSL / waveguide port (also in the
+    Ports / Dumps window). Ports need the cartesian coordinate system.
+  • Geometry -> Add -> Field Dump… — region + quantity (E/H/J/…), the same
+    dialog as in the Ports / Dumps window.
+  • Geometry -> Import -> Gerber/Excellon… — import a PCB fabrication folder, ZIP
+    or single file as copper polygon sheets and via cylinders. The stackup
+    dialog asks for board/copper thickness, εr/tanδ, per-layer z and the via
+    diameter limit; these values are stored in the project file. Per-diameter
+    Via-Spans (through / blind / buried), Excellon slots and an optional
+    solder-mask dielectric are supported in the same dialog. The dialog lists
+    the selected folder/ZIP contents and marks each file as
+    copper/outline/drill/mask or ignored (CSV, JSON and pick-and-place data);
+    the form scrolls and the OK/Cancel buttons stay fixed.
+  • Geometry -> Import -> KiCad PCB… — native `.kicad_pcb` import with the real
+    stackup, tracks/arcs, SMD/PTH/NPTH pads, filled zones and exact per-via
+    layer spans. Gerber/Excellon is only needed for boards exported from other
+    CAD tools. Copper modes: sheet (AddPolygon), prism (AddLinPoly) or mesh
+    (one STL/Polyhedron per copper layer, best for large zones with many
+    cutouts).
+  • Geometry -> Import -> CST Studio Package… — reads a CST *export package*,
+    not the native `.cst` container. The package is a folder or ZIP with
+    `manifest.json` and one STL per solid (`stl/<component>__<solid>.stl`; CST
+    writes STL in metres and the manifest declares the unit). The dialog
+    previews objects, materials, ports and warnings and lets you choose
+    whether to import materials, ports, the frequency range and boundary
+    conditions. Object names such as `PEC/trace1` are kept, STLs become
+    Polyhedron primitives, and a re-import replaces only primitives from the
+    same package. Floquet/unit-cell ports, dispersive/anisotropic materials,
+    CST's own mesh, schematic and field monitors are reported as warnings and
+    are not guessed. The matching CST VBA macro is
+    `app/freecad_io/cst_export_macro.bas`; run it with the 3D project open.
+    Waveguide-port coordinates require a built CST mesh, otherwise the macro
+    writes a warning and skips that port.
+  • Geometry -> Import -> Ports from KiCad nets… — auto-suggest lumped/MSL/probe
+    ports from RF/port net names, connector footprints, pads, track endpoints
+    and explicit footprint properties (`openems_port`, `openems_port_type`).
+    Review the candidates in the table before adding them to the project.
+  • Geometry -> Import -> Ports from Gerber… — same confirmation dialog for
+    Gerber/Excellon sets. Uses Gerber X2 object attributes (`.Net`,
+    `.ComponentRef`, `.Pin`), an IPC-D-356 netlist if present, or a
+    low-confidence board-edge fallback when no net data exists.
+  • Geometry -> NF2FF -> Edit NF2FF Box… / Fit NF2FF to Geometry — far-field box
+    around the antenna.
 
 This tab (right)
   • Imported objects — names + AABB after Import Geometry or FreeCAD export.
@@ -784,7 +798,8 @@ Ports
 Dumps
   • Enable field dumps — writes E/H/J/D/B (and optional SAR) fields for
     AppCSXCAD / ParaView.
-  • Add Field Dump… — region + quantity and the CSXCAD AddDump parameters:
+  • Geometry -> Add -> Field Dump… — region + quantity and the CSXCAD AddDump
+    parameters:
       – Quantity: E, H, J (electric current density), Jtot (rot H), D, B,
         SAR (local), SAR1g, SAR10g, SARraw, custom.
       – SAR1g/SAR10g/SARraw are frequency-domain only; the dialog forces
@@ -1039,6 +1054,164 @@ Tips
     nf2ff.center = (start+stop)/2. Re-run "Fit NF2FF to Geometry" (the run also
     warns and snaps a stale centre back). See Antenna Simulation → NF2FF box.
   • Summary PNG (nf2ff_summary.png) is written next to nf2ff.json.
+""",
+    "Variable Sweep": """VARIABLE SWEEP — one target, one staged run, many snapshots
+
+Where it lives
+  • The project tree has a "Sweep: …" row after "Vars". It is a project-level
+    simulation object, NOT a CSX geometry primitive. Double-click it (or use
+    Simulation → Variable Sweep…) to configure it.
+  • "Sweep enabled" makes the definition runnable. A disabled sweep stays in
+    the project and can be edited, but Run Sweep refuses to start it.
+  • Delete removes the sweep definition after confirmation; the variable table
+    and all geometry are kept.
+  • Simulation → Run Sweep creates one staging run. Simulation → Sweep Results…
+    opens the point browser. Commit/discard the run exactly like a normal run.
+
+Two target types
+  Geometry variable
+    The target is a name from Geometry → Variables… . The project is deep-copied
+    for every point, the target is set to the point value and every expression
+    in primitives, ports, dumps and the NF2FF box is re-evaluated. Expression
+    variables are supported: the sweep value replaces that variable's formula
+    for the point; dependent variables still resolve normally.
+    Geometry and port positions may change, so the mesh is rebuilt for every
+    point/run. The dialog shows how many fields use the variable, the estimated
+    point × port run count, and a warning when the target is unused.
+
+  Port excitation phase
+    The target is an active port name. Only PortDef.excite_phase_deg changes;
+    geometry, mesh and variable values stay untouched. This is the mode for
+    antenna pattern films. NF2FF is mandatory and is switched on automatically.
+    Full S-matrix is disabled because S-parameters do not depend on the global
+    excitation phase in a linear network.
+    IMPORTANT: if only ONE port is excited, changing its phase shifts the whole
+    complex far field but does not change the gain/directivity magnitude. To
+    see a pattern change, excite two or more ports simultaneously (excite_port
+    flags in the Port dialog) and sweep the RELATIVE phase of one port. A
+    dual-feed CP antenna is the typical example.
+
+Values and validation
+  • Start / stop / points uses an inclusive linear ramp; explicit list accepts
+    comma, semicolon or whitespace separated numbers. Duplicates are removed.
+  • Values are in the project's drawing unit for geometry variables and in
+    degrees for port phase.
+  • The dialog validates the target, the values, the usage count and the run
+    count. At most 200 points are accepted. The OK button is disabled while an
+    enabled sweep is invalid.
+  • A formula variable is marked in the warning block; a phase target explains
+    the single-port/relative-phase caveat.
+
+Runs, mesh and storage
+  • One sweep is ONE staged/committed run, not N separate runs. The folder
+    layout is:
+        <staging>/run-…/sweep.json
+        <staging>/run-…/sweep/point-000/point_project.json
+        <staging>/run-…/sweep/point-000/project_run.py
+        <staging>/run-…/sweep/point-000/sparams/…
+        <staging>/run-…/sweep/point-000/nf2ff/nf2ff.json (if enabled)
+    The open project is never mutated; every point is a reproducible snapshot.
+  • "Full S-matrix" runs one excitation per active port per point and merges
+    the columns with the Run All Ports machinery. The phase target never uses
+    this path: it runs one FDTD case per phase because the interesting result
+    is the far field, not S-parameters.
+  • The current Phase-A runner rebuilds the mesh per point/port run. For a
+    geometry target that is required. For a phase target the geometry is
+    unchanged, so a future mesh-reuse mode can avoid the rebuild; the Log names
+    the behaviour explicitly.
+  • Field dumps are off by default because a sweep multiplies their disk usage.
+    NF2FF is optional for geometry targets and mandatory for phase targets.
+  • A point failure marks that point failed/partial. "Continue after a failed
+    point" controls whether later points still run. Abort keeps already
+    completed points in staging.
+
+Results
+  • Sweep Results… loads sweep.json and overlays S-parameter traces per point.
+  • Antenna patterns… (or Simulation → Sweep Antenna Patterns…) opens the NF2FF
+    viewer for the same points.
+  • Commit stores sweep.json, all point snapshots and the primary point S-param
+    pointer in the project results. The original sweep definition is saved in
+    the project JSON and restored on reopening.
+  • The first successful point is loaded as the current S-parameter network.
+    Use Sweep Results to load another point or set one as reference.
+
+Troubleshooting
+  • "Variable … is not used" — add it to a geometry/port/dump/NF2FF expression
+    in Geometry → Variables… first.
+  • "Port … is not active" — activate the port or choose another port.
+  • Phase sweep shows a static pattern — only one port is excited; enable a
+    second port and sweep the relative phase.
+  • Full S-matrix is disabled in phase mode by design; use NF2FF and Sweep
+    Antenna Patterns.
+  • Missing NF2FF — enable the NF2FF box, fit it to the geometry, and check
+    "Collect NF2FF per point".
+  • A run is very slow — the phase target still rebuilds the mesh in Phase A;
+    geometry targets rebuild it per point/port. Reduce points, disable field
+    dumps and use fewer ports for a first test.
+""",
+    "Sweep Antenna Patterns": """SWEEP ANTENNA PATTERNS — overlay 2D cuts, film the 3D pattern
+
+Prerequisites
+  • The sweep must have been run with "Collect NF2FF per point" (phase targets
+    force this). Each point then has its own nf2ff/nf2ff.json.
+  • Open Simulation → Sweep Antenna Patterns… or Sweep Results… → Antenna
+    patterns…. The dialog reads sweep.json and all point NF2FF paths.
+
+What is plotted
+  • E-Plane (phi=90), H-Plane (phi=0), Azimuth (theta=90): one curve per
+    checked point, colour-coded by the sweep value. For a phase sweep the
+    colour wheel is hsv over 0…360°; for a geometry sweep it is viridis over
+    the value range.
+  • Gain vs Frequency: maximum gain per point over frequency.
+  • Radiated Efficiency vs Frequency: eta(f) per point.
+  • Field combo: Gain or Directivity (gain includes eta; directivity does not).
+  • Frequency combo: the evaluation frequency written by the NF2FF run.
+  • All checked points are overlaid for 2D plots. Uncheck points to reduce a
+    busy diagram; the colourbar still shows the selected values.
+
+3D Pattern as a film
+  • The 3D view shows ONE point at a time. This is intentional: overlaying N
+    opaque 3D surfaces hides the lobe and is unreadable.
+  • Play/Pause, the horizontal slider and fps run through the checked points.
+    A 0…360° phase sweep loops seamlessly.
+  • The title, frame label and slider identify the current point. The surface
+    is normalised to the selected pattern's min/max; the colourbar is dBi.
+  • Export GIF… needs Pillow; Export MP4… needs imageio-ffmpeg. The animation
+    renders the same frames you see in the player.
+  • Export PNG… writes the current 2D/3D view. Export CSV… writes the current
+    cut or gain-vs-frequency data for every checked point.
+
+Phase sweeps — the important physics
+  • PortDef.excite_phase_deg sets an openEMS excitation delay at the project
+    target frequency. It is only applied to ports with excite_port=True.
+  • One excited port: a phase change rotates the complex far field globally;
+    gain/directivity and the plotted 2D/3D magnitude pattern stay the same.
+    If the gain plot looks static, this is expected, not a bug.
+  • Two or more simultaneously excited ports: their relative phase changes the
+    superposition, so the pattern, polarization and beam direction can change.
+    This is the case where the film is useful.
+  • S-parameters are not a phase-sweep target: for a linear network the
+    S-matrix is referenced to the incident wave and does not change with the
+    global excitation phase. Use NF2FF or field results.
+
+Data, memory and limits
+  • NF2FF files can be large (theta × phi × frequencies). The browser caches
+    loaded points; uncheck points you do not need and choose one frequency for
+    a film.
+  • A single pattern is not interpolated for the 3D view except for a coarse
+    display downsample; the exact NF2FF grid is used for 2D cuts.
+  • The 2D cuts use the NF2FF theta/phi grid. E-/H-plane cuts mirror the
+    phi+180° half to show a full 360° plane; Azimuth uses theta=90°.
+  • If a point has no nf2ff.json it is skipped and cannot be checked. Re-run
+    with NF2FF enabled if all points are missing.
+
+Typical workflow
+  1. Define a dual-feed antenna with both ports active and excite_port=True.
+  2. Configure a port-phase sweep over 0…360° (e.g. 24 points).
+  3. Run Sweep; wait for all points, then Sweep Antenna Patterns….
+  4. Use E-/H-plane overlay for a quantitative comparison at one frequency;
+     use 3D Pattern + Play for the presentation film.
+  5. Export MP4/GIF and CSV; commit the sweep run to keep all point data.
 """,
     "Polarization & Phase Center": """POLARIZATION & PHASE CENTER — derived from the NF2FF far field
 

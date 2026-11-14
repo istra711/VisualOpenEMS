@@ -70,7 +70,7 @@ from app.runlog import (
     format_run_step,
 )
 from app.settings import AppSettings
-from app.storage.run_store import ProjectStore
+from app.storage.run_store import ProjectStore, find_sparams_in_run
 from app.simulation.progress import EngineProgress
 from app.simulation.runner import SimulationRunner
 from app.simulation.script_gen import generate_run_script
@@ -165,13 +165,25 @@ class MainWindow(QMainWindow):
         #: same guard for the Antenna/NF2FF viewer: a new or failed run must
         #: not auto-load the previous run's nf2ff.json
         self._allow_auto_nf2ff = False
+        #: True while _load_last_results restores the project's S-param
+        #: reference; prevents the viewer's reference_changed signal from
+        #: rewriting the project descriptor during a project switch.
+        self._suspend_reference_sync = False
+        #: path of the last S-param reference already reported as missing
+        self._sparam_reference_missing: str | None = None
         # reserved: Mesh-Editor edits are applied to the existing mesh directly
         # (no full rebuild), so no auto-build timer is needed anymore
         self._auto_mesh_build = False
-        # multi-excitation driver state (Simulation → Run All Ports)
+        # multi-run driver state (Run All Ports and variable sweep)
         self._multi_plans: list | None = None
         self._multi_pos: int = 0
         self._multi_timer = None
+        self._multi_kind: str | None = None
+        self._staged_run_kind: str = "single"
+        self._sweep_points: list = []
+        self._sweep_spec = None
+        self._sweep_work: Path | None = None
+        self._last_sweep_json: Path | None = None
         # run-log session: monotonic start time (None when no run is active)
         self._run_t0: float | None = None
         self._abort_requested = False
@@ -1017,6 +1029,13 @@ class MainWindow(QMainWindow):
         self.sparam_viewer.markers_changed.connect(
             self._on_sparam_markers_changed
         )
+        self.sparam_viewer.reference_changed.connect(
+            self._on_sparam_reference_changed
+        )
+        self.sparam_viewer.previous_run_requested.connect(
+            self._on_compare_previous_run
+        )
+        self.sparam_viewer.set_previous_run_available(True)
         # "Scan work dir" always searches the global work dir; set_work_dir()
         # may scope the initial listing to a single project.
         self.sparam_viewer.scan_root = self.settings.work_path()
@@ -1378,91 +1397,93 @@ class MainWindow(QMainWindow):
             tip="Straight WR62 guide, 100 mm, TE10 at 10 GHz, E/H/J dumps",
         )
 
+        # The Geometry menu mirrors the project-panel right-click "Add" menu:
+        # object creation lives in one "Add" submenu, file imports in
+        # "Import", the two NF2FF entries in "NF2FF". Only the frequently used
+        # edit actions and the two windows stay on the top level, so the menu
+        # stays short instead of listing 24 entries at once.
         gmenu = bar.addMenu("&Geometry")
-        add_action(gmenu, "Add Box…", slot=self._on_add_prim_box)
-        add_action(gmenu, "Add Cylinder…", slot=self._on_add_prim_cyl)
-        add_action(gmenu, "Add Sphere…", slot=self._on_add_prim_sphere)
+        add_menu = gmenu.addMenu("Add")
+        add_menu.setStatusTip("Create a geometry primitive, material, port or field dump")
+        add_action(add_menu, "Box…", slot=self._on_add_prim_box)
+        add_action(add_menu, "Cylinder…", slot=self._on_add_prim_cyl)
+        add_action(add_menu, "Sphere…", slot=self._on_add_prim_sphere)
         add_action(
-            gmenu,
-            "Add Lumped Element (R/L/C)…",
+            add_menu,
+            "Lumped Element (R/L/C)…",
             slot=self._on_add_prim_lumped,
             tip="openEMS AddLumpedElement: resistor/inductor/capacitor at a box/line",
         )
-        add_action(gmenu, "Add Polygon…", slot=self._on_add_prim_polygon)
+        add_action(add_menu, "Polygon…", slot=self._on_add_prim_polygon)
         add_action(
-            gmenu,
-            "Add Extruded Polygon\u2026",
+            add_menu,
+            "Extruded Polygon\u2026",
             slot=self._on_add_prim_extruded_polygon,
             tip="Polygon mit Dicke/Prisma entlang der Normalen (CSXCAD AddLinPoly)",
         )
         add_action(
-            gmenu,
-            "Add Wire\u2026",
+            add_menu,
+            "Wire\u2026",
             slot=self._on_add_prim_wire,
             tip="3D-Polylinie mit Radius (CSXCAD AddWire)",
         )
         add_action(
-            gmenu,
-            "Add Curve\u2026",
+            add_menu,
+            "Curve\u2026",
             slot=self._on_add_prim_curve,
             tip="3D-Polylinie ohne Dicke (CSXCAD AddCurve)",
         )
-        gmenu.addSeparator()
-        add_action(
-            gmenu,
-            "Variables\u2026",
-            slot=self._on_edit_variables,
-            tip="Named drawing-unit values for geometry fields "
-            "(e.g. L = 20, then type L/2 in Start/Stop)",
+        add_menu.addSeparator()
+        add_action(add_menu, "Material…", slot=self._on_add_material)
+        add_action(add_menu, "Assignment…", slot=self._on_add_assignment)
+        self.act_add_port = add_action(
+            add_menu,
+            "Port…",
+            slot=self._on_add_port,
+            tip="Ports need the cartesian coordinate system (openEMS LumpedPort "
+            "is not cylindrical-mesh aware)",
         )
-        gmenu.addSeparator()
+        add_action(add_menu, "Field Dump…", btn=self.btn_add_dump)
+
+        import_menu = gmenu.addMenu("Import")
+        import_menu.setStatusTip("Import CAD/PCB geometry and derive ports from it")
         add_action(
-            gmenu,
-            "Import Gerber/Excellon…",
+            import_menu,
+            "Gerber/Excellon…",
             slot=self._on_import_gerber,
             tip="PCB-Gerber + Excellon (Ordner/ZIP) als Kupferpolygone und "
             "Vias importieren",
         )
         add_action(
-            gmenu,
-            "Import KiCad PCB…",
+            import_menu,
+            "KiCad PCB…",
             slot=self._on_import_kicad,
             tip="Native .kicad_pcb mit Stackup, Tracks, Pads, Zonen und "
             "exakten Via-Spans importieren",
         )
         add_action(
-            gmenu,
-            "Import CST Studio Package\u2026",
+            import_menu,
+            "CST Studio Package\u2026",
             slot=self._on_import_cst,
             tip="CST-Exportpaket (manifest.json + STL pro Solid, Ordner oder "
             "ZIP) mit Materialien, Ports, Frequenz und R\u00e4ndern importieren",
         )
+        import_menu.addSeparator()
         add_action(
-            gmenu,
+            import_menu,
             "Ports from KiCad nets…",
             slot=self._on_suggest_kicad_ports,
             tip="Port-Kandidaten aus KiCad-Netzen, Connector-Pads und "
             "Tracks vorschlagen und bestätigen",
         )
         add_action(
-            gmenu,
+            import_menu,
             "Ports from Gerber…",
             slot=self._on_suggest_gerber_ports,
             tip="Port-Kandidaten aus Gerber-X2-Netzen/IPC-356 oder "
             "Boardkanten-Geometrie vorschlagen",
         )
-        gmenu.addSeparator()
-        add_action(gmenu, "Add Assignment…", slot=self._on_add_assignment)
-        add_action(gmenu, "Add Material…", slot=self._on_add_material)
-        gmenu.addSeparator()
-        self.act_add_port = add_action(
-            gmenu,
-            "Add Port…",
-            slot=self._on_add_port,
-            tip="Ports need the cartesian coordinate system (openEMS LumpedPort "
-            "is not cylindrical-mesh aware)",
-        )
-        add_action(gmenu, "Add Field Dump…", btn=self.btn_add_dump)
+
         gmenu.addSeparator()
         add_action(gmenu, "Edit Selected…", slot=self._on_edit_selected_tree)
         add_action(
@@ -1475,14 +1496,22 @@ class MainWindow(QMainWindow):
         gmenu.addSeparator()
         add_action(
             gmenu,
+            "Variables…",
+            slot=self._on_edit_variables,
+            tip="Named drawing-unit values for geometry fields "
+            "(e.g. L = 20, then type L/2 in Start/Stop)",
+        )
+        add_action(
+            gmenu,
             "Ports / Dumps…",
             slot=self._on_open_ports_dumps_dialog,
             shortcut="Ctrl+Shift+D",
             tip="Ports, field dumps and NF2FF box in one window",
         )
-        gmenu.addSeparator()
-        add_action(gmenu, "Edit NF2FF Box…", slot=self._on_edit_nf2ff)
-        add_action(gmenu, "Fit NF2FF to Geometry", slot=self._on_fit_nf2ff)
+        nf2ff_menu = gmenu.addMenu("NF2FF")
+        nf2ff_menu.setStatusTip("Far-field box around the antenna")
+        add_action(nf2ff_menu, "Edit NF2FF Box…", slot=self._on_edit_nf2ff)
+        add_action(nf2ff_menu, "Fit NF2FF to Geometry", slot=self._on_fit_nf2ff)
 
         mmenu = bar.addMenu("Mes&h")
         add_action(mmenu, "Build Mesh", btn=self.btn_build_mesh, shortcut="Ctrl+M")
@@ -1624,6 +1653,31 @@ class MainWindow(QMainWindow):
             tip="One FDTD run per port (one excitation each) then merge into the "
             "complete S-matrix — needs >= 2 ports",
         )
+        add_action(
+            smenu,
+            "Variable Sweep…",
+            slot=self._on_edit_sweep,
+            tip="Configure a one-variable geometry sweep stored with the project",
+        )
+        add_action(
+            smenu,
+            "Run Sweep",
+            slot=self._on_run_sweep,
+            tip="Run the configured variable sweep as one staged result set",
+        )
+        add_action(
+            smenu,
+            "Sweep Results…",
+            slot=self._on_show_sweep_results,
+            tip="Inspect all points of the active/last sweep",
+        )
+        add_action(
+            smenu,
+            "Sweep Antenna Patterns…",
+            slot=self._on_show_sweep_patterns,
+            tip="Overlay 2D antenna cuts, plot gain/efficiency, or play the "
+            "3D pattern as a film across sweep points",
+        )
         add_action(smenu, "Abort", btn=self.btn_abort)
         smenu.addSeparator()
         self.act_commit_results = add_action(
@@ -1685,6 +1739,13 @@ class MainWindow(QMainWindow):
         add_action(smenu, "Script\u2026", btn=self.btn_script)
         smenu.addSeparator()
         add_action(smenu, "S-Params Viewer", btn=self.btn_sparams)
+        add_action(
+            smenu,
+            "Compare with previous run",
+            slot=self._on_compare_previous_run,
+            tip="Load the newest committed run before the active one as a "
+            "dashed S-parameter reference (does not change the active run)",
+        )
         add_action(smenu, "Pop-out S-Graph", btn=self.btn_sparams_popout)
         smenu.addSeparator()
         add_action(smenu, "Antenna Pattern Viewer", btn=self.btn_antenna)
@@ -1774,6 +1835,19 @@ class MainWindow(QMainWindow):
             hmenu,
             "Antenna Simulation (FDTD hints)…",
             slot=lambda: show_tab_help(self, "Antenna Simulation"),
+        )
+        add_action(
+            hmenu,
+            "Variable sweep (geometry, mesh, runs)…",
+            slot=lambda: show_tab_help(self, "Variable Sweep"),
+            tip="Targets, values, mesh impact, run count, S-parameters vs NF2FF",
+        )
+        add_action(
+            hmenu,
+            "Sweep antenna patterns (overlay and film)…",
+            slot=lambda: show_tab_help(self, "Sweep Antenna Patterns"),
+            tip="2D cut overlays, gain/efficiency curves, 3D animation and "
+            "phase-sweep caveats",
         )
         add_action(
             hmenu,
@@ -2693,7 +2767,16 @@ class MainWindow(QMainWindow):
         )
         menu.addSeparator()
         kind, _idx = self._current_tree_entry()
-        deletable = {"geom", "prim", "assign", "mat", "port", "dump", "nf2ff"}
+        deletable = {
+            "geom",
+            "prim",
+            "assign",
+            "mat",
+            "port",
+            "dump",
+            "nf2ff",
+            "sweep",
+        }
         act_del = menu.addAction("Delete selected")
         act_del.setEnabled(kind in deletable)
         act_del.triggered.connect(
@@ -2878,6 +2961,17 @@ class MainWindow(QMainWindow):
                 self._log(f"Could not load recorded S-params: {e}")
         else:
             self._auto_load_sparams_if_empty()
+        if (
+            self.sparam_viewer.network is not None
+            and self.sparam_viewer.reference_network is None
+            and self.project.sparam_reference
+        ):
+            _reference_sync_was_suspended = self._suspend_reference_sync
+            self._suspend_reference_sync = True
+            try:
+                self._restore_sparam_reference()
+            finally:
+                self._suspend_reference_sync = _reference_sync_was_suspended
         if self.sparam_tab_index >= 0:
             self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
 
@@ -3472,6 +3566,170 @@ class MainWindow(QMainWindow):
             return
         self.project.sparam_markers = self.sparam_viewer.marker_state()
 
+    def _on_sparam_reference_changed(self) -> None:
+        """Mirror the viewer's reference into the project JSON model."""
+        if getattr(self, "_suspend_reference_sync", False):
+            return
+        if not hasattr(self, "project") or not hasattr(self, "sparam_viewer"):
+            return
+        # Clearing the viewer because the project has no results must not erase
+        # a saved reference descriptor (same rule as S-param markers).
+        if getattr(self.sparam_viewer, "network", None) is None:
+            return
+        desc = self.sparam_viewer.reference_descriptor()
+        self.project.sparam_reference = desc
+        self._sparam_reference_missing = None
+        if desc:
+            label = str(desc.get("label") or desc.get("path") or "reference")
+            self._log(f"S-param reference: {label}")
+        else:
+            self._log("S-param reference cleared")
+
+    @staticmethod
+    def _read_run_manifest(run: Path) -> dict:
+        import json
+
+        try:
+            return json.loads((Path(run) / "manifest.json").read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _restore_sparam_reference(self) -> None:
+        """Load the reference recorded in the project JSON, if it still exists."""
+        desc = self.project.sparam_reference
+        if not isinstance(desc, dict) or not str(desc.get("path") or "").strip():
+            self._sparam_reference_missing = None
+            self.sparam_viewer.clear_reference()
+            return
+        if self.sparam_viewer.network is None:
+            # No current S-parameters: keep the descriptor in the project and
+            # do not show a reference without anything to compare it to.
+            self.sparam_viewer.clear_reference()
+            return
+        raw_path = str(desc.get("path") or "")
+        path = self._existing_path(raw_path)
+        if path is None:
+            self.sparam_viewer.clear_reference()
+            if self._sparam_reference_missing != raw_path:
+                self._sparam_reference_missing = raw_path
+                self._log(f"S-param reference missing: {raw_path}")
+            return
+        try:
+            from app.ui.sparam_viewer import load_network_from_path
+
+            ntwk = load_network_from_path(path)
+        except Exception as e:  # noqa: BLE001
+            self.sparam_viewer.clear_reference()
+            self._log(f"Could not load S-param reference {path}: {e}")
+            return
+        try:
+            self.sparam_viewer.set_reference(
+                ntwk,
+                path,
+                label=str(desc.get("label") or path.name),
+                meta=desc,
+            )
+        except Exception as e:  # noqa: BLE001
+            self.sparam_viewer.clear_reference()
+            self._log(f"Could not apply S-param reference {path}: {e}")
+            return
+        self._sparam_reference_missing = None
+        self._log(f"S-param reference restored: {path}")
+
+    def _use_run_as_sparam_reference(self, run: Path) -> bool:
+        """Compare the current S-params with one committed run (read-only)."""
+        run = Path(run)
+        ref_path = find_sparams_in_run(run)
+        if ref_path is None:
+            QMessageBox.information(
+                self,
+                "No S-parameters in run",
+                f"The run {run.name} has no sparams.s*p / sparams.json.",
+            )
+            return False
+        self._on_show_sparams()
+        if self.sparam_viewer.network is None:
+            QMessageBox.information(
+                self,
+                "Compare S-parameters",
+                "Load the current S-parameters first, then choose a run reference.",
+            )
+            return False
+        manifest = self._read_run_manifest(run)
+        project_dir = self._project_work_dir()
+        label = f"{project_dir.name} / {run.name}"
+        meta = {
+            "kind": "run",
+            "run_id": run.name,
+            "project_id": str(self.project.project_id or ""),
+            "project_name": str(self.project.name or project_dir.name),
+            "status": str(manifest.get("status") or "complete"),
+            "created": str(manifest.get("created") or ""),
+            "path": str(ref_path),
+        }
+        if not self.sparam_viewer.load_reference_path(
+            ref_path,
+            label=label,
+            meta=meta,
+        ):
+            return False
+        if self.sparam_tab_index >= 0:
+            self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
+        return True
+
+    def _on_compare_previous_run(self) -> None:
+        """Use the newest committed run before the current one as reference."""
+        self._on_show_sparams()
+        runs = self._project_store().list_runs()
+        if not runs:
+            QMessageBox.information(
+                self,
+                "Previous run",
+                "No committed runs yet. Commit a run first (Simulation → "
+                "Commit staged results).",
+            )
+            return
+        active = self._active_run_dir()
+        if self._staged_run_dir is not None:
+            # The staged run is the newest one; its predecessor is the active
+            # committed run (or the newest committed run if none is active).
+            if active is None:
+                candidates = list(runs)
+            else:
+                candidates = [active] + [
+                    run for run in runs if not self._same_path(run, active)
+                ]
+        elif active is not None:
+            # "Previous" means older than the active run, not simply the
+            # newest other run (the user may have switched to an older run).
+            index = next(
+                (
+                    i
+                    for i, run in enumerate(runs)
+                    if self._same_path(run, active)
+                ),
+                -1,
+            )
+            candidates = list(runs[index + 1 :]) if index >= 0 else list(runs)
+        else:
+            candidates = list(runs)
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "Previous run",
+                "There is no earlier committed run to compare with.",
+            )
+            return
+        for run in candidates:
+            if find_sparams_in_run(run) is not None:
+                self._use_run_as_sparam_reference(run)
+                return
+        QMessageBox.information(
+            self,
+            "Previous run",
+            "The earlier committed run(s) have no S-parameter files.",
+        )
+
     def _sync_project_from_form(self) -> None:
         # Prefer explicit start/stop widgets if they differ from f0±fc
         start_w = self._hz_from_spin(self.spn_start_f)
@@ -4019,6 +4277,11 @@ class MainWindow(QMainWindow):
         self._current_file_path = None
         self._staged_run_dir = None
         self._staged_run_status = ""
+        self._staged_run_kind = "single"
+        self._last_sweep_json = None
+        self._sweep_points = []
+        self._sweep_spec = None
+        self._sweep_work = None
         self._project_store_obj = None
         # forget the previous project's mesh signature: a new project starts
         # empty and must not reuse a leftover work/untitled/csx.xml
@@ -4057,6 +4320,11 @@ class MainWindow(QMainWindow):
             self._current_file_path = Path(path)
             self._staged_run_dir = None
             self._staged_run_status = ""
+            self._staged_run_kind = "single"
+            self._last_sweep_json = None
+            self._sweep_points = []
+            self._sweep_spec = None
+            self._sweep_work = None
             self._project_store_obj = None
             self._mesh_sig = None  # different project -> loaded CSX is unknown
             self.project = Project.load(path)
@@ -4279,16 +4547,33 @@ class MainWindow(QMainWindow):
         staging = self._project_store().new_staging("run")
         self._staged_run_dir = staging
         self._staged_run_status = "running"
+        self._staged_run_kind = "single"
         self._update_run_actions()
         return staging
 
     def _run_metadata(self) -> dict:
-        return {
+        metadata = {
             "project_id": str(self.project.project_id or ""),
             "project_name": str(self.project.name or ""),
             "status": str(self._staged_run_status or "complete"),
             "source": str(self._staged_run_dir or ""),
+            "run_kind": str(self._staged_run_kind or "single"),
         }
+        if self._staged_run_kind == "sweep":
+            try:
+                sweep_file = Path(self._staged_run_dir or "") / "sweep.json"
+                if sweep_file.is_file():
+                    payload = json.loads(sweep_file.read_text(encoding="utf-8"))
+                    metadata["sweep"] = payload.get("spec")
+                else:
+                    from dataclasses import asdict
+
+                    spec = getattr(self.project, "sweep", None)
+                    if spec is not None:
+                        metadata["sweep"] = asdict(spec)
+            except Exception:  # noqa: BLE001
+                pass
+        return metadata
 
     def _result_paths_for_run(
         self, root: Path, run_dir: Path, status: str = "complete"
@@ -4315,6 +4600,20 @@ class MainWindow(QMainWindow):
         nf2ff = run_dir / "nf2ff" / "nf2ff.json"
         if nf2ff.exists():
             rec["nf2ff"] = str(nf2ff)
+        sweep = run_dir / "sweep.json"
+        if sweep.exists():
+            rec["sweep"] = str(sweep)
+            try:
+                payload = json.loads(sweep.read_text(encoding="utf-8"))
+                for point in payload.get("points") or []:
+                    rel = str(point.get("sparams") or "").strip()
+                    if rel:
+                        candidate = run_dir / rel
+                        if candidate.exists():
+                            rec["sparams"] = str(candidate)
+                            break
+            except Exception:  # noqa: BLE001
+                pass
         return rec
 
     def _set_active_run_results(self, run_dir: Path, status: str = "complete") -> None:
@@ -4348,6 +4647,7 @@ class MainWindow(QMainWindow):
         staging = self._staged_run_dir
         self._staged_run_dir = None
         self._staged_run_status = ""
+        self._staged_run_kind = "single"
         if staging is not None and Path(staging).exists():
             try:
                 self._project_store().discard(staging)
@@ -4477,10 +4777,12 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 pass
             status = str(manifest.get("status") or "?")
+            kind = str(manifest.get("run_kind") or "")
             created = str(manifest.get("created") or "")[:19].replace("T", " ")
             mark = "● " if active is not None and run == active else "  "
+            tag = f"{status} · sweep" if kind == "sweep" else status
             item = QListWidgetItem(
-                f"{mark}{run.name}  [{status}]  {created}"
+                f"{mark}{run.name}  [{tag}]  {created}"
             )
             item.setData(Qt.ItemDataRole.UserRole, str(run))
             item.setToolTip(str(run))
@@ -4489,9 +4791,15 @@ class MainWindow(QMainWindow):
                 listing.setCurrentItem(item)
         layout.addWidget(listing, 1)
         row = QHBoxLayout()
+        btn_ref = QPushButton("Use as S-param reference")
+        btn_ref.setToolTip(
+            "Compare the current S-parameters with this run without switching "
+            "the active run."
+        )
         btn_active = QPushButton("Set as active")
         btn_open = QPushButton("Open folder")
         btn_close = QPushButton("Close")
+        row.addWidget(btn_ref)
         row.addWidget(btn_active)
         row.addWidget(btn_open)
         row.addStretch(1)
@@ -4504,6 +4812,12 @@ class MainWindow(QMainWindow):
                 return None
             raw = item.data(Qt.ItemDataRole.UserRole)
             return Path(str(raw)) if raw else None
+
+        def _update_ref_button() -> None:
+            run = _selected()
+            btn_ref.setEnabled(
+                run is not None and find_sparams_in_run(run) is not None
+            )
 
         def _set_active() -> None:
             run = _selected()
@@ -4536,9 +4850,17 @@ class MainWindow(QMainWindow):
             if run is not None:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(run)))
 
+        def _use_ref() -> None:
+            run = _selected()
+            if run is not None and self._use_run_as_sparam_reference(run):
+                dlg.accept()
+
+        btn_ref.clicked.connect(_use_ref)
         btn_active.clicked.connect(_set_active)
         btn_open.clicked.connect(_open)
         btn_close.clicked.connect(dlg.reject)
+        listing.currentItemChanged.connect(lambda *_: _update_ref_button())
+        _update_ref_button()
         dlg.exec()
 
     def _recover_staged_runs(self) -> None:
@@ -4728,6 +5050,22 @@ class MainWindow(QMainWindow):
             nf2ff = project_dir / "nf2ff" / "nf2ff.json"
         if nf2ff.exists():
             out["nf2ff"] = str(nf2ff)
+        sweep = sim_dir / "sweep.json"
+        if not sweep.exists():
+            sweep = project_dir / "sweep.json"
+        if sweep.exists():
+            out["sweep"] = str(sweep)
+            try:
+                payload = json.loads(sweep.read_text(encoding="utf-8"))
+                for point in payload.get("points") or []:
+                    rel = str(point.get("sparams") or "").strip()
+                    if rel:
+                        candidate = Path(sim_dir) / rel
+                        if candidate.exists():
+                            out["sparams"] = str(candidate)
+                            break
+            except Exception:  # noqa: BLE001
+                pass
         return out
 
     def _record_results(
@@ -5028,30 +5366,40 @@ class MainWindow(QMainWindow):
             cleared.append("mesh")
 
         # --- S-param Viewer: recorded file, else newest of THIS project -----
-        self.sparam_viewer.set_work_dir(data_dir)
-        recorded = self._existing_path(rec.get("sparams"))
-        if recorded is not None and not self._path_within(recorded, project_dir):
-            self._log(f"Ignoring S-params outside the project folder: {recorded}")
-            recorded = None
-        cands = [recorded] if recorded is not None else self._find_sparams_files(project_dir, sim_dir)
-        ok = False
-        if cands:
-            try:
-                self.sparam_viewer.load_path(cands[-1])
-                loaded.append(f"S-params ({cands[-1]})")
-                ok = True
-            except Exception as e:  # noqa: BLE001
-                self._log(f"Could not restore S-params {cands[-1].name}: {e}")
-        if not ok:
-            self.sparam_viewer.clear()
-            cleared.append("S-params")
-        else:
-            try:
-                self.sparam_viewer.set_marker_state(
-                    self.project.sparam_markers or []
-                )
-            except Exception as e:  # noqa: BLE001 - markers are optional state
-                self._log(f"Could not restore S-param markers: {e}")
+        # The reference is restored below; suspend its change signal so a
+        # project switch cannot overwrite the NEW project's descriptor with
+        # the old viewer state.
+        _reference_sync_was_suspended = self._suspend_reference_sync
+        self._suspend_reference_sync = True
+        try:
+            self.sparam_viewer.clear_reference()
+            self.sparam_viewer.set_work_dir(data_dir)
+            recorded = self._existing_path(rec.get("sparams"))
+            if recorded is not None and not self._path_within(recorded, project_dir):
+                self._log(f"Ignoring S-params outside the project folder: {recorded}")
+                recorded = None
+            cands = [recorded] if recorded is not None else self._find_sparams_files(project_dir, sim_dir)
+            ok = False
+            if cands:
+                try:
+                    self.sparam_viewer.load_path(cands[-1])
+                    loaded.append(f"S-params ({cands[-1]})")
+                    ok = True
+                except Exception as e:  # noqa: BLE001
+                    self._log(f"Could not restore S-params {cands[-1].name}: {e}")
+            if not ok:
+                self.sparam_viewer.clear()
+                cleared.append("S-params")
+            else:
+                try:
+                    self.sparam_viewer.set_marker_state(
+                        self.project.sparam_markers or []
+                    )
+                except Exception as e:  # noqa: BLE001 - markers are optional state
+                    self._log(f"Could not restore S-param markers: {e}")
+                self._restore_sparam_reference()
+        finally:
+            self._suspend_reference_sync = _reference_sync_was_suspended
 
         # --- Antenna pattern (NF2FF): recorded, else this project's file ----
         self.antenna_viewer.set_work_dir(self.settings.work_path())
@@ -6811,6 +7159,18 @@ class MainWindow(QMainWindow):
             for name, count in expression_references(expressions, names).items():
                 key = name.casefold()
                 counts[key] = counts.get(key, 0) + count
+        # Variables used only by another variable's formula still affect the
+        # resolved geometry through that dependent variable.
+        variable_expressions = {
+            f"variable[{i}]": str(getattr(variable, "expression", "") or "")
+            for i, variable in enumerate(self.project.variables)
+            if str(getattr(variable, "expression", "") or "").strip()
+        }
+        for name, count in expression_references(
+            variable_expressions, names
+        ).items():
+            key = name.casefold()
+            counts[key] = counts.get(key, 0) + count
         return counts
 
     def _variable_candidates(self, definitions, renames):
@@ -6981,6 +7341,172 @@ class MainWindow(QMainWindow):
         )
         if dlg.exec():
             self._apply_variable_update(dlg.variables(), dlg.renames)
+
+    def _on_edit_sweep(self) -> None:
+        from app.ui.sweep_dialog import SweepDialog
+
+        dlg = SweepDialog(
+            self.project,
+            self.primitives,
+            usage=self._variable_usage_counts(),
+            parent=self,
+        )
+        if dlg.exec():
+            self.project.sweep = dlg.spec()
+            self._refresh_tree()
+            spec = self.project.sweep
+            if spec is None:
+                self._log("Variable sweep cleared")
+            else:
+                state = "enabled" if spec.enabled else "disabled"
+                self._log(f"Variable sweep {state}: {spec.summary()}")
+
+    def _on_run_sweep(self) -> None:
+        spec = getattr(self.project, "sweep", None)
+        if spec is None or not spec.is_runnable():
+            QMessageBox.information(
+                self,
+                "Variable sweep",
+                "Configure an enabled variable sweep first "
+                "(Simulation → Variable Sweep…).",
+            )
+            self._on_edit_sweep()
+            return
+        target = str(spec.target_name() or "").strip()
+        phase_target = bool(spec.is_phase())
+        if phase_target:
+            active_names = {
+                str(getattr(p, "name", "") or "").strip().casefold()
+                for p in self.project.ports
+                if bool(getattr(p, "active", True))
+            }
+            if target.casefold() not in active_names:
+                QMessageBox.warning(
+                    self,
+                    "Variable sweep",
+                    f"Port '{target}' is not an active project port.",
+                )
+                return
+            if not spec.collect_nf2ff:
+                QMessageBox.warning(
+                    self,
+                    "Variable sweep",
+                    "A port-phase sweep needs NF2FF; S-parameters do not "
+                    "change with the excitation phase.",
+                )
+                return
+        elif self._variable_usage_counts().get(target.casefold(), 0) <= 0:
+            QMessageBox.warning(
+                self,
+                "Variable sweep",
+                f"Variable '{target}' is not used by any geometry, port, "
+                "dump or NF2FF field. The sweep would not change the "
+                "simulation.",
+            )
+            return
+        self._ensure_log_visible("simulation")
+        self._sync_project_from_form()
+        if self.runner.is_running() or self._multi_plans is not None:
+            QMessageBox.warning(self, "Busy", "A simulation is already running.")
+            return
+        if not self._confirm_replace_staged_run():
+            return
+        self._discard_result_state("new variable sweep")
+        self._begin_run_log("Variable Sweep")
+        self._run_step("Preparing sweep (staging folder, geometry)")
+        try:
+            work = self._fresh_staged_run()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Sweep preparation failed", str(e))
+            self._log(f"Sweep preparation failed: {e}")
+            self._end_run_log("Sweep preparation failed")
+            return
+        self._staged_run_kind = "sweep"
+        self._prepare_run_state(work)
+        if phase_target:
+            self._log(
+                f"Sweep port phase '{target}': geometry/mesh is unchanged; "
+                "NF2FF is collected for every phase."
+            )
+        else:
+            self._log(
+                f"Sweep variable '{target}' is used by "
+                f"{self._variable_usage_counts().get(target.casefold(), 0)} field(s); "
+                "geometry/mesh is rebuilt for every point/run."
+            )
+        from app.simulation.sweep import plan_sweep_runs
+
+        self._run_step(f"Planning {len(spec.values)} sweep point(s)")
+        try:
+            points, steps = plan_sweep_runs(
+                self.project, self.primitives, work, spec
+            )
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Sweep setup failed", str(e))
+            self._log(f"Sweep setup failed: {e}")
+            self._discard_staged_run(reason="sweep setup failed")
+            self._end_run_log("Variable sweep failed to start")
+            return
+        if not steps:
+            self._discard_staged_run(reason="sweep had no run steps")
+            self._end_run_log("Variable sweep had no run steps")
+            return
+        self._multi_plans = steps
+        self._multi_pos = 0
+        self._multi_kind = "sweep"
+        self._sweep_points = points
+        self._sweep_spec = spec
+        self._sweep_work = work
+        self._log(
+            f"Variable sweep: {len(points)} point(s), {len(steps)} FDTD run(s) "
+            f"under {work / 'sweep'}"
+        )
+        self._start_next_multi_run()
+
+    def _active_sweep_json(self) -> Path | None:
+        candidates = [
+            self._existing_path((self.project.results or {}).get("sweep")),
+        ]
+        if self._staged_run_dir is not None:
+            candidates.append(Path(self._staged_run_dir) / "sweep.json")
+        candidates.append(self._last_sweep_json)
+        candidates.append(self._project_work_dir() / "sweep.json")
+        return next(
+            (Path(c) for c in candidates if c is not None and Path(c).is_file()),
+            None,
+        )
+
+    def _on_show_sweep_results(self) -> None:
+        path = self._active_sweep_json()
+        if path is None:
+            QMessageBox.information(
+                self,
+                "Sweep results",
+                "No sweep results found. Run a variable sweep first.",
+            )
+            return
+        from app.ui.sweep_results import SweepResultsDialog
+
+        dlg = SweepResultsDialog(
+            path,
+            viewer=self.sparam_viewer,
+            parent=self,
+        )
+        dlg.exec()
+
+    def _on_show_sweep_patterns(self) -> None:
+        path = self._active_sweep_json()
+        if path is None:
+            QMessageBox.information(
+                self,
+                "Sweep antenna patterns",
+                "No sweep results found. Run a variable sweep first.",
+            )
+            return
+        from app.ui.sweep_patterns import SweepPatternsDialog
+
+        dlg = SweepPatternsDialog(path, parent=self)
+        dlg.exec()
 
     def _on_add_prim_box(self) -> None:
         from app.ui.geometry_editors import PrimitiveBoxDialog
@@ -7799,6 +8325,15 @@ class MainWindow(QMainWindow):
             if len(self.project.variables) > 4:
                 parts.append("…")
             _add(f"Vars: {', '.join(parts)}", "vars", 0)
+        sweep = getattr(self.project, "sweep", None)
+        if sweep is None:
+            _add("Sweep: off", "sweep", 0)
+        else:
+            state = "on" if bool(getattr(sweep, "enabled", False)) else "off"
+            text = f"Sweep: {state} · {sweep.summary()}"
+            if bool(getattr(sweep, "full_smatrix", False)):
+                text += " · full S"
+            _add(text, "sweep", 0)
         for i, gf in enumerate(self.project.geometry_files):
             _add(f"Geom: {Path(gf.path).name} [{gf.format}]", "geom", i)
         for i, pr in enumerate(self.primitives):
@@ -7890,6 +8425,23 @@ class MainWindow(QMainWindow):
             return
         if kind == "vars":
             self._log("Variables are edited as a table (Geometry -> Variables…)")
+            return
+        if kind == "sweep":
+            if self.project.sweep is None:
+                self._log("Sweep is already off")
+                return
+            reply = QMessageBox.question(
+                self,
+                "Remove sweep",
+                "Remove the project's variable-sweep definition? "
+                "The variables themselves are kept.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.project.sweep = None
+                self._refresh_tree()
+                self._log("Variable sweep removed")
             return
         if kind == "geom":
             gf = (
@@ -8089,6 +8641,9 @@ class MainWindow(QMainWindow):
     def _edit_tree_entry(self, kind: str, idx: int) -> None:
         if kind == "vars":
             self._on_edit_variables()
+            return
+        if kind == "sweep":
+            self._on_edit_sweep()
             return
         if kind == "geom":
             gf = self.project.geometry_files[idx] if 0 <= idx < len(self.project.geometry_files) else None
@@ -8933,6 +9488,7 @@ class MainWindow(QMainWindow):
             self._log(f"Run preparation failed: {e}")
             self._end_run_log("Run preparation failed")
             return
+        self._staged_run_kind = "ports"
         self._prepare_run_state(work)
         from app.simulation.multirun import plan_port_runs
 
@@ -8947,6 +9503,10 @@ class MainWindow(QMainWindow):
             return
         self._multi_plans = plans
         self._multi_pos = 0
+        self._multi_kind = "ports"
+        self._sweep_points = []
+        self._sweep_spec = None
+        self._sweep_work = None
         self._log(
             f"Run All Ports: {nports} ports → {nports} FDTD runs (one excitation "
             f"each) under {work / 'multi'}"
@@ -8959,21 +9519,26 @@ class MainWindow(QMainWindow):
             self._finish_multi_run()
             return
         plan = plans[self._multi_pos]
+        label = str(
+            getattr(plan, "label", "")
+            or getattr(plan, "port_name", "")
+            or "run"
+        )
         self._run_step(
-            f"Multi-run {self._multi_pos + 1}/{len(plans)}: excite "
-            f"'{plan.port_name}' (port {plan.port_number})"
+            f"Multi-run {self._multi_pos + 1}/{len(plans)}: {label}"
         )
         self._reset_engine_progress()
         try:
             self.runner.start(
                 plan.script_path,
-                log_cb=lambda line, _n=plan.port_name: self._log(f"[{_n}] {line}"),
+                log_cb=lambda line, _n=label: self._log(f"[{_n}] {line}"),
             )
             self._update_run_actions()
         except Exception as e:  # noqa: BLE001
-            self._log(f"Multi-run start failed ({plan.port_name}): {e}")
+            self._log(f"Multi-run start failed ({label}): {e}")
             QMessageBox.critical(self, "Run failed", str(e))
             self._multi_plans = None
+            self._multi_kind = None
             self._staged_run_status = "failed"
             self._update_run_actions()
             self._end_run_log("Run All Ports failed to start")
@@ -8990,23 +9555,43 @@ class MainWindow(QMainWindow):
         plans = self._multi_plans or []
         plan = plans[self._multi_pos]
         exit_code = getattr(self.runner, "last_exit", None)
+        label = str(
+            getattr(plan, "label", "")
+            or getattr(plan, "port_name", "")
+            or "run"
+        )
         self._log(
             f"Multi-run {self._multi_pos + 1}/{len(plans)} "
-            f"('{plan.port_name}') exit code {exit_code}"
+            f"({label}) exit code {exit_code}"
         )
         if getattr(self, "_abort_requested", False):
             self._log("Multi-run aborted by the user")
             self._multi_pos = len(plans)  # do not schedule the remaining runs
             self._finish_multi_run()
             return
+        if (
+            self._multi_kind == "sweep"
+            and getattr(self._sweep_spec, "stop_on_error", False)
+            and exit_code not in (0, None)
+        ):
+            self._log(
+                "Sweep stopped after a failed run; collecting the completed points"
+            )
+            self._multi_pos = len(plans)
+            self._finish_multi_run()
+            return
         self._multi_pos += 1
         self._start_next_multi_run()
 
     def _finish_multi_run(self) -> None:
+        if self._multi_kind == "sweep":
+            self._finish_sweep_run()
+            return
         from app.simulation.multirun import merge_port_runs, summarise_table
 
         plans = self._multi_plans or []
         self._multi_plans = None
+        self._multi_kind = None
         work = self._staged_run_dir or self._project_work_dir()
         if getattr(self, "_abort_requested", False):
             self._log(
@@ -9066,6 +9651,68 @@ class MainWindow(QMainWindow):
             work, getattr(self.runner, "last_exit", None),
             getattr(self.runner, "log_path", None),
         )
+        self._end_run_log()
+
+    def _finish_sweep_run(self) -> None:
+        from app.simulation.sweep import finish_sweep
+
+        points = list(self._sweep_points or [])
+        spec = self._sweep_spec
+        work = self._sweep_work or self._staged_run_dir or self._project_work_dir()
+        self._multi_plans = None
+        self._multi_kind = None
+        if self._multi_timer is not None:
+            self._multi_timer.stop()
+        if spec is None:
+            self._staged_run_status = "failed"
+            self._update_run_actions()
+            self._end_run_log("Variable sweep failed (missing specification)")
+            return
+        self._run_step("Collecting sweep results")
+        try:
+            result = finish_sweep(work, points, spec)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Sweep result collection failed: {e}")
+            QMessageBox.warning(self, "Sweep results failed", str(e))
+            self._staged_run_status = "failed"
+            self._update_run_actions()
+            self._end_run_log("Variable sweep failed while collecting results")
+            return
+        self._staged_run_status = str(result.get("status") or "partial")
+        self._last_sweep_json = result.get("path")
+        self._sweep_points = []
+        self._sweep_spec = None
+        self._sweep_work = None
+        self._log(f"Sweep status: {self._staged_run_status}")
+        for point in points:
+            self._log(
+                f"  Point {point.index + 1}/{len(points)} · {point.label} · "
+                f"{point.status}"
+                + (f" · {point.error}" if point.error else "")
+            )
+        primary = result.get("primary_sparams")
+        if primary:
+            try:
+                self.sparam_viewer.set_work_dir(work)
+                self.sparam_viewer.load_path(primary)
+                self._allow_auto_results = True
+                if self.sparam_tab_index >= 0:
+                    self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
+                self._log(
+                    f"Sweep point 1 loaded in S-Params; all points via "
+                    f"Simulation → Sweep Results…: {result.get('path')}"
+                )
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Sweep point viewer update failed: {e}")
+        else:
+            self.sparam_viewer.clear()
+            self._allow_auto_results = False
+        self._update_run_actions()
+        if self._staged_run_dir is not None:
+            self._log(
+                f"Sweep results are STAGED at {self._staged_run_dir} — use "
+                "Simulation → Commit staged results."
+            )
         self._end_run_log()
 
     def _publish_sim_report(

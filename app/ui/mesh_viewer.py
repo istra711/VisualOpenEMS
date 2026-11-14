@@ -3667,6 +3667,17 @@ class MeshGeometryViewer(QWidget):
         return "cartesian"
 
     def _update_info(self) -> None:
+        if (
+            self._csx is None
+            and self._scene_area is None
+            and not self._scene_infos
+            and self._domain_override is None
+            and not self._primitives
+        ):
+            # Nothing loaded (New Project): keep the info pane empty instead
+            # of printing an "empty mesh / no primitives" skeleton.
+            self._info_text = ""
+            return
         lines: list[str] = []
         lines.append("=== Mesh ===")
         mesh = self._grid_mesh()

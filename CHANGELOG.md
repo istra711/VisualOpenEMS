@@ -7,8 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **S-parameter reference comparison**: the S-Params viewer can load a second
+  Touchstone or `sparams.json` file as a read-only reference. Reference traces
+  are dashed overlays, a **Delta** mode plots current minus reference, and the
+  marker list shows the reference value and Δ dB. Reference impedance is
+  renormalised to the current network, only the common frequency range is
+  interpolated (no extrapolation), and partial/unmeasured cells stay masked.
+  `sparams.json` now records its `z0` so 73 Ω and other reference impedances
+  survive a round-trip.
+- **S-parameter run references**: Run history has **Use as S-param reference**
+  (without switching the active run), and the Simulation menu / S-Params tab
+  offer **Compare with previous run**. The **Scan…** list also has a
+  right-click menu for **Load as current** / **Use as reference**. The reference
+  descriptor (path, run id, label, status) is stored in the project JSON and
+  restored when the project is reopened; missing references are skipped with a
+  log message.
+- **Comparison export and port mapping**: **Export… → Comparison CSV** writes a
+  long-format table (current/reference dB, phase, real, imaginary and Δ values),
+  and **Comparison report** writes per-Sij max/RMS ΔdB, f@max, Δphase and
+  max|ΔS| plus provenance. **Compare ▾ → Port mapping…** maps current ports to
+  reference ports for different port counts or a different port order; the map
+  is saved with the reference descriptor.
+- **Variable sweep (Phase A)**: a project-level **Sweep** entry in the project
+  tree (not a CSX geometry primitive) configures one named variable with an
+  explicit value list. **Simulation → Run Sweep** runs every point as one staged
+  result bundle, with a project/geometry snapshot per point, optional full
+  S-matrix per point, and `sweep.json`. The dialog warns about mesh rebuilds and
+  the estimated point × port run count. **Sweep Results…** overlays the points,
+  exports CSV/PNG, and can load a point as current/reference.
+- **Sweep antenna patterns and phase target**: port excitation phase can be
+  swept as a second target type (NF2FF mandatory, full S-matrix disabled).
+  **Sweep Antenna Patterns…** overlays 2D cuts and gain/efficiency curves, or
+  plays the 3D pattern as a slider/play film with GIF/MP4 export. Single-port
+  global phase vs multiple-port relative phase is explained in the GUI and the
+  dedicated help topics **Variable Sweep** and **Sweep Antenna Patterns**.
+
 ### Changed
 
+- **Compact Geometry menu**: the 24 flat entries are grouped into three
+  submenus — **Geometry → Add ▸** (Box, Cylinder, Sphere, Lumped Element,
+  Polygon, Extruded Polygon, Wire, Curve | Material, Assignment, Port, Field
+  Dump), **Geometry → Import ▸** (Gerber/Excellon, KiCad PCB, CST Studio
+  Package | Ports from KiCad nets, Ports from Gerber) and **Geometry → NF2FF ▸**
+  (Edit NF2FF Box…, Fit NF2FF to Geometry). The top level now only holds
+  *Edit Selected…*, *Duplicate Selected* (Ctrl+D), *Delete Selected* (Del),
+  *Variables…*, *Ports / Dumps…* (Ctrl+Shift+D) and the three submenus. The
+  "Add" labels are the same as in the project panel's right-click menu (no
+  duplicate "Add" prefix inside the submenu). `tests/menu_smoke.py` checks the
+  exact top-level order and every submenu entry; the tutorial screenshots and
+  the DE/EN guide paths were regenerated/updated accordingly.
+- **Cleaner S-Params toolbar**: reference actions now live in one **Compare ▾**
+  menu (open file, previous run, port mapping, show/clear reference), Reload and
+  Scan moved to the "Loaded files" header, and the reference row only appears
+  while a reference is loaded.
 - **Narrow geometry dialogs**: the geometry, port, material, field-dump and
   NF2FF editors now open at the narrowest width their layout needs, so every
   label, button and input field stays fully visible while wide remembered or
@@ -16,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Empty mesh info after New Project**: the Mesh Viewer no longer fills its
+  scene info with an "empty mesh / no primitives" skeleton right after a new
+  project; the pane stays empty until geometry or a mesh exists.
 - **Left-aligned geometry inputs**: every numeric field in the geometry
   dialogs (box, cylinder, sphere, polygon/wire, port, material, lumped element,
   field dump, NF2FF, display options and the KiCad/Gerber import options) now

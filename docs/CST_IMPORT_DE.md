@@ -13,7 +13,7 @@ mein_projekt_cst_package/
 ```
 
 Ein ZIP mit demselben Inhalt wird ebenfalls unterstützt. `File → Import CST
-Studio Package…` und `Geometry → Import CST Studio Package…` öffnen den
+Studio Package…` und `Geometry → Import → CST Studio Package…` öffnen den
 Importdialog. Im Mesh Viewer werden die STL-Solids mit ihrer echten
 Dreieckskontur dargestellt (Schnitt durch die Slice-Ebene bzw. projizierte
 Dreiecke in der Übersicht), nicht mehr nur als Bounding-Box-Rechtecke.

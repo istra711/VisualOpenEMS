@@ -647,6 +647,17 @@ PowerShell: avoid complex `-c` one-liners with nested quotes — write scripts u
   - **3D Design tab kept a stale/rolled camera** (user screenshot after a geometry import showed a tilted/top view while the View combo said "Isometric"): `_render_design()` in `app/ui/design_viewer.py` always fitted with "keep", so opening the tab or the first render after an import inherited the old direction. It now applies the selected standard view as a mode on the first render and on explicit fits ("Fit (keep direction)" still only fits). Regression in `tests/design_viewer_smoke.py`: first render with `iso` → camera direction (0.577, 0.577, 0.577).
   - **3D Design defaults aligned with the Field Viewer** (user: "ich wollte aber diese Defaults im 3D-Viewer"): `Design3DViewer.__init__` now sets corner=True (small bottom-left triad), ruler, labels, font 24, scale 2.0; `_draw_coordinate_system()` skips the in-scene arrows while the corner triad is on (they return when "Corner axes (bottom-left)" is unchecked), and `_reset_design_axes()` restores the same values. `design_viewer_smoke` asserts corner/ruler/font/scale after reset.
 
+### 2026-11-14
+- **Geometry menu decluttered (user request with screenshot: "zu viele Einträge, recht durcheinander")**: the 24 flat entries in `app/ui/main_window.py` are now three submenus + a short edit block.
+  - `Geometry → Add ▸`: Box, Cylinder, Sphere, Lumped Element (R/L/C), Polygon, Extruded Polygon, Wire, Curve | Material, Assignment, Port, Field Dump — the same labels as the project panel's right-click Add menu (no "Add" prefix twice).
+  - `Geometry → Import ▸`: Gerber/Excellon, KiCad PCB, CST Studio Package | Ports from KiCad nets, Ports from Gerber.
+  - `Geometry → NF2FF ▸`: Edit NF2FF Box…, Fit NF2FF to Geometry.
+  - Top level: Add ▸, Import ▸, sep, Edit Selected…, Duplicate Selected (Ctrl+D), Delete Selected (Del), sep, Variables…, Ports / Dumps… (Ctrl+Shift+D), NF2FF ▸. `menu_btn_pairs`/`_sync_enabled` unchanged (they iterate the flat pair list).
+  - Tests: `tests/menu_smoke.py` now checks the exact top-level order and every submenu entry (`_submenu` helper); menu smoke PASS.
+  - Docs: CHANGELOG [Unreleased] Changed; ANLEITUNG_DE/EN menu paragraph + Add paths; README quick start; tab_help GEOMETRY topic; CST/FREECAD_WORKFLOW paths; tutorial `generate_tutorial.py` now renders the Add submenu (`_GEOMETRY_ADD_ITEMS`) and the four `menu_geometry_*.png` assets were regenerated; tutorial README paths updated.
+- **New project left an "empty mesh" info skeleton**: `MeshViewer._update_info` (`app/ui/mesh_viewer.py`) now clears the text when there is no CSX, scene, domain override or primitive. `tests/menu_smoke.py::test_new_project_starts_empty` passes again.
+- **`tests/tree_edit_smoke.py` port fake** accepts the new `width_preview` kwarg (`**kwargs`), so the smoke runs against `PortDialog`'s current signature.
+
 ---
 
 ## 9. Update checklist (when you touch this file)
