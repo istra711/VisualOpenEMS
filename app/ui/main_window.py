@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -152,6 +153,18 @@ class MainWindow(QMainWindow):
         self._last_coord_diag = None
         #: text of the last post-run status block (Simulation menu -> Status)
         self._last_sim_report_text = ""
+        #: Structured report + paths of the last run (AI error assistant).
+        self._last_run_report = None
+        self._last_run_work: Path | None = None
+        self._last_run_log_path: Path | None = None
+        self._last_run_exit_code = None
+        self._last_run_message = ""
+        self._ai_session_id = ""
+        self._ai_worker = None
+        self._ai_last_prompt = ""
+        self._ai_undo: tuple[Project, list[dict]] | None = None
+        self._ai_panel = None
+        self._ai_dock = None
         #: Transactional run workflow: the current run is written here until
         #: the user explicitly commits or discards it.  Committed runs live in
         #: <project>/runs/<id>/ and are never modified in place.
@@ -439,6 +452,14 @@ class MainWindow(QMainWindow):
         if not headless and not self._confirm_close_with_unsaved_changes():
             event.ignore()
             return
+        # Stop a running AI request before the Qt objects are torn down.
+        ai_worker = getattr(self, "_ai_worker", None)
+        if ai_worker is not None:
+            try:
+                ai_worker.cancel()
+                ai_worker.wait(3000)
+            except Exception as e:  # noqa: BLE001
+                print("wait for AI worker failed:", e)
         # Let a running background mesh build finish before tearing down the
         # CSX/FDTD objects and the GUI thread.
         thread = getattr(self, "_mesh_thread", None)
@@ -1284,6 +1305,7 @@ class MainWindow(QMainWindow):
         self._sim_params_dlg: object | None = None  # SimParamsDialog (modeless)
         self._mesh_params_dlg: object | None = None  # MeshParamsDialog (modeless)
         self._ports_dlg: object | None = None  # PortsDumpsDialog (modeless)
+        self._build_ai_dock()
         self._build_menu()
 
         # Cross-thread log: SimulationRunner may call from a worker thread.
@@ -1296,6 +1318,112 @@ class MainWindow(QMainWindow):
         self._log_poll.start()
 
     # ----------------------------------------------------------------- menu
+    # ----------------------------------------------------------------- AI
+    def _build_ai_dock(self) -> None:
+        """Create the right-side AI assistant (hidden until requested)."""
+        from app.ui.ai_panel import AiAssistantPanel
+
+        self._ai_panel = AiAssistantPanel(self)
+        dock = QDockWidget("AI Assistant", self)
+        dock.setObjectName("ai_assistant_dock")
+        dock.setWidget(self._ai_panel)
+        dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        dock.setMinimumWidth(360)
+        try:
+            self.resizeDocks([dock], [430], Qt.Orientation.Horizontal)
+        except Exception:  # noqa: BLE001 - layout hint only
+            pass
+        dock.hide()
+        self._ai_dock = dock
+
+        panel = self._ai_panel
+        panel.send_requested.connect(self._on_ai_send_requested)
+        panel.stop_requested.connect(self._on_ai_stop)
+        panel.apply_fix_requested.connect(self._on_ai_apply_fix)
+        panel.undo_requested.connect(self._on_ai_undo)
+        panel.settings_requested.connect(self._on_ai_settings)
+        panel.preview_requested.connect(self._on_ai_preview)
+        panel.help_requested.connect(self._on_ai_help)
+        panel.explain_requested.connect(self._on_ai_explain_last_run)
+        panel.clear_requested.connect(self._on_ai_clear)
+        self._refresh_ai_status()
+        self._refresh_ai_context()
+
+    def _refresh_ai_status(self) -> None:
+        panel = getattr(self, "_ai_panel", None)
+        if panel is None:
+            return
+        provider = str(getattr(self.settings, "ai_provider", "opencode") or "offline")
+        if provider == "offline":
+            panel.set_backend_status("Offline", True)
+            panel.set_status(
+                "Offline mode: diagnosis and safe fixes are available; no data is "
+                "sent. Choose OpenCode in AI settings to ask a language model."
+            )
+            return
+        from app.ai.backend import OpenCodeBackend
+
+        backend = OpenCodeBackend(
+            str(getattr(self.settings, "ai_opencode_cmd", "opencode") or "opencode")
+        )
+        available = backend.is_available()
+        model = str(getattr(self.settings, "ai_model", "") or "").strip()
+        panel.set_backend_status(
+            "OpenCode" + ("" if available else " · missing"), available
+        )
+        if available:
+            panel.set_status(
+                "OpenCode CLI found"
+                + (f" · model {model}" if model else " · default model")
+                + ". Click Explain last run or send a question; the prompt is "
+                "shown first in 'What the AI sees…'."
+            )
+        else:
+            panel.set_status(
+                f"OpenCode command not found: {getattr(self.settings, 'ai_opencode_cmd', 'opencode')}. "
+                "Open AI settings to set the executable path, or stay offline."
+            )
+
+    def _refresh_ai_context(self) -> None:
+        panel = getattr(self, "_ai_panel", None)
+        if panel is None:
+            return
+        name = str(getattr(self.project, "name", "") or "untitled")
+        report = getattr(self, "_last_run_report", None)
+        if report is None:
+            message = str(getattr(self, "_last_run_message", "") or "").strip()
+            run_text = (
+                f"last failure: {message[:160]}"
+                if message
+                else "last run: no report in this session"
+            )
+        else:
+            run_text = f"last run: {report.verdict} — {report.headline}"
+        panel.set_context(f"Project: {name} · {run_text}")
+
+    def _reset_ai_project_state(self) -> None:
+        """Drop run context/session/undo when a different project is loaded."""
+        self._last_run_report = None
+        self._last_run_work = None
+        self._last_run_log_path = None
+        self._last_run_exit_code = None
+        self._last_run_message = ""
+        self._ai_session_id = ""
+        self._ai_last_prompt = ""
+        self._ai_undo = None
+        if getattr(self, "act_ai_undo", None) is not None:
+            self.act_ai_undo.setEnabled(False)
+        panel = getattr(self, "_ai_panel", None)
+        if panel is not None:
+            panel.set_undo_enabled(False)
+            panel.clear_diagnosis()
+            panel.clear_chat()
+        self._refresh_ai_context()
+
     def _build_menu(self) -> None:
         """Menu bar over the existing toolbar buttons.
 
@@ -1823,8 +1951,52 @@ class MainWindow(QMainWindow):
             "with live preview",
         )
 
+        amenu = bar.addMenu("&AI")
+        self.act_ai_show = self._ai_dock.toggleViewAction()
+        self.act_ai_show.setText("AI Assistant")
+        self.act_ai_show.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self.act_ai_show.setToolTip(
+            "Open the error assistant: deterministic diagnosis, safe fixes and "
+            "optional OpenCode explanation"
+        )
+        amenu.addAction(self.act_ai_show)
+        add_action(
+            amenu,
+            "Explain last run\u2026",
+            slot=self._on_ai_explain_last_run,
+            tip="Diagnose the last run, offer validated fixes and ask OpenCode to "
+            "explain the evidence",
+        )
+        self.act_ai_undo = add_action(
+            amenu,
+            "Undo AI change",
+            slot=self._on_ai_undo,
+            tip="Restore the project snapshot from before the last applied AI fix",
+        )
+        self.act_ai_undo.setEnabled(False)
+        amenu.addSeparator()
+        add_action(
+            amenu,
+            "AI settings\u2026",
+            slot=self._on_ai_settings,
+            tip="OpenCode CLI vs offline mode, model, timeout and context limits",
+        )
+        add_action(
+            amenu,
+            "AI help\u2026",
+            slot=self._on_ai_help,
+            tip="How the assistant works, what is sent, and how to read fixes",
+        )
+
         hmenu = bar.addMenu("&Help")
         add_action(hmenu, "Help for Current Tab", btn=self.btn_help, shortcut="F1")
+        add_action(
+            hmenu,
+            "AI assistant (error analysis)\u2026",
+            slot=lambda: show_tab_help(self, "AI Assistant"),
+            tip="What the assistant sends, how diagnosis and fixes work, and "
+            "the offline/OpenCode modes",
+        )
         add_action(
             hmenu,
             "Antenna pattern angles (illustrated)…",
@@ -4249,6 +4421,12 @@ class MainWindow(QMainWindow):
         self._allow_auto_results = False
         self._allow_auto_nf2ff = False
         self._last_sim_report_text = ""
+        self._last_run_report = None
+        self._last_run_work = None
+        self._last_run_log_path = None
+        self._last_run_exit_code = None
+        self._last_run_message = ""
+        self._refresh_ai_context()
         self._clear_result_viewers(reason, include_mesh=False)
 
     def _confirm_replace_staged_run(self) -> bool:
@@ -4291,6 +4469,7 @@ class MainWindow(QMainWindow):
         self._allow_auto_results = False
         self._allow_auto_nf2ff = False
         self._last_sim_report_text = ""
+        self._reset_ai_project_state()
         self._clear_result_viewers("new project")
         self.tree.clear()
         self.geom_info.clear()
@@ -4328,6 +4507,7 @@ class MainWindow(QMainWindow):
             self._project_store_obj = None
             self._mesh_sig = None  # different project -> loaded CSX is unknown
             self.project = Project.load(path)
+            self._reset_ai_project_state()
             self._reset_status_bar()
             # Layout rule (see _project_work_dir): the JSON sits one level above
             # its data folder: <base>/<stem>.fcsim.json + <base>/<stem>/.  The
@@ -8959,6 +9139,11 @@ class MainWindow(QMainWindow):
         """GUI-thread slot: finish a background mesh build."""
         try:
             self._finish_mesh_build(result)
+            if str(getattr(self, "_last_run_message", "")).startswith(
+                "Mesh build failed"
+            ):
+                self._last_run_message = ""
+                self._refresh_ai_context()
         except Exception as e:  # noqa: BLE001
             self._set_mesh_report(f"ERROR: {e}")
             self._log(f"Mesh build failed: {e}\n{traceback.format_exc()}")
@@ -8971,6 +9156,11 @@ class MainWindow(QMainWindow):
         """GUI-thread slot: the background mesh build raised."""
         self._set_mesh_report(f"ERROR: {message}")
         self._log(f"Mesh build failed: {message}")
+        self._last_run_report = None
+        self._last_run_work = None
+        self._last_run_log_path = None
+        self._last_run_message = f"Mesh build failed: {message}"
+        self._refresh_ai_context()
         self._mesh_building = False
         self.btn_build_mesh.setEnabled(True)
         self._mesh_thread = None
@@ -9326,7 +9516,12 @@ class MainWindow(QMainWindow):
             self._update_run_actions()
             self._log("Simulation started")
         except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Run failed", str(e))
+            self._last_run_report = None
+            self._last_run_work = None
+            self._last_run_log_path = None
+            self._last_run_message = f"Run failed to start: {e}"
+            self._refresh_ai_context()
+            self._ai_problem_box("Run failed", str(e))
             self._log(f"Run failed: {e}")
             self._staged_run_status = "failed"
             self._update_run_actions()
@@ -9398,6 +9593,11 @@ class MainWindow(QMainWindow):
                         self._allow_auto_results = False
                         self._log(f"Could not load generated S-params: {e}")
                         found = None
+                # Publish before the failure message boxes so their "Explain
+                # with AI" action sees this run's report, not the previous one.
+                self._publish_sim_report(
+                    work, exit_code, log_path, include_sparams=bool(found)
+                )
                 if not found:
                     self.sparam_viewer.clear()
                     self._allow_auto_results = False
@@ -9410,8 +9610,7 @@ class MainWindow(QMainWindow):
                     )
                     if self.sparam_tab_index >= 0:
                         self.sparam_tabs.setCurrentIndex(self.sparam_tab_index)
-                    QMessageBox.warning(
-                        self,
+                    self._ai_problem_box(
                         "S-params missing",
                         f"No sparams.s1p / sparams.json under:\n{work}\n\n"
                         f"Exit code: {exit_code}\n"
@@ -9423,9 +9622,8 @@ class MainWindow(QMainWindow):
                     # is loaded and marked UNTRUSTED in the viewer.
                     if log_path:
                         self._log(f"Full simulation log: {log_path}")
-                    QMessageBox.warning(
-                        self,
-                        "Simulation failed — results are untrusted",
+                    self._ai_problem_box(
+                        "Simulation failed - results are untrusted",
                         f"The simulation ended with exit code {exit_code}.\n\n"
                         f"The generated S-param file was loaded for inspection:\n"
                         f"{found}\n\n"
@@ -9446,9 +9644,6 @@ class MainWindow(QMainWindow):
                         "Simulation → Commit staged results to make them the "
                         "active project result (old runs are kept)."
                     )
-                self._publish_sim_report(
-                    work, exit_code, log_path, include_sparams=bool(found)
-                )
                 self._end_run_log()
             except Exception as e:  # noqa: BLE001
                 print("post-sim viewer error:", e)
@@ -9536,7 +9731,12 @@ class MainWindow(QMainWindow):
             self._update_run_actions()
         except Exception as e:  # noqa: BLE001
             self._log(f"Multi-run start failed ({label}): {e}")
-            QMessageBox.critical(self, "Run failed", str(e))
+            self._last_run_report = None
+            self._last_run_work = None
+            self._last_run_log_path = None
+            self._last_run_message = f"Run failed to start: {e}"
+            self._refresh_ai_context()
+            self._ai_problem_box("Run failed", str(e))
             self._multi_plans = None
             self._multi_kind = None
             self._staged_run_status = "failed"
@@ -9727,6 +9927,9 @@ class MainWindow(QMainWindow):
         earlier run must not be reported as this run's result.
         """
         text = ""
+        log_text = ""
+        p: Path | None = None
+        rep = None
         try:
             from app.simulation.report import build_report, render
 
@@ -9778,6 +9981,13 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001 — a report must never break a run
             text = f"Simulation status report failed: {e}"
         self._last_sim_report_text = text
+        # Keep the structured report and paths for the AI error assistant.
+        self._last_run_report = rep
+        self._last_run_work = Path(work) if work else None
+        self._last_run_log_path = p
+        self._last_run_exit_code = exit_code
+        self._last_run_message = "" if rep is not None else text
+        self._refresh_ai_context()
         for line in text.splitlines():
             self._log(line)
         # After a run the engine names the cell that sets the timestep: mark it
@@ -9820,12 +10030,412 @@ class MainWindow(QMainWindow):
             "convergence, mesh-vs-engine timestep and the passivity of the "
             "measured S-parameters.",
             save_name="simulation_status.txt",
+            ai_cb=self._on_ai_explain_last_run,
         )
 
     def _on_abort(self) -> None:
         self._abort_requested = True
         self.runner.abort()
         self._log("Abort requested")
+
+    # ------------------------------------------------------------- AI assistant
+    def _show_ai_panel(self) -> None:
+        panel = getattr(self, "_ai_panel", None)
+        dock = getattr(self, "_ai_dock", None)
+        if panel is None or dock is None:
+            return
+        dock.show()
+        dock.raise_()
+        try:
+            self.resizeDocks([dock], [430], Qt.Orientation.Horizontal)
+        except Exception:  # noqa: BLE001 - layout hint only
+            pass
+        panel.raise_()
+        panel.setFocus()
+
+    def _on_ai_help(self) -> None:
+        show_tab_help(self, "AI Assistant")
+
+    def _on_ai_clear(self) -> None:
+        self._ai_session_id = ""
+        self._ai_last_prompt = ""
+        panel = getattr(self, "_ai_panel", None)
+        if panel is not None:
+            panel.set_status(
+                "New AI session. The deterministic diagnosis remains available; "
+                "the next question starts a fresh conversation."
+            )
+
+    def _on_ai_settings(self) -> None:
+        from app.ui.ai_settings_dialog import AiSettingsDialog
+
+        dlg = AiSettingsDialog(self.settings, self)
+        if dlg.exec():
+            self._refresh_ai_status()
+            self._refresh_ai_context()
+            self._log(
+                "AI settings saved: provider="
+                f"{self.settings.ai_provider}, model="
+                f"{self.settings.ai_model or 'default'}"
+            )
+
+    def _ai_diagnosis(self):
+        from app.ai.diagnosis import diagnose_run
+
+        note = str(getattr(self, "_last_run_message", "") or "")
+        return diagnose_run(self.project, self._last_run_report, note=note)
+
+    def _ai_context(self, diagnosis):
+        from app.ai.context import build_run_context
+
+        work = getattr(self, "_last_run_work", None)
+        script = Path(work) / "project_run.py" if work else None
+        return build_run_context(
+            self.project,
+            self.primitives,
+            self._last_run_report,
+            diagnosis,
+            log_path=getattr(self, "_last_run_log_path", None),
+            script_path=script,
+            include_script=bool(
+                getattr(self.settings, "ai_include_script", True)
+            ),
+            max_log_lines=max(
+                40, int(getattr(self.settings, "ai_max_log_lines", 160) or 160)
+            ),
+        )
+
+    def _ai_prompt(self, question: str, diagnosis=None) -> str:
+        from app.ai.context import build_prompt
+
+        if diagnosis is None:
+            diagnosis = self._ai_diagnosis()
+        context = self._ai_context(diagnosis)
+        return build_prompt(
+            question,
+            context,
+            language=str(
+                getattr(self.settings, "ai_answer_language", "auto") or "auto"
+            ),
+        )
+
+    def _on_ai_preview(self) -> None:
+        panel = getattr(self, "_ai_panel", None)
+        if panel is None:
+            return
+        prompt = str(getattr(self, "_ai_last_prompt", "") or "")
+        if not prompt:
+            prompt = self._ai_prompt(
+                "Explain the current project and the last run. "
+                "What should I check next?"
+            )
+            self._ai_last_prompt = prompt
+        panel.show_prompt_preview(prompt)
+
+    def _on_ai_explain_last_run(self) -> None:
+        self._show_ai_panel()
+        panel = getattr(self, "_ai_panel", None)
+        if panel is None:
+            return
+        diagnosis = self._ai_diagnosis()
+        panel.set_diagnosis(diagnosis)
+        self._refresh_ai_context()
+
+        if self._ai_worker is not None:
+            panel.set_status(
+                "An AI request is already running. Wait for it or press Stop."
+            )
+            return
+
+        backend = self._ai_backend()
+        if backend is None:
+            panel.set_status(
+                "Offline mode: the deterministic diagnosis and safe fixes are "
+                "shown. Choose OpenCode in AI settings to ask a language model."
+            )
+            return
+        if not backend.is_available():
+            panel.set_status(
+                "OpenCode was not found. Set the command in AI settings, or use "
+                "offline mode. The deterministic diagnosis is still valid."
+            )
+            return
+        if self._last_run_report is None and not str(
+            getattr(self, "_last_run_message", "") or ""
+        ).strip():
+            panel.set_status(
+                "No run or mesh failure is available yet. Run a simulation or "
+                "ask a question in the chat."
+            )
+            return
+
+        question = (
+            "Explain the most likely cause of this run result. Rank the causes, "
+            "cite the evidence from the log or report, and give minimal next "
+            "checks. Do not invent values."
+            if self._last_run_report is None
+            or self._last_run_report.verdict != "ok"
+            else (
+                "Summarise this successful run, confirm what it does and does not "
+                "prove, and list only evidence-based next checks. Do not invent "
+                "values."
+            )
+        )
+        self._start_ai_request(question, diagnosis)
+
+    def _on_ai_send_requested(self, text: str) -> None:
+        question = str(text or "").strip()
+        if not question:
+            return
+        if self._ai_worker is not None:
+            QMessageBox.information(
+                self, "AI assistant", "An AI request is already running."
+            )
+            return
+        backend = self._ai_backend()
+        panel = getattr(self, "_ai_panel", None)
+        if backend is None:
+            if panel is not None:
+                panel.append_user(question)
+                panel.append_system(
+                    "Offline mode is active. Open AI settings to use OpenCode, "
+                    "or click Explain last run for the deterministic diagnosis."
+                )
+            return
+        if not backend.is_available():
+            if panel is not None:
+                panel.append_user(question)
+                panel.append_system(
+                    "OpenCode was not found. Set the command in AI settings."
+                )
+            return
+        diagnosis = self._ai_diagnosis()
+        if panel is not None and self._last_run_report is not None:
+            # Keep the diagnosis in sync with the context sent to the AI.
+            panel.set_diagnosis(diagnosis)
+        self._start_ai_request(question, diagnosis)
+
+    def _ai_backend(self):
+        provider = str(getattr(self.settings, "ai_provider", "opencode") or "offline")
+        if provider == "offline":
+            return None
+        from app.ai.backend import OpenCodeBackend
+
+        return OpenCodeBackend(
+            str(getattr(self.settings, "ai_opencode_cmd", "opencode") or "opencode")
+        )
+
+    def _start_ai_request(self, question: str, diagnosis=None) -> None:
+        from app.ai.worker import AiWorker
+
+        panel = getattr(self, "_ai_panel", None)
+        backend = self._ai_backend()
+        if panel is None or backend is None:
+            return
+        self._show_ai_panel()
+        prompt = self._ai_prompt(question, diagnosis)
+        self._ai_last_prompt = prompt
+        panel.append_user(question)
+        panel.begin_assistant()
+        panel.set_busy(True)
+        panel.set_status("Waiting for OpenCode…")
+
+        worker = AiWorker(
+            backend,
+            prompt,
+            title=f"VisualopenEMS - {self.project.name or 'project'}",
+            session_id=str(getattr(self, "_ai_session_id", "") or ""),
+            model=str(getattr(self.settings, "ai_model", "") or ""),
+            timeout_s=int(getattr(self.settings, "ai_timeout_s", 180) or 180),
+            parent=self,
+        )
+        worker.chunk.connect(panel.append_chunk)
+        worker.done.connect(self._on_ai_worker_done)
+        worker.failed.connect(self._on_ai_worker_failed)
+        self._ai_worker = worker
+        worker.start()
+
+    def _on_ai_stop(self) -> None:
+        worker = getattr(self, "_ai_worker", None)
+        panel = getattr(self, "_ai_panel", None)
+        if worker is not None:
+            worker.cancel()
+            if panel is not None:
+                panel.set_status("Cancelling the AI request…")
+        elif panel is not None:
+            panel.set_status("No AI request is running.")
+
+    def _on_ai_worker_done(self, reply) -> None:
+        panel = getattr(self, "_ai_panel", None)
+        worker = getattr(self, "_ai_worker", None)
+        try:
+            if panel is not None:
+                panel.end_assistant(error=str(getattr(reply, "error", "") or ""))
+                panel.set_busy(False)
+                session = str(getattr(reply, "session_id", "") or "")
+                if session:
+                    self._ai_session_id = session
+                text = str(getattr(reply, "text", "") or "")
+                meta = dict(getattr(reply, "meta", {}) or {})
+                if text:
+                    extra = ""
+                    tokens = meta.get("tokens")
+                    if isinstance(tokens, dict):
+                        input_tokens = tokens.get("input")
+                        output_tokens = tokens.get("output")
+                        if input_tokens or output_tokens:
+                            extra = f" · tokens {input_tokens or 0}/{output_tokens or 0}"
+                    cost = meta.get("cost")
+                    if cost:
+                        extra += f" · cost {cost}"
+                    panel.set_status(
+                        f"Answer received ({len(text)} chars{extra}). Review the "
+                        "diagnosis and fixes; nothing was applied automatically."
+                    )
+                    self._log(
+                        f"AI: answer received ({len(text)} chars). "
+                        "No project change applied."
+                    )
+                elif not getattr(reply, "error", ""):
+                    panel.set_status("OpenCode returned no text.")
+                self._refresh_ai_context()
+        finally:
+            self._ai_worker = None
+            if worker is not None:
+                worker.deleteLater()
+
+    def _on_ai_worker_failed(self, message: str) -> None:
+        panel = getattr(self, "_ai_panel", None)
+        worker = getattr(self, "_ai_worker", None)
+        try:
+            if panel is not None:
+                panel.end_assistant(error=str(message or "AI request failed."))
+                panel.set_busy(False)
+                panel.set_status("AI request failed. Deterministic diagnosis is still available.")
+            self._log(f"AI request failed: {message}")
+        finally:
+            self._ai_worker = None
+            if worker is not None:
+                worker.deleteLater()
+
+    def _on_ai_apply_fix(self, fix) -> None:
+        import copy as _copy
+
+        from app.ai.fixes import apply_fix, validate_project
+
+        if fix is None or not getattr(fix, "changes", None):
+            QMessageBox.information(self, "AI assistant", "No fix selected.")
+            return
+        candidate, errors = apply_fix(self.project, fix, inplace=False)
+        if not errors:
+            errors = validate_project(
+                candidate, extra_validator=self._ai_validate_project
+            )
+        if errors:
+            QMessageBox.warning(
+                self,
+                "AI fix not applied",
+                "The proposed change did not pass validation:\n\n"
+                + "\n".join(f"- {item}" for item in errors[:12]),
+            )
+            self._log("AI fix rejected by validation: " + "; ".join(errors[:6]))
+            return
+
+        self._ai_undo = (
+            _copy.deepcopy(self.project),
+            _copy.deepcopy(self.primitives),
+        )
+        if not self._project_apply_ai_fix(fix):
+            self._ai_undo = None
+            return
+        if getattr(self, "act_ai_undo", None) is not None:
+            self.act_ai_undo.setEnabled(True)
+        panel = getattr(self, "_ai_panel", None)
+        if panel is not None:
+            panel.set_undo_enabled(True)
+            panel.set_status(
+                f"Applied: {fix.title}. Review the project, then rebuild the mesh "
+                "or rerun. Use Undo AI change to revert."
+            )
+        self._log(
+            f"AI fix applied: {fix.title} "
+            f"({', '.join(c.path for c in fix.changes)})"
+        )
+        self._refresh_ai_context()
+
+    def _project_apply_ai_fix(self, fix) -> bool:
+        from app.ai.fixes import apply_fix
+
+        _project, errors = apply_fix(self.project, fix, inplace=True)
+        if errors:
+            QMessageBox.warning(
+                self,
+                "AI fix not applied",
+                "\n".join(errors[:12]),
+            )
+            return False
+        try:
+            self._sync_form_from_project()
+        except Exception as e:  # noqa: BLE001 - UI sync must not break the change
+            self._log(f"AI fix: form sync failed: {e}")
+        try:
+            self._refresh_ports()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"AI fix: port refresh failed: {e}")
+        try:
+            self._update_viewer_domain(self.project)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"AI fix: viewer domain update failed: {e}")
+        self._update_window_title()
+        return True
+
+    def _on_ai_undo(self) -> None:
+        saved = getattr(self, "_ai_undo", None)
+        if saved is None:
+            QMessageBox.information(
+                self, "AI assistant", "There is no AI change to undo."
+            )
+            return
+        self.project, self.primitives = saved
+        self._ai_undo = None
+        if getattr(self, "act_ai_undo", None) is not None:
+            self.act_ai_undo.setEnabled(False)
+        panel = getattr(self, "_ai_panel", None)
+        if panel is not None:
+            panel.set_undo_enabled(False)
+            panel.set_status("AI change reverted. The project is back to its previous state.")
+        try:
+            self._sync_form_from_project()
+            self._refresh_ports()
+            self._update_viewer_domain(self.project)
+            self._update_window_title()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"AI undo: UI refresh failed: {e}")
+        self._log("AI change undone; project snapshot restored.")
+        self._refresh_ai_context()
+
+    def _ai_validate_project(self, project) -> list[str]:
+        try:
+            _candidates, errors, _definitions = self._variable_candidates(
+                project.variables, {}
+            )
+            return list(errors)
+        except Exception as exc:  # noqa: BLE001 - validation must be safe
+            return [f"validation failed: {exc}"]
+
+    def _ai_problem_box(self, title: str, text: str) -> None:
+        """A failure box with an explicit 'Explain with AI' action."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        ai_button = box.addButton(
+            "Explain with AI", QMessageBox.ButtonRole.ActionRole
+        )
+        box.exec()
+        if box.clickedButton() is ai_button:
+            self._on_ai_explain_last_run()
 
     def _on_field_autoplay_toggled(self, on: bool) -> None:
         """Remember the Field Viewer Auto-play choice across sessions."""
@@ -10679,6 +11289,14 @@ class MainWindow(QMainWindow):
         )
         vform.addRow(chk_var_complete)
         root.addWidget(grp_vars)
+
+        ai_note = QLabel(
+            "AI assistant: OpenCode CLI vs offline mode, model and context "
+            "limits are configured under AI → AI settings…."
+        )
+        ai_note.setWordWrap(True)
+        ai_note.setStyleSheet("color: #5d4037;")
+        root.addWidget(ai_note)
 
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel

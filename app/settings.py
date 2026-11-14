@@ -112,6 +112,18 @@ class AppSettings:
     #: offer variable-name completions while typing in geometry fields
     variable_autocomplete: bool = True
 
+    # --- AI assistant (error analysis) ---
+    #: "offline" = deterministic diagnosis only; "opencode" = local CLI backend
+    ai_provider: str = "opencode"
+    ai_opencode_cmd: str = "opencode"
+    #: optional provider/model id passed to "opencode run --model"
+    ai_model: str = ""
+    ai_timeout_s: int = 180
+    #: auto | de | en
+    ai_answer_language: str = "auto"
+    ai_max_log_lines: int = 160
+    ai_include_script: bool = True
+
     def port_defaults(self) -> dict:
         """Defaults applied when FreeCAD/export omits port fields."""
         return {

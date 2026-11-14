@@ -557,6 +557,42 @@ Die ausführliche Hilfe ist außerdem über **Help → Variable Sweep** und
 **Help → Sweep Antenna Patterns** sowie über die Help-Buttons in beiden
 Dialogen erreichbar.
 
+### 5.9 KI-Fehlerassistent
+
+Der KI-Assistent ist ein rechtes Dock (**AI → AI Assistant**, `Ctrl+Shift+A`)
+und arbeitet in zwei Stufen:
+
+1. **Deterministische Diagnose** – funktioniert immer und ohne Netzwerk. Sie
+   liest den `RunReport` des letzten Laufs, die Projektübersicht und die
+   relevanten Logzeilen. Bekannte Muster werden direkt erklärt:
+   Exit-Code, fehlende S-Parameter, `max_timesteps`, Energie-Endkriterium,
+   Passivität, kein aktiver/erregter Port, Zielfrequenz außerhalb des Sweeps,
+   NF2FF-Flags.
+2. **OpenCode-Erklärung** – optional. Der lokale `opencode`-Befehl nutzt die
+   vorhandene OpenCode-Anmeldung/Subscription; VisualopenEMS speichert keinen
+   API-Key. Der Prompt wird nur nach **Explain last run** oder **Send** gesendet.
+   OpenCode läuft in einem neutralen temporären Ordner und wird angewiesen, keine
+   Tools oder Dateien zu verwenden.
+
+**Was gesendet wird:** Projektübersicht (kein vollständiges JSON), der
+RunReport, gefilterte Logzeilen und optional ein Auszug aus `project_run.py`.
+Über **What the AI sees…** lässt sich der exakte Prompt vor dem Senden anzeigen.
+Pfade unter dem Benutzerprofil und offensichtliche Tokens werden redigiert.
+
+**Sichere Fixes:** Der Assistent darf nur wenige, klar begrenzte Felder
+ändern – u. a. `sim.max_timesteps`, `sim.end_criteria`, NF2FF-Schalter,
+Mesh-Preset/Zellgrößen, PML-Lagen sowie Port-Active/Excite/Phase. Jeder Vorschlag
+zeigt einen exakten Diff. Der Kandidat wird auf einer Kopie validiert
+(JSON-Roundtrip plus Variablen-/Port-Auflösung), erst dann wird das Projekt
+geändert. **Apply fix** startet keine Simulation. **AI → Undo AI
+change** stellt den Snapshot vor der letzten Änderung wieder her.
+
+**Grenzen:** Der Assistent sieht keine CAD-Solids und kann keine Physik
+erfinden. Er ist eine priorisierte Checkliste, kein Ersatz für RunReport und
+Solver-Log. Bei fehlendem OpenCode, fehlender Anmeldung oder Timeout bleibt die
+deterministische Diagnose verfügbar. Einstellungen: **AI → AI settings…**
+(Provider, Modell, Timeout, Logzeilen, Sprache, Skript-Auszug).
+
 ## 6. Simulieren
 
 1. **Build Mesh**

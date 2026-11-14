@@ -21,6 +21,7 @@ TAB_ORDER = [
     "Antenna",
     "Variable Sweep",
     "Sweep Antenna Patterns",
+    "AI Assistant",
     "Polarization & Phase Center",
     "Antenna Simulation",
     "Cylindrical Mesh",
@@ -1212,6 +1213,89 @@ Typical workflow
   4. Use E-/H-plane overlay for a quantitative comparison at one frequency;
      use 3D Pattern + Play for the presentation film.
   5. Export MP4/GIF and CSV; commit the sweep run to keep all point data.
+""",
+    "AI Assistant": """AI ASSISTANT — error analysis, safe fixes and optional OpenCode
+
+What it is
+  • A right-side dock (AI menu -> AI Assistant, Ctrl+Shift+A) with two parts:
+    a deterministic run diagnosis and an optional language-model conversation.
+  • Phase 1 is read-only: it can read the project summary, the last run report,
+    filtered simulation-log lines and an optional script excerpt. It never
+    writes project files, never starts a simulation and never commits results.
+  • Every change is a proposal with an exact field diff. Applying is a separate
+    button click and can be undone with AI -> Undo AI change.
+
+Two modes
+  Offline only (default-safe choice)
+    • The deterministic diagnosis and safe fixes work without any provider.
+    • Nothing leaves the computer.
+  OpenCode CLI
+    • Uses the locally installed `opencode` command and its existing login /
+      subscription. No API key is stored in VisualopenEMS.
+    • The prompt is sent only when you click Explain last run or Send.
+    • OpenCode is started in a neutral temporary directory and is instructed
+      not to use tools, read files or modify anything.
+
+Where the data comes from
+  • Project digest: name, unit, frequency range, mesh/solver settings, boundary,
+    NF2FF, variables, ports, dumps and a compact primitive summary. It is not the
+    full project JSON.
+  • Run report: the same verdict, findings, convergence, passivity and S11
+    summary shown in Simulation Status.
+  • Log: error/warning lines plus surrounding context and the tail.
+  • Script: optionally a filtered excerpt of project_run.py (solver, ports,
+    boundaries, NF2FF, exports).
+  • "What the AI sees…" shows the exact prompt before it leaves the application.
+  • Paths below your user profile and obvious API tokens are redacted. Absolute
+    work/project paths may still be visible; review the preview if this matters.
+
+Deterministic diagnosis
+  • Maps RunReport findings and project checks to ranked issues, for example:
+    solver exit code, missing S-parameters, max timesteps, energy vs end
+    criterion, passivity violations, no active/excited port, target frequency
+    outside the sweep, NF2FF flag mismatch.
+  • Every issue lists evidence (report/log text) and, when safe, a fix proposal.
+  • The language model is asked to explain and prioritise this diagnosis, not to
+    replace it. If the model is unavailable, the diagnosis remains useful.
+
+Safe fixes and undo
+  • Only a small allow-list is editable: simulation max timesteps and end
+    criterion, NF2FF flags, mesh preset/cell sizes, PML size, and port
+    active/excite/resistance/phase switches. Geometry and material changes are
+    intentionally not automatic in Phase 1.
+  • The candidate project is built on a deep copy, round-tripped through the
+    project JSON and checked with the normal variable/port resolver before the
+    live project is touched.
+  • Apply fix does not run the solver. Review the diff, then rebuild the
+    mesh and rerun yourself. Undo AI change restores the exact snapshot from
+    before the last applied fix (one level).
+
+Typical workflow
+  1. Run a simulation. The assistant receives the report automatically when the
+     run finishes.
+  2. On a failure message, click Explain with AI; or open Simulation Status and
+     use Explain with AI; or AI -> Explain last run.
+  3. Read the deterministic issues first. Check the evidence lines.
+  4. If a fix is offered, select it, inspect the diff, apply it, then rebuild the
+     mesh/rerun. Use Undo AI change if it was not the right direction.
+  5. For questions, type in the chat and press Ctrl+Enter. The last run report is
+     included as context.
+
+Limitations and troubleshooting
+  • The assistant does not know the physics it was not given. It cannot see CAD
+    solids, only the compact summary; it may ask for a smaller test case or a
+    specific log line.
+  • It cannot guarantee that an explanation is correct. Treat it as a ranked
+    checklist, not as a replacement for the report or the solver log.
+  • OpenCode not found: set the command in AI -> AI settings or use the full
+    executable path. Offline mode still works.
+  • OpenCode not logged in: run `opencode auth` (or sign in through the normal
+    OpenCode client) once; VisualopenEMS does not handle your password.
+  • Timeout: increase the timeout in AI settings or choose a faster model.
+  • No answer: check the timeout/log, try a smaller question, or switch to
+    offline diagnosis.
+  • Model choice: leave the model empty for the OpenCode default, or enter a
+    provider/model ID in AI settings.
 """,
     "Polarization & Phase Center": """POLARIZATION & PHASE CENTER — derived from the NF2FF far field
 

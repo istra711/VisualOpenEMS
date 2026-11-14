@@ -9,6 +9,7 @@ Mesh menu ("Mesh Timing / Feasibility…") and the Simulation menu
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -35,6 +36,7 @@ class ReportDialog(QDialog):
         *,
         hint: str = "",
         save_name: str = "report.txt",
+        ai_cb: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -42,6 +44,7 @@ class ReportDialog(QDialog):
         self.resize(880, 640)
         self._text = text
         self._save_name = save_name
+        self._ai_cb = ai_cb
 
         root = QVBoxLayout(self)
         head = QLabel(title)
@@ -68,6 +71,14 @@ class ReportDialog(QDialog):
         save_btn.setToolTip("Write the report to a text file")
         save_btn.clicked.connect(self._save)
         row.addWidget(save_btn)
+        if self._ai_cb is not None:
+            ai_btn = QPushButton("Explain with AI")
+            ai_btn.setToolTip(
+                "Open the AI assistant with the deterministic diagnosis of this "
+                "run and optionally ask OpenCode to explain it"
+            )
+            ai_btn.clicked.connect(self._ai_cb)
+            row.addWidget(ai_btn)
         row.addStretch(1)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
@@ -91,8 +102,16 @@ def show_report(
     *,
     hint: str = "",
     save_name: str = "report.txt",
+    ai_cb: Callable[[], None] | None = None,
 ) -> ReportDialog:
     """Open a report window (kept modeless so the main window stays usable)."""
-    dlg = ReportDialog(parent, title, text, hint=hint, save_name=save_name)
+    dlg = ReportDialog(
+        parent,
+        title,
+        text,
+        hint=hint,
+        save_name=save_name,
+        ai_cb=ai_cb,
+    )
     dlg.show()
     return dlg

@@ -544,6 +544,40 @@ pattern browser are.
 The detailed help is also available from **Help → Variable Sweep** and
 **Help → Sweep Antenna Patterns**, and from the Help buttons in both dialogs.
 
+### 5.9 AI error assistant
+
+The assistant is a right-side dock (**AI → AI Assistant**, `Ctrl+Shift+A`) with
+two layers:
+
+1. **Deterministic diagnosis** — always available, no network. It reads the last
+   `RunReport`, the project summary and the relevant log lines. Known patterns
+   are explained directly: exit code, missing S-parameters, `max_timesteps`,
+   energy end criterion, passivity, no active/excited port, target frequency
+   outside the sweep, NF2FF flag mismatch.
+2. **OpenCode explanation** — optional. The local `opencode` command reuses the
+   existing OpenCode login/subscription; VisualopenEMS stores no API key. The
+   prompt is sent only after **Explain last run** or **Send**. OpenCode runs in
+   a neutral temporary directory and is told not to use tools or files.
+
+**What is sent:** project digest (not the full JSON), the run report, filtered
+log lines and optionally an excerpt of `project_run.py`. **What the AI sees…**
+shows the exact prompt before sending. Paths below the user profile and obvious
+tokens are redacted.
+
+**Safe fixes:** the assistant may change only a small allow-list — including
+`sim.max_timesteps`, `sim.end_criteria`, NF2FF switches, mesh preset/cell sizes,
+PML layers and port active/excite/phase. Every proposal shows an exact field
+diff. The candidate is validated on a deep copy (JSON round-trip plus variable/
+port resolution) before the live project is touched. **Apply fix** does
+not start a simulation. **AI → Undo AI change** restores the snapshot from before
+the last applied fix.
+
+**Limits:** the assistant cannot see CAD solids and cannot invent physics. Treat
+it as a ranked checklist, not as a replacement for the run report or solver log.
+If OpenCode is missing, not logged in, or times out, the deterministic diagnosis
+remains available. Settings: **AI → AI settings…** (provider, model, timeout,
+log lines, language, script excerpt).
+
 ## 6. Simulate
 
 1. **Build Mesh**

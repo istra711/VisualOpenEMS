@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plays the 3D pattern as a slider/play film with GIF/MP4 export. Single-port
   global phase vs multiple-port relative phase is explained in the GUI and the
   dedicated help topics **Variable Sweep** and **Sweep Antenna Patterns**.
+- **AI error assistant (Phase 1)**: a right-side **AI** dock provides a
+  deterministic diagnosis of the last run (exit code, missing S-parameters,
+  convergence, passivity, ports, NF2FF and timestep checks) plus an optional
+  explanation through the local **OpenCode CLI** and its existing subscription.
+  Failure boxes and Simulation Status have **Explain with AI**; the panel shows
+  the exact redacted prompt, offers only a small allow-list of validated fixes
+  with field diffs, and supports one-level **Undo AI change**. OpenCode runs in
+  a neutral temporary directory with explicit no-tools/no-file instructions.
+  Settings cover offline/OpenCode mode, model, timeout, context limits and
+  answer language; Help → **AI Assistant** documents privacy and limits.
 
 ### Changed
 

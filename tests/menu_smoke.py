@@ -15,7 +15,17 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-MENUS = ["File", "Presets", "Geometry", "Mesh", "Simulation", "View", "Settings", "Help"]
+MENUS = [
+    "File",
+    "Presets",
+    "Geometry",
+    "Mesh",
+    "Simulation",
+    "View",
+    "Settings",
+    "AI",
+    "Help",
+]
 
 _APP = None
 _WIN = None
@@ -141,6 +151,14 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("Simulation"), "Export field dumps to VTK\u2026") is not None
     assert _find(_menu("Simulation"), "Export field video (MP4)\u2026") is not None
     assert _find(_menu("Simulation"), "Export field animation (GIF)\u2026") is not None
+    assert (
+        _find(_menu("AI"), "AI Assistant").shortcut().toString()
+        == "Ctrl+Shift+A"
+    )
+    assert _find(_menu("AI"), "Explain last run\u2026") is not None
+    assert _find(_menu("AI"), "AI settings\u2026") is not None
+    assert _find(_menu("AI"), "Undo AI change") is not None
+    assert _find(_menu("Help"), "AI assistant (error analysis)\u2026") is not None
     assert _find(_menu("View"), "Log Panel").shortcut().toString() == "Ctrl+L"
     assert _find(_menu("View"), "Project / Geometry Panel").shortcut().toString() == "Ctrl+B"
     assert _find(_menu("Help"), "Help for Current Tab").shortcut().toString() == "F1"
