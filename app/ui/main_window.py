@@ -1967,6 +1967,20 @@ class MainWindow(QMainWindow):
             tip="Diagnose the last run, offer validated fixes and ask OpenCode to "
             "explain the evidence",
         )
+        add_action(
+            amenu,
+            "Generate project\u2026",
+            slot=self._on_ai_generate_project,
+            tip="Choose a template, optionally let OpenCode fill its parameters, "
+            "then review the preflight before creating a new project",
+        )
+        add_action(
+            amenu,
+            "Edit project with AI\u2026",
+            slot=self._on_ai_edit_project,
+            tip="Ask OpenCode for a structured project patch, inspect the diff "
+            "and preflight, then apply or reject it",
+        )
         self.act_ai_undo = add_action(
             amenu,
             "Undo AI change",
@@ -1996,6 +2010,18 @@ class MainWindow(QMainWindow):
             slot=lambda: show_tab_help(self, "AI Assistant"),
             tip="What the assistant sends, how diagnosis and fixes work, and "
             "the offline/OpenCode modes",
+        )
+        add_action(
+            hmenu,
+            "AI project generation and edits\u2026",
+            slot=lambda: show_tab_help(self, "AI Project Generation"),
+            tip="Templates, structured project patches, preflight and undo",
+        )
+        add_action(
+            hmenu,
+            "AI implementation details\u2026",
+            slot=lambda: show_tab_help(self, "AI Implementation"),
+            tip="Architecture, safety gates, data flow, tests and extension points",
         )
         add_action(
             hmenu,
@@ -10079,6 +10105,156 @@ class MainWindow(QMainWindow):
                 f"{self.settings.ai_model or 'default'}"
             )
 
+    def _confirm_replace_project(self, title: str, text: str) -> bool:
+        if not self._has_unsaved_project_changes():
+            return True
+        reply = QMessageBox.question(
+            self,
+            title,
+            text + "\n\nDiscard the unsaved changes in the current project?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _on_ai_generate_project(self) -> None:
+        from app.ui.project_generator import ProjectGeneratorDialog
+
+        if not self._confirm_replace_project(
+            "Generate project",
+            "The generated project will replace the current editor content. "
+            "It is not saved automatically; use File -> Save As afterwards.",
+        ):
+            return
+        dlg = ProjectGeneratorDialog(self.settings, self)
+        if not dlg.exec():
+            return
+        if dlg.result is None:
+            return
+        self._install_generated_project(dlg.result, dlg.preflight_report)
+
+    def _install_generated_project(self, generated, report=None) -> None:
+        self.project = generated.project
+        self.primitives = list(generated.primitives)
+        self.project.primitives = list(generated.primitives)
+        self.project.results = {}
+        self.project.sparam_reference = None
+        self._current_file_path = None
+        self._project_store_obj = None
+        self._staged_run_dir = None
+        self._staged_run_status = ""
+        self._staged_run_kind = "single"
+        self._last_sweep_json = None
+        self._sweep_points = []
+        self._sweep_spec = None
+        self._sweep_work = None
+        self._mesh_sig = None
+        self._viewer_geometry_sig = None
+        self._mesh_deleted = False
+        self._allow_auto_results = False
+        self._allow_auto_nf2ff = False
+        self._reset_ai_project_state()
+        self._discard_result_state("generated project")
+        self._clear_result_viewers("generated project mesh", include_mesh=True)
+        try:
+            self._sync_form_from_project()
+            if hasattr(self.sim_params, "set_patch_group_visible"):
+                self.sim_params.set_patch_group_visible(False)
+            self._refresh_tree()
+            self._refresh_ports()
+            self._refresh_materials()
+            self._update_viewer_domain(self.project)
+        except Exception as exc:  # noqa: BLE001 - UI refresh must not lose the project
+            self._log(f"Generated project UI refresh failed: {exc}")
+        self._update_window_title()
+        # A generated project is not a saved file.  Keep the unsaved marker so
+        # closing or generating again asks before losing it.
+        self._saved_project_sig = "__generated_unsaved__"
+        self._update_run_actions()
+        text = generated.summary()
+        if report is not None:
+            text += "\n\n" + report.text()
+        self.geom_info.setPlainText(text)
+        self._log(
+            f"Generated project '{generated.title}' from template "
+            f"'{generated.template_id}'"
+        )
+        for line in text.splitlines()[:30]:
+            self._log(line)
+        self._refresh_ai_context()
+
+    def _on_ai_edit_project(self) -> None:
+        from app.ui.project_patch_dialog import ProjectPatchDialog
+
+        try:
+            self._sync_project_from_form()
+        except Exception:  # noqa: BLE001 - best effort; dialog still works
+            pass
+        dlg = ProjectPatchDialog(self.project, self.primitives, self.settings, self)
+        if not dlg.exec():
+            return
+        if (
+            dlg.patch is None
+            or dlg.result_project is None
+            or dlg.result_primitives is None
+        ):
+            return
+        self._install_project_patch(
+            dlg.patch,
+            dlg.result_project,
+            dlg.result_primitives,
+        )
+
+    def _install_project_patch(self, patch, project, primitives) -> None:
+        import copy as _copy
+
+        diff_text = patch.diff_text(self.project, self.primitives)
+        self._ai_undo = (
+            _copy.deepcopy(self.project),
+            _copy.deepcopy(self.primitives),
+        )
+        self.project = project
+        self.primitives = list(primitives)
+        self.project.primitives = list(primitives)
+        self.project.results = {}
+        self.project.sparam_reference = None
+        self._staged_run_dir = None
+        self._staged_run_status = ""
+        self._staged_run_kind = "single"
+        self._last_sweep_json = None
+        self._sweep_points = []
+        self._sweep_spec = None
+        self._sweep_work = None
+        self._mesh_sig = None
+        self._viewer_geometry_sig = None
+        self._mesh_deleted = False
+        self._discard_result_state("AI project edit")
+        self._clear_result_viewers("AI project edit mesh", include_mesh=True)
+        try:
+            self._sync_form_from_project()
+            self._refresh_tree()
+            self._refresh_ports()
+            self._refresh_materials()
+            self._update_viewer_domain(self.project)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"AI project edit UI refresh failed: {exc}")
+        self._update_window_title()
+        self._update_run_actions()
+        if getattr(self, "act_ai_undo", None) is not None:
+            self.act_ai_undo.setEnabled(True)
+        panel = getattr(self, "_ai_panel", None)
+        if panel is not None:
+            panel.clear_diagnosis()
+            panel.set_undo_enabled(True)
+            panel.set_status(
+                "Project patch applied. Review the diff, rebuild the mesh and "
+                "rerun. Undo restores the previous project state."
+            )
+        text = diff_text
+        self.geom_info.setPlainText(text)
+        self._log(f"AI project patch applied: {patch.title}")
+        self._refresh_ai_context()
+
     def _ai_diagnosis(self):
         from app.ai.diagnosis import diagnose_run
 
@@ -10411,6 +10587,10 @@ class MainWindow(QMainWindow):
             self._update_window_title()
         except Exception as e:  # noqa: BLE001
             self._log(f"AI undo: UI refresh failed: {e}")
+        self.geom_info.setPlainText(
+            "AI change undone: the project and primitives were restored to the "
+            "snapshot from before the last applied AI patch."
+        )
         self._log("AI change undone; project snapshot restored.")
         self._refresh_ai_context()
 

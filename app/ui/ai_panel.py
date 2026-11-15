@@ -428,30 +428,35 @@ class AiAssistantPanel(QWidget):
         super().keyPressEvent(event)
 
     def show_prompt_preview(self, prompt: str) -> None:
-        dlg = QDialog(self)
-        dlg.setWindowTitle("What the AI sees")
-        dlg.resize(820, 620)
-        layout = QVBoxLayout(dlg)
-        info = QLabel(
-            "This is the exact prompt that will be sent to the configured "
-            "provider. Obvious tokens and user-profile paths are redacted."
-        )
-        info.setWordWrap(True)
-        layout.addWidget(info)
-        view = QPlainTextEdit()
-        view.setReadOnly(True)
-        view.setPlainText(str(prompt or ""))
-        layout.addWidget(view, 1)
-        row = QHBoxLayout()
-        copy = QPushButton("Copy")
-        copy.clicked.connect(
-            lambda: QApplication.clipboard().setText(view.toPlainText())
-        )
-        row.addWidget(copy)
-        row.addStretch(1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dlg.reject)
-        buttons.accepted.connect(dlg.accept)
-        row.addWidget(buttons)
-        layout.addLayout(row)
-        dlg.exec()
+        show_prompt_dialog(self, "What the AI sees", prompt)
+
+
+def show_prompt_dialog(parent: QWidget | None, title: str, prompt: str) -> None:
+    """Read-only preview of an exact prompt before sending it."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.resize(820, 620)
+    layout = QVBoxLayout(dlg)
+    info = QLabel(
+        "This is the exact prompt that will be sent to the configured "
+        "provider. Obvious tokens and user-profile paths are redacted."
+    )
+    info.setWordWrap(True)
+    layout.addWidget(info)
+    view = QPlainTextEdit()
+    view.setReadOnly(True)
+    view.setPlainText(str(prompt or ""))
+    layout.addWidget(view, 1)
+    row = QHBoxLayout()
+    copy = QPushButton("Copy")
+    copy.clicked.connect(
+        lambda: QApplication.clipboard().setText(view.toPlainText())
+    )
+    row.addWidget(copy)
+    row.addStretch(1)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    buttons.rejected.connect(dlg.reject)
+    buttons.accepted.connect(dlg.accept)
+    row.addWidget(buttons)
+    layout.addLayout(row)
+    dlg.exec()

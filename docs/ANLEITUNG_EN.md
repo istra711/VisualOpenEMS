@@ -578,6 +578,109 @@ If OpenCode is missing, not logged in, or times out, the deterministic diagnosis
 remains available. Settings: **AI → AI settings…** (provider, model, timeout,
 log lines, language, script excerpt).
 
+### 5.10 Project generation and AI project edits
+
+**AI → Generate project…** creates a new project from a validated template:
+
+* probe-fed patch
+* Yagi-Uda
+* microstrip notch filter
+* open-stub band-pass
+* hairpin band-pass
+* GPS L1 patch
+* WR62 waveguide
+
+Each template exposes only its relevant parameters (frequency, substrate,
+dimensions, ports). Values are **starting points**, not a guarantee that the
+design meets a target. The geometry is written as normal project primitives and
+can be edited afterwards. **Preview / preflight** builds the candidate and runs
+the structural checks; **Create project** is enabled only without preflight
+errors. Warnings are allowed.
+
+**AI suggest** describes the requirement in natural language. OpenCode receives
+the template catalogue and parameter schema and must answer with exactly one
+JSON object:
+
+```json
+{"template": "patch", "parameters": {"f0": 2.45}, "assumptions": ["..."]}
+```
+
+Unknown templates/parameters or malformed values are rejected; use **What AI sees** to inspect the prompt first. The form is filled only for a valid answer. Review the values and start the preview
+yourself. Offline mode keeps the manual template form.
+
+**AI → Edit project with AI…** asks for a change and expects a structured
+project patch, not free-form Python:
+
+* `set` for safe scalar fields
+* `set_variable` / `remove_variable`
+* `set_port` / `add_port` / `remove_port`
+* `add_primitive` / `update_primitive` / `remove_primitive`
+* `add_material` / `update_material`
+* `set_mesh` / `set_sim` / `set_nf2ff` / `set_boundary`
+
+Unknown operations or fields are rejected before the preview. The dialog shows
+the operation list/diff, assumptions and preflight. **Apply** is disabled while
+an error remains. Apply does not build the mesh or run the solver; run
+**Build Mesh** and **Run Simulation** yourself afterwards.
+
+The preflight checks include:
+
+* project JSON round-trip
+* variables and expressions
+* duplicate/missing primitive, port and material names
+* primitives/ports against the estimated FDTD domain
+* port geometry, type and metal contact (warning)
+* active/excited port
+* start/target/stop frequency, mesh cells and timestep budget
+* dump/NF2FF expressions
+* NF2FF box inside the estimated domain (warning)
+
+**Important:** the preflight is a structural check, not a mesh build or EM
+simulation. Generated projects are **not saved automatically**; use
+**File → Save As** afterwards. Applying an AI patch stores the previous project
+state for **AI → Undo AI change** (one level). There are no automatic write,
+shell or solver actions.
+
+**Limits:** templates are engineering starting points; dimensions, substrate
+and matching must be verified with the mesh and a real simulation. Phase 2 does
+not include arbitrary CAD/STEP generation or multi-variable optimisation.
+
+### 5.11 AI implementation (reference)
+
+The detailed implementation documentation is
+**[AI_IMPLEMENTATION_EN.md](AI_IMPLEMENTATION_EN.md)** (German version:
+[AI_IMPLEMENTATION_DE.md](AI_IMPLEMENTATION_DE.md)). It covers:
+
+* architecture and data flow of diagnosis, the OpenCode backend, prompt
+  construction, safe fixes, templates, structured patches and preflight;
+* the module map under `app/ai/` and `app/ui/`;
+* the OpenCode command, JSONL events, sessions and the Windows `.cmd`
+  resolution;
+* context limits, redaction and what actually leaves the application;
+* allow-lists, type/range checks, undo and the safety gates;
+* tests, live verification and extension points (new backend, template, patch
+  operation or diagnosis rule).
+
+The same overview is available in the application from **Help → AI
+implementation details…** and in the **AI Implementation** help topic.
+
+In short:
+
+* `app/ai/` is Qt-free and contains the deterministic core.
+* `app/ai/backend.py` wraps OpenCode behind `AiBackend`; another backend (for
+  example the Copilot SDK) can later reuse the same diagnosis, context and
+  validation layer.
+* `app/ai/fixes.py` allows only a small set of solver/mesh/port fields.
+* `app/ai/project_patch.py` accepts only declarative operations and fixed field
+  allow-lists; free-form Python and arbitrary file paths are rejected.
+* `app/ai/preflight.py` checks structure and domain but does not build a mesh or
+  start a solver.
+* Changes are validated on a deep copy and applied only after explicit
+  Apply/Create; undo is one level.
+
+Phase 3 (multi-variable optimization, `StudySpec`, objectives from S-parameters
+and NF2FF) is planned but not implemented.
+
 ## 6. Simulate
 
 1. **Build Mesh**

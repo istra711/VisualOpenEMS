@@ -593,6 +593,112 @@ Solver-Log. Bei fehlendem OpenCode, fehlender Anmeldung oder Timeout bleibt die
 deterministische Diagnose verfügbar. Einstellungen: **AI → AI settings…**
 (Provider, Modell, Timeout, Logzeilen, Sprache, Skript-Auszug).
 
+### 5.10 Projektgenerierung und KI-Projektänderungen
+
+**AI → Generate project…** erzeugt ein neues Projekt aus einer validierten
+Vorlage:
+
+* Probe-fed Patch
+* Yagi-Uda
+* Microstrip-Notchfilter
+* Open-Stub-Bandpass
+* Hairpin-Bandpass
+* GPS-L1-Patch
+* WR62-Wellenleiter
+
+Jede Vorlage zeigt nur ihre relevanten Parameter (Frequenz, Substrat, Maße,
+Ports). Die Werte sind **Startwerte**, keine Garantie für das Ziel. Die
+Geometrie wird als normale Projekt-Primitives angelegt und ist danach wie
+gewohnt editierbar. Mit **Preview / preflight** wird das Kandidatenprojekt
+gebaut und strukturell geprüft; **Create project** ist nur ohne Preflight-Fehler
+aktiv. Warnungen sind erlaubt.
+
+**AI suggest** beschreibt die Anforderung in natürlicher Sprache. OpenCode
+bekommt den Template-Katalog und das Parameterschema und muss genau ein
+JSON-Objekt liefern:
+
+```json
+{"template": "patch", "parameters": {"f0": 2.45}, "assumptions": ["..."]}
+```
+
+Ungültige Templates, unbekannte Parameter oder kaputte Werte werden abgelehnt; mit **What AI sees** lässt sich der Prompt vorher anzeigen. Das Formular wird nur bei einer gültigen Antwort gefüllt. Danach prüfst du die
+Werte und startest selbst die Vorschau. Im Offline-Modus bleibt das manuelle
+Formular verfügbar.
+
+**AI → Edit project with AI…** fragt nach einer Änderung und erwartet einen
+strukturierten Projekt-Patch, keinen freien Python-Code:
+
+* `set` für sichere Einzelfelder
+* `set_variable` / `remove_variable`
+* `set_port` / `add_port` / `remove_port`
+* `add_primitive` / `update_primitive` / `remove_primitive`
+* `add_material` / `update_material`
+* `set_mesh` / `set_sim` / `set_nf2ff` / `set_boundary`
+
+Unbekannte Operationen oder Felder werden vor der Vorschau abgelehnt. Der
+Dialog zeigt Operationsliste/Diff, Annahmen und Preflight. **Apply** ist bei
+Fehlern deaktiviert. Apply baut kein Mesh und startet keinen Solver; danach
+musst du **Build Mesh** und **Run Simulation** selbst ausführen.
+
+Der Preflight prüft u. a.:
+
+* Projekt-JSON-Roundtrip
+* Variablen und Ausdrücke
+* doppelte/fehlende Namen von Primitives, Ports und Materialien
+* Primitives/Ports gegen die geschätzte FDTD-Domain
+* Portgeometrie, Porttyp und Metallkontakt (Warnung)
+* aktiven/erregten Port
+* Start-/Ziel-/Stopfrequenz, Mesh-Zellen und Timestep-Budget
+* Dump-/NF2FF-Ausdrücke
+* NF2FF-Box innerhalb der geschätzten Domain (Warnung)
+
+**Wichtig:** Der Preflight ist eine strukturelle Prüfung, kein Mesh-Build und
+keine EM-Simulation. Generierte Projekte werden **nicht automatisch
+gespeichert**; verwende anschließend **File → Save As**. Beim Anwenden eines
+KI-Patches wird der vorherige Projektzustand für **AI → Undo AI change**
+gesichert (eine Stufe). Es gibt keine automatischen Schreib-, Shell- oder
+Solver-Aktionen.
+
+**Grenzen:** Vorlagen sind ingenieurmäßige Startpunkte; Maße, Substrat und
+Matching müssen mit Mesh und Simulation verifiziert werden. Phase 2 enthält
+keine freie CAD-/STEP-Generierung und keine Mehrvariablen-Optimierung.
+
+### 5.11 KI-Implementierung (Referenz)
+
+Die ausführliche Implementierungsdokumentation steht in
+**[AI_IMPLEMENTATION_DE.md](AI_IMPLEMENTATION_DE.md)** (englische Fassung:
+[AI_IMPLEMENTATION_EN.md](AI_IMPLEMENTATION_EN.md)). Sie beschreibt:
+
+* Architektur und Datenfluss von Diagnose, OpenCode-Backend, Prompt-Aufbau,
+  sicheren Fixes, Vorlagen, strukturierten Patches und Preflight.
+* Modulübersicht unter `app/ai/` und `app/ui/`.
+* OpenCode-Kommando, JSONL-Events, Sessions und Windows-`.cmd`-Auflösung.
+* Kontextgrenzen, Redaktion und was das Programm tatsächlich verlässt.
+* Allow-Listen, Typ-/Bereichsprüfungen, Undo und die Sicherheitsschranken.
+* Tests, Live-Verifikation und Erweiterungspunkte (neues Backend, neue Vorlage,
+  neue Patch-Operation, neue Diagnoseregel).
+
+Dieselbe Übersicht ist in der Anwendung über **Help → AI implementation
+details…** und im Hilfethema **AI Implementation** erreichbar.
+
+Kurz zusammengefasst:
+
+* `app/ai/` ist Qt-frei und enthält den deterministischen Kern.
+* `app/ai/backend.py` kapselt OpenCode hinter `AiBackend`; ein anderes Backend
+  (z. B. Copilot SDK) kann später dieselbe Diagnose-, Kontext- und
+  Validierungsschicht nutzen.
+* `app/ai/fixes.py` erlaubt nur wenige Solver-/Mesh-/Port-Felder.
+* `app/ai/project_patch.py` akzeptiert nur deklarative Operationen und feste
+  Feld-Allow-Listen; freier Python-Code und beliebige Dateipfade werden
+  abgelehnt.
+* `app/ai/preflight.py` prüft Struktur und Domain, baut aber kein Mesh und
+  startet keinen Solver.
+* Änderungen werden auf einer Deep Copy validiert und erst nach explizitem
+  Apply/Create übernommen; Undo gilt für eine Stufe.
+
+Phase 3 (Mehrvariablen-Optimierung, `StudySpec`, Zielfunktionen aus S-Parametern
+und NF2FF) ist geplant, aber nicht implementiert.
+
 ## 6. Simulieren
 
 1. **Build Mesh**

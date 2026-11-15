@@ -120,6 +120,19 @@ hiddenimports = [
     "PIL",
     "PIL.Image",
     "PIL.GifImagePlugin",
+    "app.ai.backend",
+    "app.ai.context",
+    "app.ai.diagnosis",
+    "app.ai.fixes",
+    "app.ai.generation",
+    "app.ai.preflight",
+    "app.ai.project_patch",
+    "app.ai.templates",
+    "app.ai.worker",
+    "app.ui.ai_panel",
+    "app.ui.ai_settings_dialog",
+    "app.ui.project_generator",
+    "app.ui.project_patch_dialog",
 ]
 binaries += collect_dynamic_libs("CSXCAD")
 binaries += collect_dynamic_libs("openEMS")

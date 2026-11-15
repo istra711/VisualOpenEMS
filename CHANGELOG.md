@@ -53,6 +53,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a neutral temporary directory with explicit no-tools/no-file instructions.
   Settings cover offline/OpenCode mode, model, timeout, context limits and
   answer language; Help → **AI Assistant** documents privacy and limits.
+- **AI project generation and structured edits (Phase 2)**: **AI → Generate
+  project…** builds a new project from validated patch/Yagi/PCB/GPS/WR62
+  templates, with a parameter form, optional OpenCode JSON suggestion and a
+  structural preflight before creation. **AI → Edit project with AI…** asks
+  OpenCode for a structured project patch (variables, ports, materials,
+  primitives, mesh/solver fields), applies it to a copy, preflights it and shows
+  a diff before Apply. No free-form Python, no automatic mesh/run/save; generated
+  projects are new unsaved editor content. Project edits keep one-level
+  **Undo AI change**. The new help topic **AI Project Generation** documents
+  templates, patch schema, preflight and limitations.
+- **AI implementation documentation**: new
+  [docs/AI_IMPLEMENTATION_EN.md](docs/AI_IMPLEMENTATION_EN.md) and
+  [docs/AI_IMPLEMENTATION_DE.md](docs/AI_IMPLEMENTATION_DE.md) describe the
+  architecture, data flow, module map, OpenCode protocol, context/redaction,
+  safe-fix allow-list, templates, patch schema, preflight, privacy, tests and
+  extension points. The in-app help gains the **AI Implementation** topic and
+  **Help → AI implementation details…**; the README gains an **AI Assistance**
+  section with the three workflows, safety/privacy model and OpenCode setup.
 
 ### Changed
 

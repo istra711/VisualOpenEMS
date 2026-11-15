@@ -85,6 +85,8 @@ def _validate_value(path: str, value: Any) -> tuple[Any, str]:
             return value, f"{path}: expected true/false, got {value!r}"
         return value, ""
     if kind == "int":
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
         if isinstance(value, bool) or not isinstance(value, int):
             return value, f"{path}: expected an integer, got {value!r}"
         if path == "sim.max_timesteps":

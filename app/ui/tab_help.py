@@ -22,6 +22,8 @@ TAB_ORDER = [
     "Variable Sweep",
     "Sweep Antenna Patterns",
     "AI Assistant",
+    "AI Project Generation",
+    "AI Implementation",
     "Polarization & Phase Center",
     "Antenna Simulation",
     "Cylindrical Mesh",
@@ -1219,7 +1221,7 @@ Typical workflow
 What it is
   • A right-side dock (AI menu -> AI Assistant, Ctrl+Shift+A) with two parts:
     a deterministic run diagnosis and an optional language-model conversation.
-  • Phase 1 is read-only: it can read the project summary, the last run report,
+  • The dock is read-only: it can read the project summary, the last run report,
     filtered simulation-log lines and an optional script excerpt. It never
     writes project files, never starts a simulation and never commits results.
   • Every change is a proposal with an exact field diff. Applying is a separate
@@ -1262,7 +1264,8 @@ Safe fixes and undo
   • Only a small allow-list is editable: simulation max timesteps and end
     criterion, NF2FF flags, mesh preset/cell sizes, PML size, and port
     active/excite/resistance/phase switches. Geometry and material changes are
-    intentionally not automatic in Phase 1.
+    intentionally not automatic in the error assistant; project generation and
+    structured project patches are separate, explicitly reviewed dialogs.
   • The candidate project is built on a deep copy, round-tripped through the
     project JSON and checked with the normal variable/port resolver before the
     live project is touched.
@@ -1296,6 +1299,267 @@ Limitations and troubleshooting
     offline diagnosis.
   • Model choice: leave the model empty for the OpenCode default, or enter a
     provider/model ID in AI settings.
+""",
+    "AI Project Generation": """AI PROJECT GENERATION — templates, proposals, preflight
+
+What it is
+  • AI -> Generate project... creates a new project from a validated template.
+  • AI -> Edit project with AI... asks OpenCode for a structured patch to the
+    current project.
+  • Both paths are review-first: the candidate is built on a copy, checked by
+    the structural preflight, shown as a diff/summary, and only then applied.
+  • The current project is never overwritten silently. A generated project
+    replaces the editor only after a confirmation when unsaved changes exist.
+
+Templates (Generate project)
+  • Probe-fed patch, Yagi-Uda, microstrip notch filter, open-stub band-pass,
+    hairpin band-pass, GPS L1 CP patch, WR62 waveguide.
+  • Each template exposes only a small set of parameters (frequency, substrate,
+    dimensions, ports). Defaults are starting values, not a guarantee that the
+    design meets a target.
+  • The generated geometry is written as normal project primitives and is
+    editable afterwards like any other project.
+  • Press Preview / preflight to build and check the candidate. Create project
+    is enabled only when the preflight has no errors; warnings are allowed.
+
+AI suggest
+  • Describe the target in natural language. OpenCode receives the template
+    catalogue and the parameter schema and must answer with one JSON object:
+        {"template": "patch", "parameters": {...}, "assumptions": [...]}
+  • The JSON is parsed defensively. Unknown templates/parameters or malformed
+    values are rejected; the form is filled only for a valid answer. You still
+    review the values and press Preview. Use **What AI sees** to inspect the
+    exact prompt before sending it.
+  • Offline mode keeps the manual template form; no AI request is sent.
+
+Edit project with AI
+  • The assistant receives the compact project digest and returns a structured
+    patch, never free-form Python:
+        set, set_variable/remove_variable,
+        set_port/add_port/remove_port,
+        add/update/remove_primitive,
+        add/update_material,
+        set_mesh / set_sim / set_nf2ff / set_boundary.
+  • Only existing dataclass fields and a small primitive/port/material schema
+    are accepted. Unknown operations or fields are rejected before preflight.
+  • The dialog shows the operation list/diff, assumptions and preflight result.
+    Apply is disabled while an error remains. Apply does not build the mesh or
+    run the solver; do that afterwards and verify the result. Use **What AI
+    sees** to inspect the exact prompt before sending it.
+
+Preflight checks
+  • project JSON round-trip
+  • variable/expression resolution
+  • duplicate/missing primitive, port and material names
+  • primitive and port bounds against the estimated FDTD domain
+  • port geometry, type and endpoint contact with metal (warning)
+  • active/excited port presence
+  • start/target/stop frequencies, mesh cells and timestep settings
+  • dump/NF2FF expression resolution
+  • NF2FF box inside the estimated domain (warning)
+  It is a structural check, not a mesh build or EM simulation.
+
+Safety and undo
+  • Generated projects are new editor content, not an overwrite of a saved file.
+    Use File -> Save As to keep them.
+  • Applying an edited-project patch stores the previous project/primitives for
+    AI -> Undo AI change (one level).
+  • The assistant never writes files, never starts a run and never commits a
+    staged result.
+  • Review the exact prompt in AI Assistant -> What the AI sees before sending
+    sensitive project data. The same redaction rules apply.
+
+Limitations
+  • Templates are engineering starting points. Dimensions, substrate data and
+    matching must be verified with the mesh and a real simulation.
+  • The AI can misunderstand an ambiguous request. Use the assumptions list and
+    the diff; reject the proposal if it changes something you did not intend.
+  • No arbitrary FreeCAD/STEP generation in Phase 2. Use the existing import
+    paths for CAD files.
+  • No multi-variable optimisation in Phase 2; that is the Study/Phase-3 step.
+
+Typical workflow
+  1. AI -> Generate project..., choose template or describe the design.
+  2. Review parameters, press Preview / preflight, then Create project.
+  3. Save the new project with File -> Save As.
+  4. Build Mesh, then Run Simulation.
+  5. For later edits use AI -> Edit project with AI..., inspect the diff and
+     preflight, Apply, then rebuild/rerun.
+""",
+    "AI Implementation": """AI IMPLEMENTATION — architecture, safety gates and data flow
+
+What this topic covers
+  • How the AI features are built, not just how to click them. It is the
+    in-app summary of docs/AI_IMPLEMENTATION_EN.md (English) and
+    docs/AI_IMPLEMENTATION_DE.md (German).
+  • Phase 1: deterministic run diagnosis, optional OpenCode explanation and
+    validated safe fixes.
+  • Phase 2: template-based project generation, structured project patches and
+    the structural preflight.
+  • Phase 3 is planned only: multi-variable optimization and a Study object.
+
+Design rule: proposal, not action
+  1. A deterministic layer reads the project and the RunReport and produces
+     ranked findings. It works offline and is authoritative for known patterns.
+  2. The optional language model explains the evidence and may return strict
+     JSON (template suggestion or project patch).
+  3. Every change is validated on a deep copy, rendered as a diff/summary and
+     applied only after an explicit button click.
+  4. One-level Undo restores the project snapshot from before the last change.
+  5. Nothing starts a mesh build, solver run, commit or file write.
+
+Data flow (error assistant)
+  Run finished/failed
+    -> MainWindow stores RunReport, work/log path, exit code and message
+    -> app/ai/diagnosis.py: diagnose_run() -> Diagnosis (issues + fixes)
+    -> app/ai/context.py: project digest + filtered log + optional script
+    -> build_prompt() with fixed role/safety instructions and language
+    -> app/ai/worker.py: AiWorker (QThread, streaming)
+    -> app/ai/backend.py: OpenCodeBackend -> opencode run --format json
+    -> chat answer (read-only); user may select a FixProposal
+    -> app/ai/fixes.py: validate/apply on a copy -> explicit Apply -> snapshot
+
+Data flow (generation and edits)
+  Template form or AI suggestion -> template.build() -> preflight()
+  Project instruction -> project patch JSON -> apply on copy -> preflight()
+  Both -> diff/summary dialog -> explicit Create project / Apply
+
+Module map
+  app/ai/types.py          shared dataclasses (FixChange, Diagnosis, ...)
+  app/ai/diagnosis.py      RunReport/project -> ranked issues and fixes
+  app/ai/fixes.py          allow-list, range/type checks, deep-copy apply
+  app/ai/context.py        compact digest, log/script excerpts, redaction
+  app/ai/backend.py        AiBackend, OpenCode CLI, MockBackend, JSONL parsing
+  app/ai/worker.py         QThread with streaming and cancel signals
+  app/ai/templates.py      seven validated project templates
+  app/ai/project_patch.py  declarative patch operations and validation
+  app/ai/preflight.py      structural checks (no mesh, no solver)
+  app/ai/generation.py     defensive JSON extraction and prompt builders
+  app/ui/ai_panel.py       right-hand dock (diagnosis, chat, prompt preview)
+  app/ui/ai_settings_dialog.py
+  app/ui/project_generator.py
+  app/ui/project_patch_dialog.py
+  app/ui/main_window.py    menu/dock wiring, report capture, apply/undo
+  The app/ai modules are Qt-free; only worker.py and the dialogs use Qt.
+
+Deterministic diagnosis
+  • Inputs: RunReport findings, project settings and a failure note.
+  • Codes include exit_code, no_results, results_not_json, max_ts_reached,
+    energy_vs_criteria, passivity_core/edge, no_active_ports,
+    no_excited_port, low_max_timesteps, target_outside_sweep,
+    nf2ff_flag_mismatch, no_match and not_converged.
+  • Unknown error/warning findings pass through with their original code.
+  • Issues are sorted error -> warning -> info and deduplicated.
+  • The LLM is asked to explain this diagnosis, not to replace it.
+
+OpenCode backend
+  • Command: opencode run --format json --title <title> [--session <id>]
+    [--model <id>] <prompt>. The prompt is passed as one argument.
+  • On Windows the npm .cmd shim is resolved to the real opencode.exe next to
+    it, because cmd.exe would mangle multi-line prompts.
+  • Uses the existing OpenCode login/subscription; VisualopenEMS stores no
+    API key.
+  • Runs in a neutral temporary directory with stdin disabled, a hidden
+    console window, UTF-8 streams and a configurable timeout.
+  • JSONL events: text -> streamed to the chat; step_finish -> tokens/cost;
+    error -> readable failure. Unknown lines are ignored.
+  • The returned session ID gives follow-up questions continuity. New/Open
+    project, generated project and applied patch reset the session.
+
+Context, prompt and redaction
+  • The project digest contains names, units, frequency range, boundary/PML,
+    mesh, solver/NF2FF flags, counts, variables, ports, dumps and primitive
+    summaries. It never sends the full project JSON.
+  • Log excerpt: error/warning/convergence/mesh/PML/S-parameter keywords plus
+    context lines and the last 30 lines. Script excerpt: first 40 lines plus
+    FDTD/Run/port/boundary/NF2FF/CalcPort/mesh lines; can be disabled.
+  • The prompt is capped at 26,000 characters; the instructions and question
+    are kept when the context must be trimmed.
+  • redact_text() replaces the home directory, C:\\Users\\<name>, sk-/ghp_/
+    github_pat_ tokens, Bearer headers and api_key values.
+  • What AI sees... shows the exact prompt. Redaction is not a general DLP
+    system; absolute paths outside the profile may remain.
+
+Safe fixes (Phase 1 allow-list)
+  • sim.max_timesteps, sim.end_criteria, sim.nf2ff_enabled
+  • nf2ff.enabled, nf2ff.box_mode
+  • mesh.preset, mesh.max_cellsize, mesh.min_cellsize,
+    mesh.refined_cellsize, mesh.target_frequency
+  • boundary.pml_size
+  • ports[i].active, ports[i].excite_port, ports[i].resistance,
+    ports[i].excite_phase_deg
+  Geometry, materials and port coordinates are deliberately excluded.
+  apply_changes() deep-copies, resolves exact paths, checks type/range,
+  serialises/deserialises the project and only then returns/commits the copy.
+  The normal variable resolver runs in MainWindow as an additional gate.
+
+Project generation
+  • Seven templates: patch, Yagi, microstrip notch, open-stub band-pass,
+    hairpin band-pass, GPS L1 patch and WR62 waveguide.
+  • Each TemplateParam declares key, default, kind (float/int/choice/text),
+    unit, range, decimals, step, choices and help text.
+  • template.build() coerces values, rejects unknown keys, calls a pure
+    factory and attaches project.primitives.
+  • AI suggest must return one JSON object:
+        {"template": "patch", "parameters": {...}, "assumptions": [...]}
+    extract_json_object() accepts fenced or plain JSON and rejects unknown
+    templates or parameters before the form is filled.
+  • Preview/preflight and Create project remain separate user actions.
+
+Structured project patches
+  • Allowed operations: set, set_variable, remove_variable, set_port,
+    add_port, remove_port, add_primitive, update_primitive,
+    remove_primitive, add_material, update_material, set_mesh, set_sim,
+    set_nf2ff and set_boundary.
+  • Port/primitive/material fields have fixed allow-lists and type checks.
+    set_* accepts existing dataclass fields only; *_file, path and source are
+    refused so a patch cannot point the project at a new file.
+  • Variables pass validate_variable_name(). add_* requires unique names;
+    update/remove resolve by name or index and fail when the target is missing.
+  • apply_project_patch() applies to deep copies in order and aborts the whole
+    proposal on the first error. Apply never builds the mesh, runs the solver,
+    commits a staged result or saves a file.
+
+Structural preflight
+  • JSON round-trip and variable/expression resolution.
+  • Primitive/material/port names, kinds, bounds and duplicate names.
+  • Estimated FDTD domain versus geometry, ports and the NF2FF box.
+  • Port type, endpoints, resistance, phase and metal contact warnings.
+  • Active/excited port presence.
+  • Start/target/stop frequency, mesh cells and cell-size limits.
+  • Solver timesteps/end criterion, boundary faces, dump/NF2FF expressions.
+  • Errors block Apply/Create; warnings do not. It is not a mesh build and not
+    an EM simulation.
+
+Settings (app_settings.json, git-ignored)
+  ai_provider (offline|opencode), ai_opencode_cmd, ai_model, ai_timeout_s,
+  ai_answer_language, ai_max_log_lines and ai_include_script.
+  Test OpenCode only checks whether the command resolves; it sends no prompt.
+  Offline mode keeps diagnosis, fixes, templates, validation and preflight.
+
+Tests and verification
+  • python -m pytest tests -q  (current suite: 511 passed)
+  • Offscreen smoke: ai_assistant_smoke.py, project_generator_smoke.py,
+    menu_smoke.py, tab_help_smoke.py, sweep_smoke.py and multirun_smoke.py.
+  • Live verification: 2.45 GHz FR4 patch suggestion, a structured patch with
+    set_sim/set_port/set_variable and a clean preflight.
+
+Extending
+  • New backend: implement AiBackend.run()/cancel() and route it through
+    AiWorker; keep context and validation unchanged.
+  • New template: pure factory + TemplateParam schema + tests/preflight.
+  • New patch operation: allow-list + field schema + type checks + tests.
+  • New diagnosis rule: pure RunReport/project -> DiagnosisIssue mapping.
+  • Keep the proposal -> diff -> validation -> explicit apply model.
+
+Limits and planned work
+  • The assistant sees a compact digest, not CAD solids or the full mesh.
+  • Explanations are probabilistic; the deterministic diagnosis stays the
+    authoritative checklist.
+  • Templates are starting points, not guaranteed designs.
+  • No free-form Python, no CAD/STEP generation, no autonomous run loop.
+  • Phase 3 (planned): StudySpec, multi-variable optimization, objectives and
+    constraints from S-params/NF2FF, resumable study runs and an AI advisor.
 """,
     "Polarization & Phase Center": """POLARIZATION & PHASE CENTER — derived from the NF2FF far field
 

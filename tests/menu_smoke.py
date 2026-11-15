@@ -156,9 +156,13 @@ def test_menu_structure_and_shortcuts() -> None:
         == "Ctrl+Shift+A"
     )
     assert _find(_menu("AI"), "Explain last run\u2026") is not None
+    assert _find(_menu("AI"), "Generate project\u2026") is not None
+    assert _find(_menu("AI"), "Edit project with AI\u2026") is not None
     assert _find(_menu("AI"), "AI settings\u2026") is not None
     assert _find(_menu("AI"), "Undo AI change") is not None
     assert _find(_menu("Help"), "AI assistant (error analysis)\u2026") is not None
+    assert _find(_menu("Help"), "AI project generation and edits\u2026") is not None
+    assert _find(_menu("Help"), "AI implementation details\u2026") is not None
     assert _find(_menu("View"), "Log Panel").shortcut().toString() == "Ctrl+L"
     assert _find(_menu("View"), "Project / Geometry Panel").shortcut().toString() == "Ctrl+B"
     assert _find(_menu("Help"), "Help for Current Tab").shortcut().toString() == "F1"

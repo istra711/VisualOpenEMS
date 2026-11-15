@@ -21,6 +21,8 @@
 
 A standalone desktop GUI that takes 3D structures from **FreeCAD**, builds an **openEMS/CSXCAD** simulation model, runs **FDTD** simulations via Python bindings, and post-processes **S-parameters**, **field dumps**, and **NF2FF far-field patterns**.
 
+An optional AI assistant diagnoses failed runs, proposes validated fixes, generates projects from templates and applies structured project patches — always under explicit user review, without autonomous file writes or solver runs.
+
 Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 
 ---
@@ -35,6 +37,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Workflow](#workflow)
+- [AI Assistance](#ai-assistance)
 - [GUI Reference](#gui-reference)
 - [Meshing Rules](#meshing-rules)
 - [Project File Format](#project-file-format)
@@ -171,6 +174,34 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - Simulation script editor with regenerate/revert workflow
 - Project save/load (`.fcsim.json`) with backward-compatible deserialization
 
+### AI Assistance
+
+- **AI error assistant** — the **AI** dock (Ctrl+Shift+A) diagnoses the last
+  run without network access: exit code, missing S-parameters, convergence,
+  passivity, port and NF2FF settings, timestep budget and target-frequency
+  checks. An optional explanation uses the local **OpenCode CLI** and its
+  existing login/subscription; no API key is stored.
+- **Review-first fixes** — only a small allow-list of solver, mesh and port
+  fields can be changed. Every proposal shows an exact field diff, is validated
+  on a deep copy (JSON round-trip plus variable/port resolution) and is applied
+  only on an explicit click. **AI → Undo AI change** restores one level.
+- **Project generation** — **AI → Generate project…** builds a new project from
+  seven validated templates (patch, Yagi, microstrip notch, open-stub
+  band-pass, hairpin band-pass, GPS L1 patch, WR62 waveguide), with a parameter
+  form, optional OpenCode JSON suggestion and structural preflight.
+- **Structured project edits** — **AI → Edit project with AI…** asks for a
+  declarative patch (variables, ports, materials, primitives, mesh/solver
+  fields), rejects unknown operations and fields, applies it to a copy and
+  shows a diff plus preflight before Apply. No free-form Python and no
+  arbitrary file paths.
+- **Structural preflight** — checks JSON round-trip, expressions, names, domain
+  bounds, ports, mesh/solver settings, boundaries and NF2FF before a generated
+  project or patch can be applied.
+- **Offline by default** — diagnosis, fixes, templates, patch validation and
+  preflight work without OpenCode. Data is sent only when you press **Explain
+  last run**, **Send**, **AI suggest** or **Ask AI for proposal**; **What AI
+  sees…** shows the exact redacted prompt.
+
 ---
 
 ## Screenshots
@@ -282,6 +313,17 @@ VisualopenEMS/
 │   ├── settings.py                # Persistent app settings
 │   ├── models/
 │   │   └── project.py             # Project, MeshSpec, SimSpec, NF2FFDef, BoundarySpec, PortDef …
+│   ├── ai/
+│   │   ├── types.py               # Shared diagnosis/fix/context dataclasses
+│   │   ├── diagnosis.py           # Deterministic run-report diagnosis
+│   │   ├── fixes.py               # Allow-list, validation, safe apply
+│   │   ├── context.py             # Project digest, log/script excerpts, redaction
+│   │   ├── backend.py             # AiBackend, OpenCode CLI adapter, MockBackend
+│   │   ├── worker.py              # QThread with streaming and cancellation
+│   │   ├── templates.py           # Seven validated project templates
+│   │   ├── project_patch.py       # Structured project patch operations
+│   │   ├── preflight.py           # Structural preflight checks
+│   │   └── generation.py          # JSON extraction and prompt builders
 │   ├── csxcad_builder/
 │   │   ├── builder.py             # CSXCAD model construction
 │   │   ├── primitives.py          # Parametric antenna generators (patch, dipole, Yagi)
@@ -312,6 +354,10 @@ VisualopenEMS/
 │   │   └── sparams.py             # S-parameter extraction
 │   └── ui/
 │       ├── main_window.py         # Main window, menus, tabs
+│       ├── ai_panel.py            # AI assistant dock (diagnosis, chat, preview)
+│       ├── ai_settings_dialog.py  # Provider, model, timeout and context settings
+│       ├── project_generator.py   # Template generator and AI suggestion dialog
+│       ├── project_patch_dialog.py # Structured project edit dialog
 │       ├── mesh_params.py         # Mesh parameter dialog
 │       ├── sim_params.py          # Simulation parameter dialog
 │       ├── ports_dumps.py         # Ports & dumps dialog
@@ -348,6 +394,7 @@ VisualopenEMS/
 | **h5py** | ≥ 3.7 | [h5py.org](https://www.h5py.org/) |
 | **scikit-rf** | ≥ 0.29 | [scikit-rf.org](https://scikit-rf.org/) |
 | **easyMesh4openEMS** | fork (this repo) | [github.com/istra711/easyMesh4openEMS](https://github.com/istra711/easyMesh4openEMS) |
+| **OpenCode CLI** (optional) | latest | [opencode.ai](https://opencode.ai) — only for AI explanations, template suggestions and project patches; offline diagnosis needs no provider |
 
 **Linux:** the Python/Qt/VTK GUI is cross-platform. Native openEMS/CSXCAD, a
 Linux-built easyMesh and—for FCStd/STEP—FreeCAD must be installed separately.
@@ -392,6 +439,19 @@ pip install .\third_party\easyMesh4openEMS
 python tests\verify_imports.py
 ```
 
+### 6. Optional: install OpenCode for AI features
+
+The deterministic AI diagnosis, safe fixes, templates, patch validation and
+preflight work without any provider. For natural-language explanations and AI
+proposals, install the [OpenCode CLI](https://opencode.ai) using its official
+instructions and sign in once. Check that the command resolves:
+
+```powershell
+opencode --version
+```
+
+If it is not on `PATH`, set the full executable path in **AI → AI settings…**.
+
 ---
 
 ## Quick Start
@@ -424,6 +484,17 @@ python app\main.py
 6. **Simulation → Commit staged results** — publish the run as the active result
 7. View results in the **S-Params**, **Antenna**, and **Fields** tabs; old
    committed runs remain available under **Simulation → Run history…**
+
+### Try the AI features
+
+1. Open **AI → AI Assistant** (Ctrl+Shift+A) and press **Explain last run**
+   after a run, or use **Explain with AI** in a failure message box.
+2. Open **What AI sees…** to review the exact redacted prompt before sending.
+3. Optional: apply one of the proposed safe fixes, then use **AI → Undo AI
+   change** to compare the previous state.
+4. **AI → Generate project…** creates a new design from a validated template;
+   **AI → Edit project with AI…** proposes a structured patch for the current
+   project. Both show a preflight and a diff before anything is applied.
 
 ---
 
@@ -464,13 +535,132 @@ python app\main.py
 
 ---
 
+## AI Assistance
+
+The AI features follow one rule: **the model may propose, but only you apply.**
+No AI action writes a project file, builds a mesh, starts a solver run, commits
+a staged result or generates free-form Python.
+
+### Three workflows
+
+| Workflow | Entry point | What it does |
+|----------|-------------|--------------|
+| Error analysis | **AI → AI Assistant** (Ctrl+Shift+A), **AI → Explain last run…**, failure boxes | Deterministic diagnosis of the last run plus an optional OpenCode explanation and a small set of validated fixes. |
+| Project generation | **AI → Generate project…** | Builds a new project from a validated template or an AI JSON suggestion, runs the structural preflight and installs it as unsaved editor content. |
+| Project editing | **AI → Edit project with AI…** | Asks OpenCode for a declarative project patch, validates it on a copy, preflights it and shows a diff before Apply. |
+
+### Error assistant
+
+The dock has two layers:
+
+1. **Deterministic diagnosis** works offline and is authoritative for known
+   findings: solver exit code, missing S-parameters, `max_timesteps`,
+   energy/end-criterion convergence, passivity, inactive/unexcited ports,
+   target frequency outside the sweep and NF2FF flag mismatches.
+2. **Optional OpenCode explanation** receives the compact project digest, the
+   run report, filtered log lines and an optional `project_run.py` excerpt. It
+   explains and prioritizes the findings; it does not replace them.
+
+Safe fixes are limited to numeric solver/mesh knobs, PML size, NF2FF switches
+and port active/excite/resistance/phase fields. Each proposal is validated on a
+deep copy and shown as an exact field diff. **Apply fix** does not rebuild the
+mesh or start a simulation. **AI → Undo AI change** restores the previous
+project and primitive snapshot (one level).
+
+### Project generation
+
+Seven templates are registered: probe-fed patch, Yagi-Uda, microstrip notch
+filter, open-stub band-pass, hairpin band-pass, GPS L1 CP patch and WR62
+waveguide. Each exposes only its relevant parameters and produces a normal,
+editable project with variables, materials, ports, dumps, mesh and solver
+settings.
+
+**AI suggest** sends the template catalogue and parameter schema. The model must
+return exactly one JSON object with a template ID, parameters and assumptions;
+unknown templates or parameters are rejected. The form is filled only for a
+valid answer, and **Preview / preflight** stays a separate action. **Create
+project** is enabled only when the preflight has no errors; the result is
+unsaved editor content, so use **File → Save As** to keep it.
+
+### Structured project edits
+
+**Edit project with AI** accepts only declarative operations: `set`,
+`set_variable`/`remove_variable`, `set_port`/`add_port`/`remove_port`,
+`add_primitive`/`update_primitive`/`remove_primitive`,
+`add_material`/`update_material`, `set_mesh`, `set_sim`, `set_nf2ff` and
+`set_boundary`. Port, primitive and material fields use fixed allow-lists;
+`set_*` accepts existing dataclass fields only, and `*_file`, `path` and
+`source` are refused. Unknown operations or fields abort the whole proposal
+before it reaches the project. Apply stores a one-level undo snapshot and
+clears results that no longer match the edited model.
+
+### Structural preflight
+
+Both generation and editing run `preflight()` before anything is applied. It
+checks the project JSON round-trip, variable/expression resolution, names,
+primitive/port bounds against the estimated FDTD domain, port geometry and
+metal contact, active/excited ports, frequency and mesh settings, solver
+timesteps/end criterion, boundary faces and dump/NF2FF expressions. Errors
+block Apply/Create; warnings are informational. It is not a mesh build and not
+an EM simulation.
+
+### Safety and privacy
+
+- **No autonomous actions.** The assistant cannot save a project, write files,
+  build a mesh, start a solver, commit results or execute generated code.
+- **Explicit approval.** Every change is a proposal with a diff and a separate
+  Apply/Create button; one-level undo is always available.
+- **Strict code gates.** Operation/field allow-lists, type/range checks, JSON
+  round-trip, variable resolution and preflight are enforced in code, not only
+  in prompts.
+- **Redaction.** Home directory, `C:\Users\<name>`, common token formats and
+  Bearer/API-key values are redacted. **What AI sees…** shows the exact prompt
+  before sending. Absolute paths outside the profile, hostnames, material names
+  or comments may still be visible.
+- **Neutral process.** OpenCode runs in a temporary directory with stdin
+  disabled, hidden console and a timeout, using its own login/subscription.
+  VisualopenEMS stores no API key.
+- **Offline mode.** Without OpenCode, diagnosis, safe fixes, templates, patch
+  validation and preflight remain fully available.
+
+OpenCode's own permissions and sandbox are outside VisualopenEMS's control.
+For sensitive environments use offline mode, restrict the OpenCode
+configuration or run the application in an isolated account/VM.
+
+### Optional OpenCode setup
+
+OpenCode is only needed for natural-language explanations, AI template
+suggestions and AI project patches. Install the CLI using the official
+instructions at [opencode.ai](https://opencode.ai), sign in once, and check the
+command:
+
+```powershell
+opencode --version
+```
+
+If the command is not on `PATH`, set the full executable path in **AI → AI
+settings…**. The same dialog selects offline/OpenCode mode, model, timeout,
+answer language, log-line limit and whether the generated script is included.
+**Test OpenCode** only checks that the command resolves; it sends no prompt.
+
+### Documentation and implementation
+
+- [AI implementation (EN)](docs/AI_IMPLEMENTATION_EN.md) — architecture, data
+  flow, module map, backend protocol, context/redaction, allow-lists, patch
+  schema, preflight, privacy, tests and extension guide.
+- [KI-Implementierung (DE)](docs/AI_IMPLEMENTATION_DE.md) — German version.
+- In the application: **Help → AI assistant (error analysis)…**, **Help → AI
+  project generation and edits…** and **Help → AI implementation details…**.
+
+---
+
 ## GUI Reference
 
 ### Main Window Layout
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  File  Presets  FreeCAD  Mesh  Simulation  View  Help          │
+│  File  Presets  FreeCAD  Mesh  Simulation  AI  View  Help       │
 ├────────────────────────────────────────────────────────────────┤
 │ [Geometry] [Mesh] [S-Params] [Antenna] [Fields] [Log] [Help]  │
 ├────────────────────────────┬───────────────────────────────────┤
@@ -498,6 +688,7 @@ Window state is remembered across sessions: geometry (including maximised state)
 | Ctrl+M | Open Mesh Parameters |
 | Ctrl+R | Run Simulation |
 | Ctrl+Shift+R | Run All Ports (full S-matrix) |
+| Ctrl+Shift+A | Open the AI Assistant dock |
 
 ### S-Parameter Viewer
 
@@ -507,6 +698,20 @@ Window state is remembered across sessions: geometry (including maximised state)
 - **Go to S-min** — jump to the resonance dip
 - **Pop out** — detach plot into a separate window
 - Auto-opens after a simulation completes
+
+### AI Assistant
+
+- **AI → AI Assistant** (Ctrl+Shift+A) opens the right-hand dock.
+- **Explain last run** shows the deterministic diagnosis: verdict, checked
+  rules, ranked issues with evidence, and an optional fix selector.
+- **Apply fix** validates the selected allow-listed changes on a copy and
+  applies them only after the click; **Undo** restores the previous snapshot.
+- **Chat** asks free-form questions about the current project and run. The
+  answer is streamed; **Stop** cancels. **What AI sees…** shows the exact
+  redacted prompt before anything is sent.
+- **Settings** selects offline/OpenCode mode, command, model, timeout, answer
+  language, log-line limit and script inclusion.
+- The dock never writes files, builds a mesh, starts a run or commits results.
 
 ### Antenna Viewer
 
@@ -726,6 +931,16 @@ antenna-pattern and E-field viewers (MP4 + twelve annotated slides).
 
 ## Tests
 
+### Unit and regression tests
+
+```powershell
+python -m pytest tests -q
+```
+
+The suite covers the project model, simulation helpers, S-parameter comparison,
+variable sweeps, AI diagnosis/fixes/context/backend parsing, project templates,
+structured patches and the structural preflight. Current result: **511 passed**.
+
 ### Quick verification
 
 ```powershell
@@ -745,6 +960,8 @@ python tests\antenna_viewer_smoke.py
 python tests\script_editor_smoke.py
 python tests\tab_help_smoke.py
 python tests\tree_edit_smoke.py
+python tests\ai_assistant_smoke.py
+python tests\project_generator_smoke.py
 ```
 
 ### Physics tests
@@ -763,6 +980,8 @@ python tests\yagi_mesh_ends.py    # Yagi cylinder-end densification
 |----------|-------------|
 | [docs/ANLEITUNG_EN.md](docs/ANLEITUNG_EN.md) | Full guide: FreeCAD antenna → simulation (EN) |
 | [docs/ANLEITUNG_DE.md](docs/ANLEITUNG_DE.md) | Full guide (DE) |
+| [docs/AI_IMPLEMENTATION_EN.md](docs/AI_IMPLEMENTATION_EN.md) | AI implementation: architecture, data flow, safety gates, backend, patches, preflight, tests, extension guide (EN) |
+| [docs/AI_IMPLEMENTATION_DE.md](docs/AI_IMPLEMENTATION_DE.md) | KI-Implementierung: Architektur, Datenfluss, Sicherheitsschranken, Backend, Patches, Preflight, Tests, Erweiterungen (DE) |
 | [docs/LINUX.md](docs/LINUX.md) | Linux prerequisites, path configuration and native build |
 | [docs/FREECAD_WORKFLOW_EN.md](docs/FREECAD_WORKFLOW_EN.md) | Step-by-step workflow checklist (EN) |
 | [docs/FREECAD_PORTS_EN.md](docs/FREECAD_PORTS_EN.md) | Port marking in FreeCAD (EN) |
