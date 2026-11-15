@@ -45,6 +45,48 @@ def main() -> int:
     print("ports combo:", [viewer.cmb_port.itemText(i) for i in range(viewer.cmb_port.count())])
     print("trace S11", None if viewer._trace("S11") is None else viewer._trace("S11").shape)
 
+    # --- trace visibility: no fallback to the Primary trace ---------------
+    for i in range(viewer.trace_list.count()):
+        viewer.trace_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+    app.processEvents()
+    viewer._redraw()
+    app.processEvents()
+    if viewer._checked_traces():
+        print("FAIL: unchecked trace list still reports visible traces")
+        return 15
+    ax = viewer.figure.axes[0]
+    empty_text = " ".join(t.get_text() for t in ax.texts)
+    if "No S-parameter traces selected" not in empty_text:
+        print("FAIL: no-trace empty state missing:", empty_text)
+        return 15
+    if ax.lines:
+        print("FAIL: unchecked trace list still draws lines")
+        return 15
+
+    s21_item = next(
+        (
+            viewer.trace_list.item(i)
+            for i in range(viewer.trace_list.count())
+            if viewer.trace_list.item(i).text() == "S21"
+        ),
+        None,
+    )
+    if s21_item is None:
+        print("FAIL: S21 trace item missing")
+        return 15
+    s21_item.setCheckState(Qt.CheckState.Checked)
+    app.processEvents()
+    viewer._redraw()
+    app.processEvents()
+    if viewer._checked_traces() != ["S21"]:
+        print("FAIL: selecting S21 check state:", viewer._checked_traces())
+        return 15
+    labels = [line.get_label() for line in viewer.figure.axes[0].lines]
+    if "S21" not in labels or "S11" in labels:
+        print("FAIL: selecting only S21 still draws S11:", labels)
+        return 15
+    print("trace visibility/no-fallback OK")
+
     # --- explicit export: Touchstone, CSV, ASCII --------------------------
     import tempfile
 

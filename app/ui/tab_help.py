@@ -919,6 +919,11 @@ After a successful Run
   • Marker style picks which format the marker list shows (dB, |S|,
     Phase, Γ, Z, Y, VSWR, RL — or All formats for every format at once).
   • Plot |S| in dB (and other formats), Smith chart.
+  • Traces (check to show): tick every S-parameter that should be visible.
+    Only ticked traces are drawn; with no tick the plot shows a clear empty
+    state. Primary selects the trace for cursor/marker analysis and is drawn
+    only when its checkbox is ticked. Presets select groups; Single trace
+    checks the Primary trace.
   • Marker: left-click the plot to snap a marker to the nearest data point.
   • Right-click the plot for smart markers: add here, delta marker from the
     selected marker, trace minimum/maximum, nearest peak/valley, the two

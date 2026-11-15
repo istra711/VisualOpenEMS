@@ -350,12 +350,13 @@ class SParamViewer(QWidget):
         self.cmb_port = QComboBox()
         self.cmb_port.setToolTip(
             "Primary trace for marker placement / cursor / analysis.\n"
+            "It is visible only when its trace is ticked in the list.\n"
             "The marker list shows every ticked trace at the marker frequency."
         )
         self.cmb_trace_set = QComboBox()
         self.cmb_trace_set.addItems(self.TRACE_PRESETS)
         self.cmb_trace_set.setToolTip(
-            "Quick selection for the overlay:\n"
+            "Quick selection for the visible traces:\n"
             "• Return loss (Sii): S11, S22, …\n"
             "• Transmission (Sij): S12, S13, … (i≠j)\n"
             "• All traces: the complete S-matrix"
@@ -478,13 +479,14 @@ class SParamViewer(QWidget):
             self._on_file_context_menu
         )
         lv.addWidget(self.file_list)
-        lv.addWidget(QLabel("Traces (check to overlay)"))
+        lv.addWidget(QLabel("Traces (check to show)"))
         self.trace_list = QListWidget()
         self.trace_list.setMaximumHeight(155)
         self.trace_list.setToolTip(
-            "Tick several S-parameters to draw them in one plot.\n"
+            "Tick every S-parameter you want to see in the plot.\n"
             "The bold/current entry (Primary) drives marker placement and\n"
-            "cursor/analysis; the marker list shows values for every ticked trace."
+            "cursor/analysis; it must also be ticked to be visible.\n"
+            "The marker list shows values for every ticked trace."
         )
         lv.addWidget(self.trace_list)
         marker_bar = QHBoxLayout()
@@ -1143,10 +1145,6 @@ class SParamViewer(QWidget):
             item = self.trace_list.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 keys.append(item.text())
-        if not keys:
-            primary = self.cmb_port.currentText()
-            if primary:
-                keys = [primary]
         return keys
 
     def _set_checked_traces(self, keys: list[str], preset: str | None = None) -> None:
@@ -1173,6 +1171,14 @@ class SParamViewer(QWidget):
             self.cmb_trace_set.setCurrentText(preset)
             self.cmb_trace_set.blockSignals(False)
         self._syncing_traces = False
+        if first:
+            for i in range(self.trace_list.count()):
+                if self.trace_list.item(i).text() == first:
+                    self.trace_list.setCurrentRow(i)
+                    break
+        else:
+            self.trace_list.setCurrentRow(-1)
+            self.trace_list.clearSelection()
 
     def _select_only_trace(self, key: str, *, redraw: bool = True) -> None:
         self._set_checked_traces([key], "Single trace")
@@ -1195,6 +1201,9 @@ class SParamViewer(QWidget):
             self.cmb_port.blockSignals(True)
             self.cmb_port.setCurrentText(keys[0])
             self.cmb_port.blockSignals(False)
+        if not keys:
+            self.trace_list.setCurrentRow(-1)
+            self.trace_list.clearSelection()
         self.cmb_trace_set.blockSignals(True)
         self.cmb_trace_set.setCurrentText("Custom")
         self.cmb_trace_set.blockSignals(False)
@@ -2196,8 +2205,7 @@ class SParamViewer(QWidget):
                 return
             keys = self._checked_traces()
             if not keys:
-                primary = self.cmb_port.currentText() if self.cmb_port.count() else ""
-                keys = [primary] if primary else ["S11"]
+                return
             z0 = self._z0_from_network()
             self._marker_z0 = z0
             reference_s = (
@@ -2547,10 +2555,26 @@ class SParamViewer(QWidget):
             data = self._trace(name)
             if data is not None and self._trace_has_data(data):
                 traces.append((name, data))
+        if not keys:
+            ax.text(
+                0.5,
+                0.5,
+                "No S-parameter traces selected\n\n"
+                "Tick one or more traces in the list on the left.\n"
+                "The Primary trace is drawn only when it is ticked.",
+                ha="center",
+                va="center",
+                fontsize=11,
+            )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            self.canvas.draw_idle()
+            self._refresh_markers()
+            return
         if not traces:
             # untouched S-matrix cell (NaN/0): do not autoscale to it, which
             # leaves a meaningless axis and looks like a broken scale
-            key = keys[0] if keys else "S11"
+            key = keys[0]
             ports = "port" if self.network.nports == 1 else "ports"
             ax.text(
                 0.5,

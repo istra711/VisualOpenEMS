@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **S-Parameter trace visibility**: unchecked traces no longer fall back to
+  the Primary trace. With no trace ticked the plot shows a clear empty state,
+  and ticking S21 draws only S21 (the Primary dropdown selects the analysis
+  trace but is visible only when its checkbox is ticked). Marker rows and the
+  help topic follow the same rule.
+- **S-Parameter trace list highlight**: the current-row highlight is cleared
+  when the last trace is unticked and follows the selected group/preset again.
+
 ## [0.12.0] - 2026-11-15
 
 ### Added
