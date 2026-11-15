@@ -897,7 +897,7 @@ The real OpenCode path was verified with:
 - a subsequent preflight without errors,
 - local retrieval for PML, `AddLumpedPort` and NF2FF questions with visible
   `Sources…` entries and version detection (openEMS 0.0.36, CSXCAD 0.6.3,
-  easyMesh 0.0.1, VisualopenEMS 0.11.0 on the development machine).
+  easyMesh 0.0.1, VisualopenEMS 0.12.0 on the development machine).
 
 Live verification depends on the local OpenCode installation and login and is
 not part of the automated test suite.

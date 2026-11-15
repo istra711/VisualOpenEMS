@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.0] - 2026-11-15
 
 ### Added
 
@@ -3091,7 +3091,8 @@ bundling PySide6, openEMS 0.0.36, CSXCAD 0.6.3 and easyMesh4openEMS.
 [0.5.9]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.9
 [0.5.10]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.5.10
 [0.6.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.6.0
-[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/istra711/VisualOpenEMS/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.12.0
 [0.11.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.11.0
 [0.10.0]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.10.0
 [0.9.2]: https://github.com/istra711/VisualOpenEMS/releases/tag/v0.9.2

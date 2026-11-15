@@ -919,7 +919,7 @@ Der echte OpenCode-Pfad wurde geprüft mit:
 - einem anschließenden Preflight ohne Fehler,
 - lokalem Abruf für PML-, `AddLumpedPort`- und NF2FF-Fragen mit sichtbaren
   **Sources…**-Einträgen und Versionserkennung (openEMS 0.0.36, CSXCAD 0.6.3,
-  easyMesh 0.0.1, VisualopenEMS 0.11.0 auf dem Entwicklungsrechner).
+  easyMesh 0.0.1, VisualopenEMS 0.12.0 auf dem Entwicklungsrechner).
 
 Die Live-Verifikation hängt von der lokalen OpenCode-Installation und Anmeldung
 ab und ist nicht Teil der automatisierten Testsuite.
