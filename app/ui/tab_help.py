@@ -1696,6 +1696,10 @@ an embedded 3D view (no external ParaView needed).
 
 Mirrors the openEMS "Field Dumps Analysis via ParaView" workflow.
 
+Loading a different project, a preset, or New Project clears the loaded field
+series and its geometry ghosts, so dumps from the previous project cannot stay
+on screen.
+
 Buttons / controls
   • "Export project dumps → VTK": converts every dump in the current project's
     simulation/ folder (*.h5, excluding nf2ff_*) into its own folder

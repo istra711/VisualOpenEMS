@@ -4446,7 +4446,9 @@ class MainWindow(QMainWindow):
         if reason:
             self._log(f"Result viewers cleared ({reason})")
 
-    def _discard_result_state(self, reason: str) -> None:
+    def _discard_result_state(
+        self, reason: str, *, include_mesh: bool = False
+    ) -> None:
         """Clear the viewers before a new run, but keep committed results.
 
         The active run pointed to by ``project.results`` is intentionally not
@@ -4463,7 +4465,36 @@ class MainWindow(QMainWindow):
         self._last_run_exit_code = None
         self._last_run_message = ""
         self._refresh_ai_context()
-        self._clear_result_viewers(reason, include_mesh=False)
+        self._clear_result_viewers(reason, include_mesh=include_mesh)
+
+    def _prepare_preset_project(self, reason: str) -> None:
+        """Drop transient result state after a preset replaces the project.
+
+        Presets are a complete project replacement.  Committed runs of the
+        previous project stay on disk, but the Field/S-Params/NF2FF and mesh
+        viewers must not keep showing the old project's results.
+        """
+        self._current_file_path = None
+        self.project.primitives = list(self.primitives)
+        self.project.results = {}
+        self.project.sparam_reference = None
+        self._project_store_obj = None
+        self._staged_run_dir = None
+        self._staged_run_status = ""
+        self._staged_run_kind = "single"
+        self._last_sweep_json = None
+        self._sweep_points = []
+        self._sweep_spec = None
+        self._sweep_work = None
+        self._mesh_sig = None
+        self._viewer_geometry_sig = None
+        self._mesh_deleted = False
+        self._allow_auto_results = False
+        self._allow_auto_nf2ff = False
+        self._reset_ai_project_state()
+        self._discard_result_state(reason, include_mesh=True)
+        self._reset_status_bar()
+        self._update_run_actions()
 
     def _confirm_replace_staged_run(self) -> bool:
         """A new run replaces only an *uncommitted* staging folder."""
@@ -6985,6 +7016,7 @@ class MainWindow(QMainWindow):
         kwargs = {k: float(self.sim_params.patch_params[k]) for k in DEFAULT_PATCH_PARAMS}
         self.project, self.primitives = patch_antenna_primitives(**kwargs)
         self.project.patch_params = dict(self.sim_params.patch_params)
+        self._prepare_preset_project("preset: patch antenna")
         self._sync_form_from_project()
         self.sim_params.set_patch_group_visible(True)
         self._refresh_tree()
@@ -7009,6 +7041,7 @@ class MainWindow(QMainWindow):
         self.project = project
         self.primitives = primitives
         self.project.primitives = list(primitives)
+        self._prepare_preset_project("preset: Yagi antenna")
         if hasattr(self.sim_params, "set_patch_group_visible"):
             self.sim_params.set_patch_group_visible(False)
         self._sync_form_from_project()
@@ -7107,6 +7140,7 @@ class MainWindow(QMainWindow):
         self.project = project
         self.primitives = prims
         self.project.primitives = list(prims)
+        self._prepare_preset_project("preset: PCB filter")
         if hasattr(self.sim_params, "set_patch_group_visible"):
             self.sim_params.set_patch_group_visible(False)
         self._sync_form_from_project()
@@ -7145,6 +7179,7 @@ class MainWindow(QMainWindow):
         self.project = project
         self.primitives = prims
         self.project.primitives = list(prims)
+        self._prepare_preset_project("preset: PCB band-pass")
         if hasattr(self.sim_params, "set_patch_group_visible"):
             self.sim_params.set_patch_group_visible(False)
         self._sync_form_from_project()
@@ -7195,6 +7230,7 @@ class MainWindow(QMainWindow):
         self.project = project
         self.primitives = prims
         self.project.primitives = list(prims)
+        self._prepare_preset_project("preset: PCB hairpin band-pass")
         if hasattr(self.sim_params, "set_patch_group_visible"):
             self.sim_params.set_patch_group_visible(False)
         self._sync_form_from_project()
@@ -7239,6 +7275,7 @@ class MainWindow(QMainWindow):
         self.project = project
         self.primitives = prims
         self.project.primitives = list(prims)
+        self._prepare_preset_project("preset: WR62 waveguide")
         if hasattr(self.sim_params, "set_patch_group_visible"):
             self.sim_params.set_patch_group_visible(False)
         self._sync_form_from_project()
@@ -7282,6 +7319,7 @@ class MainWindow(QMainWindow):
         self.project = project
         self.primitives = prims
         self.project.primitives = list(prims)
+        self._prepare_preset_project("preset: GPS L1 patch")
         if hasattr(self.sim_params, "set_patch_group_visible"):
             self.sim_params.set_patch_group_visible(False)
         self._sync_form_from_project()

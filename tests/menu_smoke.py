@@ -780,6 +780,35 @@ def test_wr62_waveguide_preset() -> None:
     print("WR62 WAVEGUIDE PRESET OK")
 
 
+def test_preset_clears_previous_result_viewers() -> None:
+    """A preset is a project replacement: no old field/run data may survive."""
+    from pathlib import Path
+
+    w = _win()
+    v = w.vtk_viewer
+    v._series = [object()]
+    v._series_labels = ["E"]
+    v._current_path = Path("old_field.vtr")
+    w._last_run_report = object()
+    w._last_run_work = Path("old_work")
+    w._last_run_log_path = Path("old_log")
+    w._staged_run_dir = Path("old_staging")
+    w._last_sweep_json = {"old": True}
+    w._sweep_points = [1.0, 2.0]
+
+    w._on_load_patch()
+
+    assert v._series == [], "old Field Viewer series survived a preset load"
+    assert v._current_path is None, "old Field Viewer path survived a preset load"
+    assert w._last_run_report is None, "old run report survived a preset load"
+    assert w._last_run_work is None, "old work path survived a preset load"
+    assert w._staged_run_dir is None, "old staging folder survived a preset load"
+    assert w._last_sweep_json is None, "old sweep state survived a preset load"
+    assert w._sweep_points == [], "old sweep points survived a preset load"
+    assert w.primitives, "patch preset did not load geometry"
+    print("PRESET RESULT RESET OK")
+
+
 def test_tree_selection_highlights_only_objects() -> None:
     """Only Prim/Port rows highlight the viewer — not materials or others."""
     from PySide6.QtCore import Qt
@@ -865,6 +894,7 @@ def main() -> int:
         test_new_project_starts_empty,
         test_pcb_hairpin_preset,
         test_wr62_waveguide_preset,
+        test_preset_clears_previous_result_viewers,
         test_tree_selection_highlights_only_objects,
         test_design_viewer_tab,
     ):

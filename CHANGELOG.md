@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stale result viewers after loading a preset**: presets now use the same
+  project-replacement reset as generated projects. The Field Viewer, S-Params,
+  NF2FF and mesh viewers are cleared, and the last run report, staging folder,
+  sweep state and mesh signature are dropped before the preset project is
+  shown. Previously the Field Viewer could keep displaying field dumps and
+  geometry from the project that was open before the preset.
 - **S-Parameter trace visibility**: unchecked traces no longer fall back to
   the Primary trace. With no trace ticked the plot shows a clear empty state,
   and ticking S21 draws only S21 (the Primary dropdown selects the analysis
