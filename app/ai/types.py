@@ -100,6 +100,57 @@ class Diagnosis:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class KnowledgeHit:
+    """One read-only excerpt from a local OpenEMS/CSXCAD source or document."""
+
+    id: str
+    title: str
+    path: str
+    line_start: int
+    line_end: int
+    text: str
+    root: str = ""
+    kind: str = "source"
+    score: float = 0.0
+
+
+@dataclass
+class KnowledgeBundle:
+    """Result of a local knowledge retrieval for one AI request."""
+
+    hits: list[KnowledgeHit] = field(default_factory=list)
+    summary: str = ""
+    roots: list[str] = field(default_factory=list)
+    versions: dict[str, str] = field(default_factory=dict)
+    indexed_files: int = 0
+    indexed_chunks: int = 0
+    enabled: bool = True
+
+    def display_text(self) -> str:
+        if not self.enabled:
+            return self.summary or "Local knowledge is disabled in AI settings."
+        lines = [self.summary or "No local knowledge excerpts."]
+        if self.roots:
+            lines.append("Roots: " + ", ".join(self.roots))
+        if self.versions:
+            lines.append(
+                "Versions: "
+                + ", ".join(f"{name} {version}" for name, version in self.versions.items())
+            )
+        for hit in self.hits:
+            lines.extend(
+                [
+                    "",
+                    f"[{hit.id}] {hit.root + ': ' if hit.root else ''}{hit.title}",
+                    f"{hit.path}:{hit.line_start}-{hit.line_end}",
+                    "",
+                    hit.text,
+                ]
+            )
+        return "\n".join(lines)
+
+
 @dataclass
 class RunContext:
     """Everything the assistant is allowed to see for one run."""
@@ -109,14 +160,35 @@ class RunContext:
     log_excerpt: str = ""
     script_excerpt: str = ""
     diagnosis_text: str = ""
+    knowledge_summary: str = ""
+    knowledge: list[KnowledgeHit] = field(default_factory=list)
     redaction_note: str = ""
 
-    def display_text(self) -> str:
+    def knowledge_text(self) -> str:
+        """Formatted local excerpts with stable [K#] citation ids."""
+        if not self.knowledge_summary and not self.knowledge:
+            return ""
+        lines = [self.knowledge_summary or "LOCAL KNOWLEDGE (read-only)"]
+        for hit in self.knowledge:
+            root = f"{hit.root}: " if hit.root else ""
+            lines.extend(
+                [
+                    "",
+                    f"[{hit.id}] {root}{hit.title} "
+                    f"({hit.path}:{hit.line_start}-{hit.line_end})",
+                    hit.text,
+                ]
+            )
+        return "\n".join(lines)
+
+    def display_text(self, *, include_knowledge: bool = True) -> str:
         parts = ["PROJECT CONTEXT", self.project_digest]
         if self.report_text:
             parts.extend(["", "RUN REPORT", self.report_text])
         if self.diagnosis_text:
             parts.extend(["", self.diagnosis_text])
+        if include_knowledge and (self.knowledge_summary or self.knowledge):
+            parts.extend(["", "LOCAL KNOWLEDGE (read-only)", self.knowledge_text()])
         if self.log_excerpt:
             parts.extend(["", "FILTERED SIMULATION LOG", self.log_excerpt])
         if self.script_excerpt:

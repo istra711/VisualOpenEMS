@@ -125,6 +125,7 @@ hiddenimports = [
     "app.ai.diagnosis",
     "app.ai.fixes",
     "app.ai.generation",
+    "app.ai.knowledge",
     "app.ai.preflight",
     "app.ai.project_patch",
     "app.ai.templates",

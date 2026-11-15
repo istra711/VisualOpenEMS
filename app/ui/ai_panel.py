@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 
-from app.ai.types import Diagnosis, FixProposal
+from app.ai.knowledge import bundle_label
+from app.ai.types import Diagnosis, FixProposal, KnowledgeBundle
 
 
 class AiAssistantPanel(QWidget):
@@ -43,6 +44,7 @@ class AiAssistantPanel(QWidget):
         super().__init__(parent)
         self._diagnosis: Diagnosis | None = None
         self._fixes: list[FixProposal] = []
+        self._knowledge: KnowledgeBundle | None = None
         self._busy = False
         self._assistant_open = False
         self._last_answer = ""
@@ -69,12 +71,31 @@ class AiAssistantPanel(QWidget):
         self.lbl_context.setStyleSheet("color: #455a64;")
         root.addWidget(self.lbl_context)
 
+        self.lbl_knowledge = QLabel("Local knowledge: not retrieved yet")
+        self.lbl_knowledge.setWordWrap(True)
+        self.lbl_knowledge.setStyleSheet("color: #37474f;")
+        self.lbl_knowledge.setToolTip(
+            "Read-only excerpts from local OpenEMS/CSXCAD sources and "
+            "VisualopenEMS documentation. They are retrieved only when you send "
+            "a question; nothing is downloaded."
+        )
+        root.addWidget(self.lbl_knowledge)
+
+        preview_row = QHBoxLayout()
         self.btn_sees = QPushButton("What the AI sees…")
         self.btn_sees.setToolTip(
             "Preview the exact redacted prompt before it is sent to the provider"
         )
         self.btn_sees.clicked.connect(self.preview_requested)
-        root.addWidget(self.btn_sees)
+        preview_row.addWidget(self.btn_sees, 1)
+        self.btn_sources = QPushButton("Sources…")
+        self.btn_sources.setToolTip(
+            "Show the local files, line ranges and versions used for the last "
+            "knowledge retrieval"
+        )
+        self.btn_sources.clicked.connect(self.show_sources)
+        preview_row.addWidget(self.btn_sources)
+        root.addLayout(preview_row)
 
         split = QSplitter(Qt.Orientation.Vertical)
         root.addWidget(split, 1)
@@ -197,6 +218,33 @@ class AiAssistantPanel(QWidget):
 
     def set_context(self, text: str) -> None:
         self.lbl_context.setText(text)
+
+    def set_knowledge(self, bundle: KnowledgeBundle | None) -> None:
+        self._knowledge = bundle
+        self.lbl_knowledge.setText(bundle_label(bundle))
+        if bundle is None:
+            self.btn_sources.setToolTip(
+                "No local knowledge retrieval has run yet. Send a question to "
+                "retrieve cited excerpts."
+            )
+        elif not bundle.enabled:
+            self.btn_sources.setToolTip(
+                "Local knowledge is disabled in AI settings."
+            )
+        else:
+            self.btn_sources.setToolTip(
+                f"{len(bundle.hits)} excerpt(s) from {bundle.indexed_files} "
+                "indexed file(s). Click to inspect paths and line ranges."
+            )
+
+    def clear_knowledge(self) -> None:
+        self.set_knowledge(None)
+
+    def knowledge_bundle(self) -> KnowledgeBundle | None:
+        return self._knowledge
+
+    def show_sources(self) -> None:
+        show_knowledge_dialog(self, self._knowledge)
 
     def set_status(self, text: str) -> None:
         self.lbl_status.setText(text)
@@ -323,13 +371,15 @@ class AiAssistantPanel(QWidget):
     def _welcome(self) -> None:
         self.chat_view.setHtml(
             "<p><b>AI Assistant</b></p>"
-            "<p>This assistant reads the project summary and the last run report. "
-            "It can explain failures, rank likely causes and offer a small set of "
-            "validated fixes. It never edits files or starts simulations by "
-            "itself.</p>"
+            "<p>This assistant reads the project summary, the last run report "
+            "and matching excerpts from local OpenEMS/CSXCAD sources and "
+            "VisualopenEMS documentation. It can explain failures, rank likely "
+            "causes and offer a small set of validated fixes. It never edits "
+            "files or starts simulations by itself.</p>"
             "<p>Click <b>Explain last run</b> after a failed simulation, or ask a "
-            "question below. <b>Settings</b> selects OpenCode CLI or offline-only "
-            "mode.</p>"
+            "question below. <b>Sources…</b> shows which local files and line "
+            "ranges were used. <b>Settings</b> selects OpenCode CLI or "
+            "offline-only mode and controls the knowledge index.</p>"
         )
 
     def clear_chat(self) -> None:
@@ -447,6 +497,66 @@ def show_prompt_dialog(parent: QWidget | None, title: str, prompt: str) -> None:
     view.setReadOnly(True)
     view.setPlainText(str(prompt or ""))
     layout.addWidget(view, 1)
+    row = QHBoxLayout()
+    copy = QPushButton("Copy")
+    copy.clicked.connect(
+        lambda: QApplication.clipboard().setText(view.toPlainText())
+    )
+    row.addWidget(copy)
+    row.addStretch(1)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    buttons.rejected.connect(dlg.reject)
+    buttons.accepted.connect(dlg.accept)
+    row.addWidget(buttons)
+    layout.addLayout(row)
+    dlg.exec()
+
+
+def show_knowledge_dialog(
+    parent: QWidget | None, bundle: KnowledgeBundle | None
+) -> None:
+    """Read-only view of the local excerpts and their source locations."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Local knowledge sources")
+    dlg.resize(880, 640)
+    layout = QVBoxLayout(dlg)
+    info = QLabel(
+        "These excerpts come from local openEMS/CSXCAD sources and "
+        "VisualopenEMS documentation. Indexing and retrieval happen on this "
+        "computer; only the excerpts shown here are added to the prompt when "
+        "you send a question. Nothing is downloaded, executed or modified."
+    )
+    info.setWordWrap(True)
+    layout.addWidget(info)
+
+    if bundle is None:
+        text = (
+            "No local knowledge retrieval has run yet.\n\n"
+            "Send a question or click Explain last run. The assistant will then "
+            "show the matching files, line ranges and versions here. Use "
+            "AI → AI settings → Check sources to build the index without "
+            "sending anything."
+        )
+    else:
+        text = bundle.display_text()
+        if not bundle.enabled:
+            text = (
+                bundle.summary
+                + "\n\nEnable local knowledge in AI → AI settings to retrieve "
+                "cited excerpts."
+            )
+        elif not bundle.hits:
+            text += (
+                "\n\nNo excerpt matched the last question. Try a more specific "
+                "technical term (for example PML, NF2FF, AddLumpedPort or "
+                "end_criteria), or add a documentation folder in AI settings."
+            )
+    view = QPlainTextEdit()
+    view.setReadOnly(True)
+    view.setFont(QFont("Consolas", 9))
+    view.setPlainText(text)
+    layout.addWidget(view, 1)
+
     row = QHBoxLayout()
     copy = QPushButton("Copy")
     copy.clicked.connect(

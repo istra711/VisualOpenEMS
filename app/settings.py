@@ -123,6 +123,12 @@ class AppSettings:
     ai_answer_language: str = "auto"
     ai_max_log_lines: int = 160
     ai_include_script: bool = True
+    #: index local openEMS/CSXCAD sources and VisualopenEMS docs (read-only)
+    ai_knowledge_enabled: bool = True
+    #: extra folders/files for the knowledge index (semicolon or newline separated)
+    ai_knowledge_paths: str = ""
+    #: character budget for retrieved knowledge excerpts in one prompt
+    ai_knowledge_max_chars: int = 8000
 
     def port_defaults(self) -> dict:
         """Defaults applied when FreeCAD/export omits port fields."""

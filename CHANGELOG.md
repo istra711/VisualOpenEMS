@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Local OpenEMS/CSXCAD knowledge for the AI assistant**: the AI dock now
+  retrieves cited excerpts from the installed openEMS/CSXCAD packages, openEMS
+  tutorials/docs/include, VisualopenEMS docs/examples/help and easyMesh, plus
+  optional user folders. Indexing and BM25-like ranking run locally; nothing is
+  downloaded or written, and only the selected `[K1]…[Kn]` excerpts are added
+  to the prompt. **Sources…** shows files, line ranges and detected versions.
+  New settings: `ai_knowledge_enabled` (default on), `ai_knowledge_paths` and
+  `ai_knowledge_max_chars` (default 8000). The settings dialog has enable/budget/
+  folder controls and **Check sources** (index sample without sending). Prompt
+  truncation keeps knowledge anchors and the README/help/implementation docs
+  describe the safety and privacy model.
 - **S-parameter reference comparison**: the S-Params viewer can load a second
   Touchstone or `sparams.json` file as a read-only reference. Reference traces
   are dashed overlays, a **Delta** mode plots current minus reference, and the

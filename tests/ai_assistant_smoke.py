@@ -61,6 +61,21 @@ def main() -> int:
     win._last_run_work = tmp
     win._last_run_log_path = log
 
+    knowledge_dir = tmp / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "pml.md").write_text(
+        "# PML boundary\n\n"
+        "Use FDTD.SetBoundaryCond with PML_8 on all six faces. "
+        "AddLumpedPort defines a lumped port for S-parameter extraction.\n",
+        encoding="utf-8",
+    )
+    from app.ai.knowledge import invalidate_knowledge_cache
+
+    win.settings.ai_knowledge_enabled = True
+    win.settings.ai_knowledge_paths = str(knowledge_dir)
+    win.settings.ai_knowledge_max_chars = 3000
+    invalidate_knowledge_cache()
+
     with patch("app.ui.main_window.QMessageBox.warning"), patch(
         "app.ui.main_window.QMessageBox.information"
     ):
@@ -94,6 +109,44 @@ def main() -> int:
         if int(win.project.sim.max_timesteps) != old:
             print("FAIL: undo did not restore the snapshot")
             return 6
+
+        # Local knowledge: retrieval, citation and the Sources label.
+        prompt = win._ai_prompt(
+            "How do I configure a PML boundary and an AddLumpedPort?"
+        )
+        if "[K" not in prompt or "LOCAL KNOWLEDGE" not in prompt:
+            print("FAIL: local knowledge excerpts missing from the prompt")
+            return 9
+        bundle = win._ai_panel.knowledge_bundle()
+        if bundle is None or not bundle.enabled or not bundle.hits:
+            print("FAIL: knowledge bundle was not stored in the panel")
+            return 10
+        if bundle.hits[0].path not in prompt:
+            print("FAIL: cited knowledge path missing from the prompt")
+            return 15
+        if not win._ai_panel.lbl_knowledge.text().startswith("Local knowledge:"):
+            print("FAIL: knowledge status label not updated")
+            return 11
+        if not win._ai_panel.btn_sources.isEnabled():
+            print("FAIL: Sources button is disabled")
+            return 12
+
+        win.settings.ai_knowledge_enabled = False
+        invalidate_knowledge_cache()
+        win._ai_knowledge = None
+        prompt_off = win._ai_prompt("PML boundary")
+        if "Local knowledge is disabled" not in prompt_off:
+            print("FAIL: disabled knowledge note missing from the prompt")
+            return 13
+        disabled_bundle = win._ai_panel.knowledge_bundle()
+        if disabled_bundle is None or disabled_bundle.enabled or disabled_bundle.hits:
+            print("FAIL: disabled knowledge still contributed excerpts")
+            return 16
+        if "off" not in win._ai_panel.lbl_knowledge.text().lower():
+            print("FAIL: disabled knowledge status not shown")
+            return 14
+        win.settings.ai_knowledge_enabled = True
+        invalidate_knowledge_cache()
 
         # End-to-end worker path with a mock backend (no network).
         import time

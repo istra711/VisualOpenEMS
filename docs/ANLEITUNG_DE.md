@@ -575,9 +575,23 @@ und arbeitet in zwei Stufen:
    Tools oder Dateien zu verwenden.
 
 **Was gesendet wird:** Projektübersicht (kein vollständiges JSON), der
-RunReport, gefilterte Logzeilen und optional ein Auszug aus `project_run.py`.
-Über **What the AI sees…** lässt sich der exakte Prompt vor dem Senden anzeigen.
+RunReport, gefilterte Logzeilen, optional ein Auszug aus `project_run.py` und
+die besten passenden lokalen OpenEMS-/CSXCAD-Dokumentationsauszüge. Über
+**What the AI sees…** lässt sich der exakte Prompt vor dem Senden anzeigen.
 Pfade unter dem Benutzerprofil und offensichtliche Tokens werden redigiert.
+
+**Lokales Wissen (read-only):** standardmäßig aktiv. Der Assistent indiziert
+eine fokussierte Auswahl lokaler Textdateien – die installierten
+openEMS-/CSXCAD-Python-Pakete, openEMS-Tutorials/Doku/include,
+VisualopenEMS-Doku/Beispiele/Hilfe, easyMesh und optionale Zusatzordner.
+Indizierung und Ranking laufen auf diesem Rechner; nichts wird heruntergeladen
+oder geschrieben, keine Quelldatei wird ausgeführt. Das Modell erhält nur die
+ausgewählten Auszüge, gekennzeichnet als `[K1]`, `[K2]`, …; **Sources…** zeigt
+Pfade, Zeilenbereiche und erkannte Versionen. In **AI → AI settings…** lässt
+sich das Wissen abschalten, das Zeichenbudget (Default 8000) setzen und
+Zusatzordner ergänzen; **Check sources** baut einen Beispielindex, ohne etwas zu
+senden. Der Index liegt im Speicher und wird nach Einstellungsänderungen oder
+etwa zwei Minuten neu aufgebaut.
 
 **Sichere Fixes:** Der Assistent darf nur wenige, klar begrenzte Felder
 ändern – u. a. `sim.max_timesteps`, `sim.end_criteria`, NF2FF-Schalter,
@@ -589,9 +603,12 @@ change** stellt den Snapshot vor der letzten Änderung wieder her.
 
 **Grenzen:** Der Assistent sieht keine CAD-Solids und kann keine Physik
 erfinden. Er ist eine priorisierte Checkliste, kein Ersatz für RunReport und
-Solver-Log. Bei fehlendem OpenCode, fehlender Anmeldung oder Timeout bleibt die
-deterministische Diagnose verfügbar. Einstellungen: **AI → AI settings…**
-(Provider, Modell, Timeout, Logzeilen, Sprache, Skript-Auszug).
+Solver-Log. Lokales Wissen ist lexikalisch, nicht semantisch; konkrete Begriffe
+wie `PML`, `NF2FF`, `AddLumpedPort` oder `end_criteria` liefern die besten
+Treffer. PDF/DOCX/Bilder werden nicht indiziert. Bei fehlendem OpenCode,
+fehlender Anmeldung oder Timeout bleibt die deterministische Diagnose verfügbar.
+Einstellungen: **AI → AI settings…** (Provider, Modell, Timeout, Logzeilen,
+Sprache, Skript-Auszug, lokales Wissen, Budget, Zusatzordner).
 
 ### 5.10 Projektgenerierung und KI-Projektänderungen
 
@@ -671,6 +688,8 @@ Die ausführliche Implementierungsdokumentation steht in
 
 * Architektur und Datenfluss von Diagnose, OpenCode-Backend, Prompt-Aufbau,
   sicheren Fixes, Vorlagen, strukturierten Patches und Preflight.
+* der lokale Read-only-Wissensindex: Wurzeln, Scan-Limits, Chunking, Ranking,
+  Cache, Zitate und Einstellungen.
 * Modulübersicht unter `app/ai/` und `app/ui/`.
 * OpenCode-Kommando, JSONL-Events, Sessions und Windows-`.cmd`-Auflösung.
 * Kontextgrenzen, Redaktion und was das Programm tatsächlich verlässt.

@@ -560,9 +560,21 @@ two layers:
    a neutral temporary directory and is told not to use tools or files.
 
 **What is sent:** project digest (not the full JSON), the run report, filtered
-log lines and optionally an excerpt of `project_run.py`. **What the AI sees…**
-shows the exact prompt before sending. Paths below the user profile and obvious
-tokens are redacted.
+log lines, optionally an excerpt of `project_run.py`, and the best-matching
+local OpenEMS/CSXCAD documentation excerpts. **What the AI sees…** shows the
+exact prompt before sending. Paths below the user profile and obvious tokens
+are redacted.
+
+**Local knowledge (read-only):** enabled by default, the assistant indexes a
+focused set of local text files — the installed openEMS/CSXCAD Python packages,
+openEMS tutorials/docs/include, VisualopenEMS docs/examples/help, easyMesh and
+optional extra folders. Indexing and ranking happen on this computer; nothing
+is downloaded or written, and no source file is executed. The model receives
+only the selected excerpts, labelled `[K1]`, `[K2]`, …; **Sources…** shows the
+paths, line ranges and detected versions. In **AI → AI settings…** you can
+switch it off, set the character budget (default 8000) and add folders;
+**Check sources** builds a sample index without sending anything. The index is
+cached in memory and rebuilt after settings changes or about two minutes.
 
 **Safe fixes:** the assistant may change only a small allow-list — including
 `sim.max_timesteps`, `sim.end_criteria`, NF2FF switches, mesh preset/cell sizes,
@@ -574,9 +586,11 @@ the last applied fix.
 
 **Limits:** the assistant cannot see CAD solids and cannot invent physics. Treat
 it as a ranked checklist, not as a replacement for the run report or solver log.
+Local knowledge is lexical, not semantic; use concrete terms such as `PML`,
+`NF2FF`, `AddLumpedPort` or `end_criteria`. PDF/DOCX/images are not indexed.
 If OpenCode is missing, not logged in, or times out, the deterministic diagnosis
 remains available. Settings: **AI → AI settings…** (provider, model, timeout,
-log lines, language, script excerpt).
+log lines, language, script excerpt, local knowledge, budget, extra folders).
 
 ### 5.10 Project generation and AI project edits
 
@@ -653,6 +667,8 @@ The detailed implementation documentation is
 
 * architecture and data flow of diagnosis, the OpenCode backend, prompt
   construction, safe fixes, templates, structured patches and preflight;
+* the read-only local knowledge index: roots, scan limits, chunking, ranking,
+  cache, citations and settings;
 * the module map under `app/ai/` and `app/ui/`;
 * the OpenCode command, JSONL events, sessions and the Windows `.cmd`
   resolution;

@@ -162,6 +162,7 @@ class MainWindow(QMainWindow):
         self._ai_session_id = ""
         self._ai_worker = None
         self._ai_last_prompt = ""
+        self._ai_knowledge = None
         self._ai_undo: tuple[Project, list[dict]] | None = None
         self._ai_panel = None
         self._ai_dock = None
@@ -1414,6 +1415,7 @@ class MainWindow(QMainWindow):
         self._last_run_message = ""
         self._ai_session_id = ""
         self._ai_last_prompt = ""
+        self._ai_knowledge = None
         self._ai_undo = None
         if getattr(self, "act_ai_undo", None) is not None:
             self.act_ai_undo.setEnabled(False)
@@ -1422,6 +1424,7 @@ class MainWindow(QMainWindow):
             panel.set_undo_enabled(False)
             panel.clear_diagnosis()
             panel.clear_chat()
+            panel.clear_knowledge()
         self._refresh_ai_context()
 
     def _build_menu(self) -> None:
@@ -1989,6 +1992,13 @@ class MainWindow(QMainWindow):
         )
         self.act_ai_undo.setEnabled(False)
         amenu.addSeparator()
+        add_action(
+            amenu,
+            "Local knowledge sources\u2026",
+            slot=self._on_ai_sources,
+            tip="Inspect the local OpenEMS/CSXCAD documentation excerpts and "
+            "line ranges used for the last answer; read-only, no network",
+        )
         add_action(
             amenu,
             "AI settings\u2026",
@@ -10082,6 +10092,12 @@ class MainWindow(QMainWindow):
     def _on_ai_help(self) -> None:
         show_tab_help(self, "AI Assistant")
 
+    def _on_ai_sources(self) -> None:
+        self._show_ai_panel()
+        panel = getattr(self, "_ai_panel", None)
+        if panel is not None:
+            panel.show_sources()
+
     def _on_ai_clear(self) -> None:
         self._ai_session_id = ""
         self._ai_last_prompt = ""
@@ -10093,16 +10109,23 @@ class MainWindow(QMainWindow):
             )
 
     def _on_ai_settings(self) -> None:
+        from app.ai.knowledge import invalidate_knowledge_cache
         from app.ui.ai_settings_dialog import AiSettingsDialog
 
         dlg = AiSettingsDialog(self.settings, self)
         if dlg.exec():
+            invalidate_knowledge_cache()
+            self._ai_knowledge = None
+            panel = getattr(self, "_ai_panel", None)
+            if panel is not None:
+                panel.clear_knowledge()
             self._refresh_ai_status()
             self._refresh_ai_context()
             self._log(
                 "AI settings saved: provider="
                 f"{self.settings.ai_provider}, model="
-                f"{self.settings.ai_model or 'default'}"
+                f"{self.settings.ai_model or 'default'}, local knowledge="
+                f"{'on' if self.settings.ai_knowledge_enabled else 'off'}"
             )
 
     def _confirm_replace_project(self, title: str, text: str) -> bool:
@@ -10261,11 +10284,43 @@ class MainWindow(QMainWindow):
         note = str(getattr(self, "_last_run_message", "") or "")
         return diagnose_run(self.project, self._last_run_report, note=note)
 
-    def _ai_context(self, diagnosis):
+    def _ai_knowledge_for(self, question: str, diagnosis):
+        """Retrieve local excerpts and show their status in the panel."""
+        from app.ai.knowledge import build_knowledge_bundle
+
+        panel = getattr(self, "_ai_panel", None)
+        query_parts = [str(question or "")]
+        if diagnosis is not None:
+            query_parts.append(str(getattr(diagnosis, "headline", "") or ""))
+            for issue in list(getattr(diagnosis, "issues", []) or [])[:6]:
+                query_parts.append(str(getattr(issue, "title", "") or ""))
+                query_parts.append(str(getattr(issue, "detail", "") or ""))
+                query_parts.extend(
+                    str(item) for item in list(getattr(issue, "evidence", []) or [])[:3]
+                )
+        try:
+            bundle = build_knowledge_bundle(
+                "\n".join(part for part in query_parts if part),
+                self.settings,
+            )
+        except Exception as exc:  # noqa: BLE001 - retrieval must not break a request
+            bundle = None
+            self._log(f"Local knowledge retrieval failed: {exc}")
+        self._ai_knowledge = bundle
+        if panel is not None:
+            panel.set_knowledge(bundle)
+        return bundle
+
+    def _ai_context(self, diagnosis, question: str = ""):
         from app.ai.context import build_run_context
 
         work = getattr(self, "_last_run_work", None)
         script = Path(work) / "project_run.py" if work else None
+        knowledge = (
+            self._ai_knowledge_for(question, diagnosis)
+            if question
+            else getattr(self, "_ai_knowledge", None)
+        )
         return build_run_context(
             self.project,
             self.primitives,
@@ -10273,6 +10328,7 @@ class MainWindow(QMainWindow):
             diagnosis,
             log_path=getattr(self, "_last_run_log_path", None),
             script_path=script,
+            knowledge=knowledge,
             include_script=bool(
                 getattr(self.settings, "ai_include_script", True)
             ),
@@ -10286,7 +10342,7 @@ class MainWindow(QMainWindow):
 
         if diagnosis is None:
             diagnosis = self._ai_diagnosis()
-        context = self._ai_context(diagnosis)
+        context = self._ai_context(diagnosis, question=question)
         return build_prompt(
             question,
             context,

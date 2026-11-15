@@ -181,6 +181,13 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   passivity, port and NF2FF settings, timestep budget and target-frequency
   checks. An optional explanation uses the local **OpenCode CLI** and its
   existing login/subscription; no API key is stored.
+- **Local OpenEMS/CSXCAD knowledge** — the assistant retrieves cited excerpts
+  from the installed openEMS/CSXCAD packages, openEMS tutorials/docs/include,
+  VisualopenEMS docs/examples/help and easyMesh. Indexing and ranking run
+  locally; only the selected `[K1]…[Kn]` excerpts are added to the prompt.
+  **Sources…** shows the exact files, line ranges and versions. Extra folders
+  and the character budget are configurable; **Check sources** builds a sample
+  index without sending anything.
 - **Review-first fixes** — only a small allow-list of solver, mesh and port
   fields can be changed. Every proposal shows an exact field diff, is validated
   on a deep copy (JSON round-trip plus variable/port resolution) and is applied
@@ -197,10 +204,10 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - **Structural preflight** — checks JSON round-trip, expressions, names, domain
   bounds, ports, mesh/solver settings, boundaries and NF2FF before a generated
   project or patch can be applied.
-- **Offline by default** — diagnosis, fixes, templates, patch validation and
-  preflight work without OpenCode. Data is sent only when you press **Explain
-  last run**, **Send**, **AI suggest** or **Ask AI for proposal**; **What AI
-  sees…** shows the exact redacted prompt.
+- **Offline by default** — diagnosis, fixes, templates, patch validation,
+  preflight and local knowledge retrieval work without OpenCode. Data is sent
+  only when you press **Explain last run**, **Send**, **AI suggest** or **Ask AI
+  for proposal**; **What AI sees…** shows the exact redacted prompt.
 
 ---
 
@@ -318,6 +325,7 @@ VisualopenEMS/
 │   │   ├── diagnosis.py           # Deterministic run-report diagnosis
 │   │   ├── fixes.py               # Allow-list, validation, safe apply
 │   │   ├── context.py             # Project digest, log/script excerpts, redaction
+│   │   ├── knowledge.py           # Read-only local OpenEMS/CSXCAD knowledge index
 │   │   ├── backend.py             # AiBackend, OpenCode CLI adapter, MockBackend
 │   │   ├── worker.py              # QThread with streaming and cancellation
 │   │   ├── templates.py           # Seven validated project templates
@@ -441,10 +449,11 @@ python tests\verify_imports.py
 
 ### 6. Optional: install OpenCode for AI features
 
-The deterministic AI diagnosis, safe fixes, templates, patch validation and
-preflight work without any provider. For natural-language explanations and AI
-proposals, install the [OpenCode CLI](https://opencode.ai) using its official
-instructions and sign in once. Check that the command resolves:
+The deterministic AI diagnosis, safe fixes, templates, patch validation,
+preflight and local knowledge retrieval work without any provider. For
+natural-language explanations and AI proposals, install the
+[OpenCode CLI](https://opencode.ai) using its official instructions and sign in
+once. Check that the command resolves:
 
 ```powershell
 opencode --version
@@ -617,11 +626,15 @@ an EM simulation.
   Bearer/API-key values are redacted. **What AI sees…** shows the exact prompt
   before sending. Absolute paths outside the profile, hostnames, material names
   or comments may still be visible.
+- **Local knowledge stays local.** The knowledge index scans a focused set of
+  text files and ranks them in memory. It does not download anything, does not
+  execute source files and does not write an index. Only the selected excerpts
+  are inserted into the prompt; **Sources…** shows their paths and line ranges.
 - **Neutral process.** OpenCode runs in a temporary directory with stdin
   disabled, hidden console and a timeout, using its own login/subscription.
   VisualopenEMS stores no API key.
 - **Offline mode.** Without OpenCode, diagnosis, safe fixes, templates, patch
-  validation and preflight remain fully available.
+  validation, preflight and local knowledge retrieval remain fully available.
 
 OpenCode's own permissions and sandbox are outside VisualopenEMS's control.
 For sensitive environments use offline mode, restrict the OpenCode

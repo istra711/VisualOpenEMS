@@ -10,6 +10,8 @@ from app.ai.types import (
     DiagnosisIssue,
     FixChange,
     FixProposal,
+    KnowledgeBundle,
+    KnowledgeHit,
     RunContext,
 )
 
@@ -18,5 +20,7 @@ __all__ = [
     "DiagnosisIssue",
     "FixChange",
     "FixProposal",
+    "KnowledgeBundle",
+    "KnowledgeHit",
     "RunContext",
 ]

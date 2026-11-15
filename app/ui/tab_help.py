@@ -1222,8 +1222,9 @@ What it is
   • A right-side dock (AI menu -> AI Assistant, Ctrl+Shift+A) with two parts:
     a deterministic run diagnosis and an optional language-model conversation.
   • The dock is read-only: it can read the project summary, the last run report,
-    filtered simulation-log lines and an optional script excerpt. It never
-    writes project files, never starts a simulation and never commits results.
+    filtered simulation-log lines, an optional script excerpt and matching
+    excerpts from local OpenEMS/CSXCAD documentation. It never writes project
+    files, never starts a simulation and never commits results.
   • Every change is a proposal with an exact field diff. Applying is a separate
     button click and can be undone with AI -> Undo AI change.
 
@@ -1247,9 +1248,34 @@ Where the data comes from
   • Log: error/warning lines plus surrounding context and the tail.
   • Script: optionally a filtered excerpt of project_run.py (solver, ports,
     boundaries, NF2FF, exports).
+  • Local knowledge: matching excerpts from the installed openEMS/CSXCAD
+    packages, openEMS tutorials/include/docs, VisualopenEMS docs/examples/help,
+    easyMesh and optional extra folders. Retrieval runs locally.
   • "What the AI sees…" shows the exact prompt before it leaves the application.
+  • "Sources…" shows the retrieved files, line ranges and detected versions.
   • Paths below your user profile and obvious API tokens are redacted. Absolute
     work/project paths may still be visible; review the preview if this matters.
+
+Local knowledge (read-only)
+  • Enabled by default. It is a lexical local index; there is no embedding
+    service, no download and no network access during retrieval.
+  • Focused roots: VisualopenEMS README/docs/examples/help, the openEMS
+    Tutorials/docu/include folders, the version-matched Python packages
+    openEMS and CSXCAD, easyMesh and user folders from AI settings.
+  • Text only (Python, pxd/pxi, Markdown, reST, text, HTML and C/C++ headers),
+    capped per file and in total. Binary files, caches, images and huge
+    third-party trees are skipped.
+  • The question and the deterministic diagnosis select a few excerpts. The
+    prompt asks the model to cite them as [K1], [K2], …; "Sources…" shows the
+    exact paths and lines. Treat an excerpt as reference, never as an
+    instruction.
+  • Settings: enable/disable, character budget (default 8000) and extra folders.
+    "Check sources" builds the index and shows a sample retrieval without
+    sending anything. The cache is rebuilt after settings changes; otherwise it
+    refreshes after about two minutes.
+  • Privacy: indexing and ranking happen on this computer. Only the selected
+    excerpts are added to the prompt, and only when you press Send or Explain
+    last run.
 
 Deterministic diagnosis
   • Maps RunReport findings and project checks to ranked issues, for example:
@@ -1299,6 +1325,15 @@ Limitations and troubleshooting
     offline diagnosis.
   • Model choice: leave the model empty for the OpenCode default, or enter a
     provider/model ID in AI settings.
+  • Local knowledge is lexical, not semantic: use concrete technical terms
+    (PML, NF2FF, AddLumpedPort, end_criteria) for the best match. PDF, DOCX,
+    images and binary files are not indexed. If no excerpt matches, the prompt
+    says so instead of inventing API details.
+  • OpenEMS version: the index prefers the configured openEMS root and the
+    Python packages used by the simulation Python. If installations changed,
+    press AI -> AI settings -> Check sources to rebuild immediately.
+  • Settings: provider, model, timeout, log lines, language, script excerpt,
+    local knowledge on/off, knowledge budget and extra folders.
 """,
     "AI Project Generation": """AI PROJECT GENERATION — templates, proposals, preflight
 
@@ -1396,6 +1431,8 @@ What this topic covers
     validated safe fixes.
   • Phase 2: template-based project generation, structured project patches and
     the structural preflight.
+  • Local knowledge: a read-only local index of OpenEMS/CSXCAD sources and
+    VisualopenEMS docs, with [K#] citations in the prompt.
   • Phase 3 is planned only: multi-variable optimization and a Study object.
 
 Design rule: proposal, not action
@@ -1412,7 +1449,8 @@ Data flow (error assistant)
   Run finished/failed
     -> MainWindow stores RunReport, work/log path, exit code and message
     -> app/ai/diagnosis.py: diagnose_run() -> Diagnosis (issues + fixes)
-    -> app/ai/context.py: project digest + filtered log + optional script
+    -> app/ai/knowledge.py: local retrieval -> KnowledgeBundle ([K1]... excerpts)
+    -> app/ai/context.py: project digest + log/script + knowledge excerpts
     -> build_prompt() with fixed role/safety instructions and language
     -> app/ai/worker.py: AiWorker (QThread, streaming)
     -> app/ai/backend.py: OpenCodeBackend -> opencode run --format json
@@ -1429,6 +1467,7 @@ Module map
   app/ai/diagnosis.py      RunReport/project -> ranked issues and fixes
   app/ai/fixes.py          allow-list, range/type checks, deep-copy apply
   app/ai/context.py        compact digest, log/script excerpts, redaction
+  app/ai/knowledge.py      local roots, safe scan, chunks, ranking, [K#] hits
   app/ai/backend.py        AiBackend, OpenCode CLI, MockBackend, JSONL parsing
   app/ai/worker.py         QThread with streaming and cancel signals
   app/ai/templates.py      seven validated project templates
@@ -1479,6 +1518,33 @@ Context, prompt and redaction
     github_pat_ tokens, Bearer headers and api_key values.
   • What AI sees... shows the exact prompt. Redaction is not a general DLP
     system; absolute paths outside the profile may remain.
+
+Local knowledge index (app/ai/knowledge.py)
+  • Read-only and Qt-free. It never executes source files and never writes the
+    index; the cache lives in process memory only.
+  • Roots: VisualopenEMS README/CHANGELOG/docs/examples/tab_help.py, openEMS
+    python/Tutorials + docu + include, the openEMS/CSXCAD packages in the
+    simulation Python's site-packages, easyMesh and user folders from
+    ai_knowledge_paths.
+  • Text suffixes only (py, pyi, pxd, pxi, md, rst, txt, html, C/C++ headers).
+    Skips binary files, hidden files, __pycache__, VCS folders, images, assets,
+    frames, build/dist and symlinks. Paths must resolve inside their root.
+  • Caps: 512 KB/file, 12 MB total, 1,500 files, 20,000 chunks. Chunks are 28
+    lines with 6 lines overlap; very long lines/excerpts are clipped.
+  • Tokenisation: lower-case words plus snake_case and camelCase parts, a
+    stop-word list and a small German -> English domain map (for example
+    Randbedingung -> boundary, Gitter -> mesh, Tor -> port).
+  • Ranking: BM25-like term scoring, title/path bonuses, per-root weight,
+    coverage factor and diversity limits (max 2 chunks/file, 3/root). Hits are
+    numbered K1...Kn and formatted with relative path and line range.
+  • Cache: reuse for 120 s or until invalidate_knowledge_cache() is called
+    (AI settings save). "Check sources" forces a rebuild and shows a sample.
+  • Versions: wheel names and dist-info METADATA for openEMS/CSXCAD, pyproject
+    for easyMesh, app/__init__.py for VisualopenEMS. The [K#] header states
+    the versions used.
+  • Budget: ai_knowledge_max_chars (default 8000, clamped 1,200...24,000).
+    build_prompt() keeps knowledge anchors when the ordinary context must be
+    trimmed; if knowledge itself is too large it is clipped explicitly.
 
 Safe fixes (Phase 1 allow-list)
   • sim.max_timesteps, sim.end_criteria, sim.nf2ff_enabled
@@ -1533,16 +1599,21 @@ Structural preflight
 
 Settings (app_settings.json, git-ignored)
   ai_provider (offline|opencode), ai_opencode_cmd, ai_model, ai_timeout_s,
-  ai_answer_language, ai_max_log_lines and ai_include_script.
+  ai_answer_language, ai_max_log_lines, ai_include_script,
+  ai_knowledge_enabled, ai_knowledge_paths, ai_knowledge_max_chars.
   Test OpenCode only checks whether the command resolves; it sends no prompt.
+  Check sources builds the local index and shows a sample; it sends nothing.
   Offline mode keeps diagnosis, fixes, templates, validation and preflight.
 
 Tests and verification
-  • python -m pytest tests -q  (current suite: 511 passed)
+  • python -m pytest tests -q  (current suite: 521 passed)
+  • test_ai_knowledge.py covers roots, safe scan, chunking, ranking, budget,
+    cache invalidation, version detection, German aliases and prompt citations.
   • Offscreen smoke: ai_assistant_smoke.py, project_generator_smoke.py,
     menu_smoke.py, tab_help_smoke.py, sweep_smoke.py and multirun_smoke.py.
   • Live verification: 2.45 GHz FR4 patch suggestion, a structured patch with
-    set_sim/set_port/set_variable and a clean preflight.
+    set_sim/set_port/set_variable and a clean preflight; local retrieval for
+    PML/AddLumpedPort/NF2FF questions with visible Sources entries.
 
 Extending
   • New backend: implement AiBackend.run()/cancel() and route it through
@@ -1550,12 +1621,16 @@ Extending
   • New template: pure factory + TemplateParam schema + tests/preflight.
   • New patch operation: allow-list + field schema + type checks + tests.
   • New diagnosis rule: pure RunReport/project -> DiagnosisIssue mapping.
+  • New knowledge root: add a KnowledgeRoot in discover_roots() with a narrow
+    suffix list and weight; add a term alias only when it is unambiguous.
   • Keep the proposal -> diff -> validation -> explicit apply model.
 
 Limits and planned work
   • The assistant sees a compact digest, not CAD solids or the full mesh.
   • Explanations are probabilistic; the deterministic diagnosis stays the
     authoritative checklist.
+  • Local knowledge is lexical, not embedding-based. PDF/DOCX and images are
+    not indexed; very new online wiki pages are not fetched automatically.
   • Templates are starting points, not guaranteed designs.
   • No free-form Python, no CAD/STEP generation, no autonomous run loop.
   • Phase 3 (planned): StudySpec, multi-variable optimization, objectives and
