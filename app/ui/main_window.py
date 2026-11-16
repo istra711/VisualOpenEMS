@@ -422,22 +422,60 @@ class MainWindow(QMainWindow):
         staged = self._staged_run_dir
         if staged is None or not Path(staged).is_dir():
             return True
-        reply = QMessageBox.warning(
-            self,
-            "Uncommitted staged results",
-            f"Results are still staged and not part of the project:\n\n{staged}\n\n"
-            "Yes: keep them for recovery\n"
-            "No: discard them\n"
-            "Cancel: keep the window open",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Yes,
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Uncommitted staged results")
+        box.setText(
+            "Simulation results are still staged and are not part of the saved "
+            "project. Saving the project definition does not commit them."
         )
-        if reply == QMessageBox.StandardButton.Cancel:
+        box.setInformativeText(
+            f"{staged}\n\n"
+            "Commit publishes the run as an immutable result and makes it the "
+            "active result. Keep staged leaves the files on disk for later. "
+            "Discard deletes only the staging folder."
+        )
+        commit_btn = box.addButton(
+            "Commit and close", QMessageBox.ButtonRole.AcceptRole
+        )
+        keep_btn = box.addButton(
+            "Keep staged and close", QMessageBox.ButtonRole.ActionRole
+        )
+        discard_btn = box.addButton(
+            "Discard and close", QMessageBox.ButtonRole.DestructiveRole
+        )
+        cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+        can_commit = (
+            self._current_file_path is not None and not self.runner.is_running()
+        )
+        commit_btn.setEnabled(can_commit)
+        if can_commit and self._staged_run_status != "failed":
+            box.setDefaultButton(commit_btn)
+        else:
+            box.setDefaultButton(keep_btn)
+        box.setEscapeButton(cancel_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel_btn:
             return False
-        if reply == QMessageBox.StandardButton.No:
+        if clicked is discard_btn:
             self._discard_staged_run(reason="discarded while closing")
+            return True
+        if clicked is commit_btn:
+            if self._staged_run_status == "failed":
+                reply = QMessageBox.question(
+                    self,
+                    "Commit failed run?",
+                    "The staged run is marked as failed/aborted.\n\n"
+                    "Commit it anyway for later inspection?",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return False
+            return self._commit_staged_run() is not None
+        # Keep staged and close.
         return True
 
     def closeEvent(self, event) -> None:  # noqa: N802
@@ -5739,6 +5777,54 @@ class MainWindow(QMainWindow):
         self._allow_auto_results = True
         self._allow_auto_nf2ff = True
 
+    def _offer_commit_staged_after_save(self) -> bool:
+        """Ask whether a staged run should be published right after Save.
+
+        Returns True when no staged run remains (committed, discarded or none).
+        A successful run defaults to Commit; a failed run defaults to Keep.
+        """
+        staged = self._staged_run_dir
+        if staged is None or not Path(staged).is_dir():
+            return True
+        if self.runner.is_running():
+            self._log(
+                "Staged results are still being written; not offering a commit "
+                "during the active run."
+            )
+            return False
+        failed = self._staged_run_status == "failed"
+        if failed:
+            text = (
+                "The project file is saved. The staged run is marked as failed "
+                "or aborted and is not part of the project yet.\n\n"
+                "Commit it anyway for later inspection?"
+            )
+            default = QMessageBox.StandardButton.No
+        else:
+            text = (
+                "The project file is saved. The successful simulation result is "
+                "still staged and is not part of the saved project yet.\n\n"
+                "Commit it now as an immutable run and make it the active "
+                "result? If you choose No, the files stay in the staging folder "
+                "and you can commit them later via Simulation."
+            )
+            default = QMessageBox.StandardButton.Yes
+        reply = QMessageBox.question(
+            self,
+            "Commit staged results?",
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            default,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            self._log(
+                "Staged results were not committed — use Simulation → "
+                "Commit staged results when they are ready."
+            )
+            return False
+        run = self._commit_staged_run()
+        return run is not None
+
     def _on_save(self) -> None:
         self._sync_project_from_form()
         self.project.primitives = list(self.primitives)
@@ -5748,12 +5834,9 @@ class MainWindow(QMainWindow):
             self._update_window_title()
             self._mark_project_saved()
             self._log(f"Saved {saved}")
-            if self._staged_run_dir is not None:
-                self._log(
-                    "Staged results were not committed — use Simulation → "
-                    "Commit staged results when they are ready."
-                )
             self._update_run_actions()
+            if self._staged_run_dir is not None and not self.runner.is_running():
+                self._offer_commit_staged_after_save()
             return
         # No known file yet — behave like Save As
         self._on_save_as()

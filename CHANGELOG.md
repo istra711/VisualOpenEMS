@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also usable; invalid files are marked with a warning. The help topic
   **Project Templates**, README and implementation tests were added.
 
+### Changed
+
+- **Save vs. staged simulation results**: **File → Save** now explicitly asks
+  whether to commit a staged run after saving the project definition. A
+  successful run defaults to **Commit**, a failed/aborted run defaults to
+  **Keep staged**. The close dialog now offers **Commit and close**, **Keep
+  staged and close**, **Discard and close** and **Cancel**, and states that
+  saving the project alone does not publish results. This removes the
+  misleading "results are still staged" warning after a normal Save without
+  silently committing a run.
+
 ### Fixed
 
 - **Stale result viewers after loading a preset**: presets now use the same

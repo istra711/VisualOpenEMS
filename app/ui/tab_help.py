@@ -503,6 +503,9 @@ Run All Ports (Simulation menu → Ctrl+Shift+R)
     staging/run-…/sparams/sparams.json + .sNp. Needs ≥ 2 ports (fewer falls
     back to a normal single run).
   • Staged results are not part of the project until "Commit staged results".
+  • File → Save writes the project definition. If a staged run exists, Save
+    asks whether to commit it: Yes publishes it as an immutable run, No keeps
+    it in the staging folder. Save never silently commits or discards a run.
 
 Results: staging, commit, history
   • Simulation → Commit staged results publishes the staged run under
@@ -510,6 +513,9 @@ Results: staging, commit, history
   • Simulation → Discard staged results deletes only the staging folder.
   • Simulation → Run history lists committed runs, opens their folders and
     switches the active result set without deleting older runs.
+  • Closing with staged results offers Commit and close / Keep staged and
+    close / Discard and close / Cancel; a failed run needs a second
+    confirmation before it is committed.
   • Save As creates a new project: staged results are copied into the new
     project, the old project file/data folder stay untouched.
   • The project JSON is written only by Save / Commit (plus explicit dialogs),

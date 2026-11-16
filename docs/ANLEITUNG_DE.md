@@ -757,6 +757,10 @@ und NF2FF) ist geplant, aber nicht implementiert.
 3. **Simulation → Commit staged results**
    - Übernimmt den gestagten Lauf nach `work\<Projektname>\runs\<run-id>\` und
      macht ihn zum aktiven Ergebnis. Ältere Runs bleiben erhalten.
+   - **File → Save** speichert die Projektdefinition; ist ein Lauf gestagt,
+     fragt Save, ob er committet werden soll. **Yes** veröffentlicht ihn,
+     **No** lässt ihn im Staging-Ordner. Beim Schließen stehen
+     Commit/Keep/Discard/Cancel zur Wahl.
    - **Discard staged results** löscht nur den Staging-Ordner.
    - **Run history…** listet committete Runs und schaltet den aktiven Run um.
 4. **Script…** (Simulation-Menü) — `project_run.py` ansehen und bearbeiten

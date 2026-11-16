@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 APP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP_ROOT))
 
-from PySide6.QtWidgets import QApplication, QFileDialog  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox  # noqa: E402
 
 from app.models.project import Project  # noqa: E402
 from app.postproc.sparams import export_sparams  # noqa: E402
@@ -70,11 +70,56 @@ def main() -> int:
     active2 = (win.project.results or {}).get("active_run")
     assert active2 and active2 != active1
 
+    # Save with a staged run: explicit question; Yes commits it.
+    staging_save = win._fresh_staged_run()
+    _write_run_outputs(staging_save, 0.25)
+    win._staged_run_status = "complete"
+    with patch(
+        "app.ui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        win._on_save()
+    assert win._staged_run_dir is None, "Save did not commit the staged run"
+    active_save = (win.project.results or {}).get("active_run")
+    assert active_save and active_save not in (active1, active2)
+    assert Path(active_save).is_dir() and (Path(active_save) / "manifest.json").is_file()
+    saved_json = json.loads(project_path.read_text(encoding="utf-8"))
+    assert (saved_json.get("results") or {}).get("active_run"), (
+        "Save/commit did not persist the active result"
+    )
+    print("  Save -> commit staged results OK")
+
+    # No keeps the staging folder for a later explicit commit.
+    staging_keep = win._fresh_staged_run()
+    _write_run_outputs(staging_keep, 0.26)
+    win._staged_run_status = "complete"
+    with patch(
+        "app.ui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    ):
+        win._on_save()
+    assert win._staged_run_dir == staging_keep and staging_keep.is_dir(), (
+        "Save with No must keep the staged run"
+    )
+    win._discard_staged_run(reason="test cleanup")
+    print("  Save -> keep staged OK")
+
+    # Close dialog constructs and offers the keep path without a modal.
+    staging_close = win._fresh_staged_run()
+    win._staged_run_status = "complete"
+    with patch("app.ui.main_window.QMessageBox.exec", return_value=0), patch(
+        "app.ui.main_window.QMessageBox.clickedButton", return_value=None
+    ):
+        assert win._confirm_close_staged_results() is True
+    win._discard_staged_run(reason="test cleanup")
+    print("  close dialog with staged results OK")
+
     # Re-opening the project restores exactly the committed active run.
     win2 = MainWindow(settings)
     win2._open_project_path(project_path)
     app.processEvents()
-    assert win2._active_run_dir() == run2, win2._active_run_dir()
+    assert win2._active_run_dir() == Path(active_save), win2._active_run_dir()
+    assert run2.is_dir(), "older committed run disappeared after Save"
     assert win2.sparam_viewer.network is not None, "reopened S-params missing"
     win2.close()
 
