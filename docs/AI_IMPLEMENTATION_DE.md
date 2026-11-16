@@ -890,7 +890,7 @@ Relevante Dateien:
   Zeichenbudget, deaktivierter Modus, Cache-Invalidierung, Versionserkennung,
   deutsche Domain-Aliase, Prompt-Zitate und Kürzung.
 
-Aktuelles Ergebnis: **521 passed**.
+Aktuelles Ergebnis: **531 passed**.
 
 ### GUI-Smoke-Tests (offscreen)
 

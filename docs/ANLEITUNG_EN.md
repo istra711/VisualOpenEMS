@@ -659,7 +659,32 @@ shell or solver actions.
 and matching must be verified with the mesh and a real simulation. Phase 2 does
 not include arbitrary CAD/STEP generation or multi-variable optimisation.
 
-### 5.11 AI implementation (reference)
+### 5.11 User project templates
+
+**Save:** **Presets → Save current project as template…** stores the current
+geometry, materials, variables, ports, dumps, display options and mesh/solver
+settings as a reusable `.fcsim.json` file. Give it a name and an optional
+description. Simulation results, markers and the S-parameter reference are not
+included.
+
+**Create:** **Presets → New project from template…** lists all templates with
+description, creation date, contents and a preview. **New project** (or a
+double-click) creates a fresh **unsaved** project with a new project id; use
+**File → Save As** afterwards. If the current project has unsaved changes,
+VisualopenEMS asks before replacing the editor content.
+
+**Folder:** the default is a `templates` folder next to `app_settings.json`
+(next to the EXE in the packaged build). The manager offers **Change folder…**
+and **Open folder**. Any normal `.fcsim.json` copied into that folder is also
+listed; invalid files are marked with a warning and can be deleted. Delete
+removes only the template file, never project data or committed runs.
+
+**Notes:** CAD/STEP/STL references are stored relative to the template folder;
+moving a template alone can break external file references. A template is a
+starting point — adapt frequency/substrate/dimensions, rebuild the mesh and
+rerun before trusting the result.
+
+### 5.12 AI implementation (reference)
 
 The detailed implementation documentation is
 **[AI_IMPLEMENTATION_EN.md](AI_IMPLEMENTATION_EN.md)** (German version:

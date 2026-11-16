@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **User project templates**: **Presets → Save current project as template…**
+  stores the current geometry, materials, variables, ports, dumps, display
+  options and mesh/solver settings as a reusable `.fcsim.json` file in a
+  dedicated template folder. **Presets → New project from template…** lists
+  all templates with description, creation date, contents and a preview,
+  creates a fresh unsaved project with a new project id, and offers delete,
+  change-folder and open-folder actions. Results, markers and the S-parameter
+  reference are excluded. Any normal project file copied into the folder is
+  also usable; invalid files are marked with a warning. The help topic
+  **Project Templates**, README and implementation tests were added.
+
 ### Fixed
 
 - **Stale result viewers after loading a preset**: presets now use the same

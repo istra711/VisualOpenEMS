@@ -24,6 +24,7 @@ TAB_ORDER = [
     "AI Assistant",
     "AI Project Generation",
     "AI Implementation",
+    "Project Templates",
     "Polarization & Phase Center",
     "Antenna Simulation",
     "Cylindrical Mesh",
@@ -1611,7 +1612,7 @@ Settings (app_settings.json, git-ignored)
   Offline mode keeps diagnosis, fixes, templates, validation and preflight.
 
 Tests and verification
-  • python -m pytest tests -q  (current suite: 521 passed)
+  • python -m pytest tests -q  (current suite: 531 passed)
   • test_ai_knowledge.py covers roots, safe scan, chunking, ranking, budget,
     cache invalidation, version detection, German aliases and prompt citations.
   • Offscreen smoke: ai_assistant_smoke.py, project_generator_smoke.py,
@@ -1640,6 +1641,62 @@ Limits and planned work
   • No free-form Python, no CAD/STEP generation, no autonomous run loop.
   • Phase 3 (planned): StudySpec, multi-variable optimization, objectives and
     constraints from S-params/NF2FF, resumable study runs and an AI advisor.
+""",
+    "Project Templates": """PROJECT TEMPLATES — save and reuse complete project setups
+
+What it is
+  • A user template is a normal .fcsim.json project file in a separate
+    template folder. Unlike the built-in Presets and AI project templates, it
+    is your own reusable starting point.
+  • Presets -> Save current project as template... stores geometry, materials,
+    variables, ports, dumps, mesh/solver settings, notes and display options.
+  • Presets -> New project from template... lists all templates with a preview
+    and creates a fresh unsaved project from one. The same manager is available
+    as File -> New from Template...
+  • Simulation results, S-parameter markers and the S-parameter comparison
+    reference are deliberately not part of a template.
+
+Saving a template
+  1. Build or open the project you want to reuse.
+  2. Choose Presets -> Save current project as template...
+  3. Enter a name and an optional description (stackup, port convention,
+     target application, what to adapt first).
+  4. Save. The template file appears in the template folder and in the
+     template manager.
+  • The dialog shows the project contents (ports, primitives, materials,
+    variables, frequency range, mesh preset) before saving.
+  • The current project is not modified and no project file is created.
+
+Creating a project from a template
+  1. Choose Presets -> New project from template...
+  2. Select a template; the preview shows description, creation date,
+     contents and the stored project name.
+  3. Click New project (or double-click the entry).
+  4. If the current project has unsaved changes, VisualopenEMS asks before
+     replacing the editor content.
+  5. The new project is unsaved: use File -> Save As to keep it. It gets a
+     fresh project id and never inherits old results or a comparison reference.
+
+Template folder
+  • Default: a "templates" folder next to app_settings.json (next to the EXE
+    in the packaged build).
+  • The manager shows the current path and offers Change folder... and Open
+    folder.
+  • Any normal .fcsim.json project copied into the folder is listed as a
+    template even without the optional metadata block. Broken files are shown
+    with a warning and can be deleted from the manager.
+  • Delete removes only the template file; projects already created from it
+    and their runs are untouched.
+
+Limits and notes
+  • File references stored in the project (FreeCAD/STEP/STL paths) are made
+    relative to the template folder. Moving the template alone can break
+    those external references; copy the referenced files with it or re-import
+    the geometry.
+  • A template is a starting point, not a verified design. Rebuild the mesh
+    and rerun after adapting frequency, substrate or dimensions.
+  • Results are not stored. Use a normal project file if you need to archive
+    simulation data.
 """,
     "Polarization & Phase Center": """POLARIZATION & PHASE CENTER — derived from the NF2FF far field
 

@@ -868,7 +868,7 @@ Relevant files:
   budget, disabled mode, cache invalidation, version detection, German domain
   aliases, prompt citations and truncation.
 
-Current result: **521 passed**.
+Current result: **531 passed**.
 
 ### GUI smoke tests (offscreen)
 

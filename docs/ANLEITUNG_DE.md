@@ -680,7 +680,33 @@ Solver-Aktionen.
 Matching müssen mit Mesh und Simulation verifiziert werden. Phase 2 enthält
 keine freie CAD-/STEP-Generierung und keine Mehrvariablen-Optimierung.
 
-### 5.11 KI-Implementierung (Referenz)
+### 5.11 Benutzer-Projektvorlagen
+
+**Speichern:** **Presets → Save current project as template…** speichert die
+aktuelle Geometrie, Materialien, Variablen, Ports, Dumps, Anzeigeoptionen und
+Mesh-/Solver-Einstellungen als wiederverwendbare `.fcsim.json`-Datei. Name und
+eine optionale Beschreibung angeben. Simulationsergebnisse, Marker und die
+S-Parameter-Referenz werden nicht übernommen.
+
+**Erzeugen:** **Presets → New project from template…** listet alle Vorlagen mit
+Beschreibung, Erstellungsdatum, Inhalt und Vorschau. **New project** (oder
+Doppelklick) erzeugt ein frisches, **ungespeichertes** Projekt mit neuer
+Projekt-ID; anschließend **File → Save As** verwenden. Bei ungespeicherten
+Änderungen fragt VisualopenEMS vor dem Ersetzen des Editorinhalts.
+
+**Ordner:** Standard ist ein `templates`-Ordner neben `app_settings.json` (beim
+EXE-Build neben der EXE). Der Manager bietet **Change folder…** und **Open
+folder**. Jede normale `.fcsim.json`, die in diesen Ordner kopiert wird, wird
+ebenfalls gelistet; ungültige Dateien sind markiert und können gelöscht werden.
+Löschen entfernt nur die Vorlagendatei, keine Projektdaten oder committeten
+Läufe.
+
+**Hinweise:** CAD-/STEP-/STL-Referenzen werden relativ zum Vorlagenordner
+gespeichert; das Verschieben einer Vorlage allein kann externe Dateiverweise
+brechen. Eine Vorlage ist ein Startpunkt – Frequenz/Substrat/Maße anpassen,
+Mesh neu bauen und erneut simulieren, bevor das Ergebnis verwendet wird.
+
+### 5.12 KI-Implementierung (Referenz)
 
 Die ausführliche Implementierungsdokumentation steht in
 **[AI_IMPLEMENTATION_DE.md](AI_IMPLEMENTATION_DE.md)** (englische Fassung:

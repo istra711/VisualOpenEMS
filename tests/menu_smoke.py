@@ -84,6 +84,7 @@ def test_menu_structure_and_shortcuts() -> None:
     assert got == MENUS, got
 
     assert _find(_menu("File"), "New Project").shortcut().toString() == "Ctrl+N"
+    assert _find(_menu("File"), "New from Template\u2026") is not None
     assert _find(_menu("File"), "Open\u2026").shortcut().toString() == "Ctrl+O"
     assert _find(_menu("File"), "Save").shortcut().toString() == "Ctrl+S"
     assert _find(_menu("File"), "Save As\u2026").shortcut().toString() == "Ctrl+Shift+S"
@@ -163,6 +164,7 @@ def test_menu_structure_and_shortcuts() -> None:
     assert _find(_menu("Help"), "AI assistant (error analysis)\u2026") is not None
     assert _find(_menu("Help"), "AI project generation and edits\u2026") is not None
     assert _find(_menu("Help"), "AI implementation details\u2026") is not None
+    assert _find(_menu("Help"), "Project templates (user)\u2026") is not None
     assert _find(_menu("View"), "Log Panel").shortcut().toString() == "Ctrl+L"
     assert _find(_menu("View"), "Project / Geometry Panel").shortcut().toString() == "Ctrl+B"
     assert _find(_menu("Help"), "Help for Current Tab").shortcut().toString() == "F1"
@@ -181,6 +183,9 @@ def test_menu_structure_and_shortcuts() -> None:
         "Preset: PCB Hairpin Bandpass (2.4 GHz)\u2026",
         "Preset: GPS L1 Patch (1.57542 GHz)\u2026",
         "Preset: WR62 Waveguide (10 GHz)\u2026",
+        "",
+        "New project from template\u2026",
+        "Save current project as template\u2026",
     ], presets
     tabs = [_strip(a.text()) for a in _menu("View").actions()]
     for name in ("Geometry", "Mesh Viewer", "S-Params"):

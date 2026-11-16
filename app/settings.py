@@ -34,6 +34,8 @@ class AppSettings:
     openems_root: str = str(OPENEMS_ROOT_DEFAULT)
     simulation_python: str = str(PYTHON_DEFAULT)
     work_dir: str = str(DEFAULT_WORKDIR)
+    #: folder for user project templates (normal .fcsim.json files)
+    template_dir: str = str(settings_path().parent / "templates")
     default_unit: str = "mm"  # mm | um | m
     last_project: str = ""
     #: most-recently-opened project files, newest first (File → Recent projects)

@@ -130,10 +130,12 @@ hiddenimports = [
     "app.ai.project_patch",
     "app.ai.templates",
     "app.ai.worker",
+    "app.project_templates",
     "app.ui.ai_panel",
     "app.ui.ai_settings_dialog",
     "app.ui.project_generator",
     "app.ui.project_patch_dialog",
+    "app.ui.project_template_dialogs",
 ]
 binaries += collect_dynamic_libs("CSXCAD")
 binaries += collect_dynamic_libs("openEMS")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import uuid
@@ -943,3 +944,26 @@ class Project:
             ),
         ]
         return p
+
+
+def project_to_dict_for_folder(
+    project: Project, folder: Path | str, *, relative: bool = True
+) -> dict[str, Any]:
+    """Project JSON with owned paths mapped relative to ``folder``.
+
+    Used by user project templates, whose JSON lives outside the normal
+    project data folder.  ``relative=True`` makes the template movable;
+    ``Project.save`` uses the same mapping for regular projects.
+    """
+    data = project.to_dict()
+    _map_project_paths(data, Path(folder), relative=relative)
+    return data
+
+
+def project_from_dict_for_folder(
+    data: dict[str, Any], folder: Path | str
+) -> Project:
+    """Build a ``Project`` whose relative paths resolve against ``folder``."""
+    payload = copy.deepcopy(data)
+    _map_project_paths(payload, Path(folder), relative=False)
+    return Project.from_dict(payload)

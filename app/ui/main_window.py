@@ -1467,6 +1467,12 @@ class MainWindow(QMainWindow):
 
         fmenu = bar.addMenu("&File")
         add_action(fmenu, "New Project", btn=self.btn_new, shortcut="Ctrl+N")
+        add_action(
+            fmenu,
+            "New from Template\u2026",
+            slot=self._on_new_project_from_template,
+            tip="Create a new unsaved project from one of your saved user templates",
+        )
         add_action(fmenu, "Open\u2026", btn=self.btn_open, shortcut="Ctrl+O")
         self._recent_menu = fmenu.addMenu("Recent projects")
         self._recent_menu.setStatusTip("Project files opened most recently")
@@ -1526,6 +1532,21 @@ class MainWindow(QMainWindow):
             "Preset: WR62 Waveguide (10 GHz)\u2026",
             btn=self.btn_wr62,
             tip="Straight WR62 guide, 100 mm, TE10 at 10 GHz, E/H/J dumps",
+        )
+        pmenu.addSeparator()
+        self.act_template_new = add_action(
+            pmenu,
+            "New project from template\u2026",
+            slot=self._on_new_project_from_template,
+            tip="Browse saved user templates with preview/metadata and create a "
+            "new unsaved project from one",
+        )
+        self.act_template_save = add_action(
+            pmenu,
+            "Save current project as template\u2026",
+            slot=self._on_save_project_template,
+            tip="Store the current geometry, materials, ports, variables and "
+            "mesh/solver settings as a reusable template (without results)",
         )
 
         # The Geometry menu mirrors the project-panel right-click "Add" menu:
@@ -2032,6 +2053,13 @@ class MainWindow(QMainWindow):
             "AI implementation details\u2026",
             slot=lambda: show_tab_help(self, "AI Implementation"),
             tip="Architecture, safety gates, data flow, tests and extension points",
+        )
+        add_action(
+            hmenu,
+            "Project templates (user)\u2026",
+            slot=lambda: show_tab_help(self, "Project Templates"),
+            tip="Save the current project as a reusable template, browse "
+            "previews/metadata and create a new project from one",
         )
         add_action(
             hmenu,
@@ -7354,6 +7382,99 @@ class MainWindow(QMainWindow):
         for ln in lines:
             self._log(ln)
         self._log_computed_summary()
+
+    def _on_save_project_template(self) -> None:
+        """Save the current project as a reusable user template."""
+        if self.runner.is_running():
+            QMessageBox.warning(
+                self,
+                "Save template",
+                "A simulation is running. Abort it before saving a template.",
+            )
+            return
+        try:
+            self._sync_project_from_form()
+            self.project.primitives = list(self.primitives)
+        except Exception:  # noqa: BLE001 - template save is best effort
+            self.project.primitives = list(self.primitives)
+        from app.ui.project_template_dialogs import SaveProjectTemplateDialog
+
+        dlg = SaveProjectTemplateDialog(
+            self.project, self.primitives, self.settings, self
+        )
+        if not dlg.exec():
+            return
+        info = dlg.template_info
+        if info is None:
+            return
+        self._log(f"Project template saved: {info.name} -> {info.path}")
+        self.statusBar().showMessage(f"Template saved: {info.name}", 5000)
+
+    def _on_new_project_from_template(self) -> None:
+        """Browse user templates and create a new unsaved project from one."""
+        from app.ui.project_template_dialogs import ProjectTemplateDialog
+
+        dlg = ProjectTemplateDialog(self.settings, self)
+        if not dlg.exec():
+            return
+        info = dlg.selected_template()
+        if info is None:
+            return
+        from app.project_templates import TemplateError, load_project_template
+
+        try:
+            loaded = load_project_template(info.path)
+        except (TemplateError, OSError, ValueError) as exc:
+            QMessageBox.warning(
+                self, "Project template", f"Could not load the template:\n{exc}"
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 - never crash on a bad file
+            QMessageBox.warning(
+                self, "Project template", f"Could not load the template:\n{exc}"
+            )
+            return
+        if not self._confirm_replace_project(
+            "New project from template",
+            f"The template '{loaded.info.name}' creates a new unsaved project. "
+            "It will replace the current editor content. Use File -> Save As "
+            "to keep it.",
+        ):
+            return
+        self._install_template_project(loaded)
+
+    def _install_template_project(self, loaded) -> None:
+        """Install a loaded template as a fresh, unsaved project."""
+        project = loaded.project
+        name = str(loaded.info.name or project.name or "template").strip()
+        project.name = name or project.name
+        self.project = project
+        self.primitives = list(loaded.primitives)
+        self.project.primitives = list(self.primitives)
+        self._prepare_preset_project(f"project template: {name}")
+        try:
+            self._sync_form_from_project()
+            if hasattr(self.sim_params, "set_patch_group_visible"):
+                self.sim_params.set_patch_group_visible(bool(project.patch_params))
+            self._refresh_tree()
+            self._refresh_ports()
+            self._refresh_materials()
+            self._update_viewer_domain(self.project)
+        except Exception as exc:  # noqa: BLE001 - UI refresh must not lose project
+            self._log(f"Template UI refresh failed: {exc}")
+        self._update_window_title()
+        # A template is a new unsaved project: closing must ask before losing it.
+        self._saved_project_sig = "__template_unsaved__"
+        self._update_run_actions()
+        text = (
+            loaded.summary()
+            + "\n\nNew unsaved project created from a template. "
+            "Use File -> Save As to keep it."
+        )
+        self.geom_info.setPlainText(text)
+        self.statusBar().showMessage(f"New project from template: {name}", 6000)
+        self._log(f"New project created from template '{name}': {loaded.path}")
+        self._refresh_ai_context()
 
     def _on_add_assignment(self) -> None:
         from app.ui.geometry_editors import AssignmentDialog

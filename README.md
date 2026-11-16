@@ -171,6 +171,13 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
   lines per axis in mm (plus cell counts, min/max cell size and the FDTD
   domain) so another FDTD solver — e.g. CST — can run on identical cell
   boundaries.
+- **User project templates** — **Presets → Save current project as template…**
+  stores the current geometry, materials, variables, ports, mesh/solver
+  settings and notes as a reusable `.fcsim.json` template. **Presets → New
+  project from template…** (also **File → New from Template…**) lists all
+  templates with a preview/metadata, creates a fresh unsaved project and
+  offers folder change, delete and open folder. Results, markers and the
+  S-parameter reference are not stored.
 - Simulation script editor with regenerate/revert workflow
 - Project save/load (`.fcsim.json`) with backward-compatible deserialization
 
@@ -318,6 +325,7 @@ VisualopenEMS/
 │   ├── main.py                    # GUI entry point (PySide6)
 │   ├── paths.py                   # App root resolution
 │   ├── settings.py                # Persistent app settings
+│   ├── project_templates.py       # User template storage, metadata and loading
 │   ├── models/
 │   │   └── project.py             # Project, MeshSpec, SimSpec, NF2FFDef, BoundarySpec, PortDef …
 │   ├── ai/
@@ -366,6 +374,7 @@ VisualopenEMS/
 │       ├── ai_settings_dialog.py  # Provider, model, timeout and context settings
 │       ├── project_generator.py   # Template generator and AI suggestion dialog
 │       ├── project_patch_dialog.py # Structured project edit dialog
+│       ├── project_template_dialogs.py # User template save/browse dialogs
 │       ├── mesh_params.py         # Mesh parameter dialog
 │       ├── sim_params.py          # Simulation parameter dialog
 │       ├── ports_dumps.py         # Ports & dumps dialog
@@ -493,6 +502,16 @@ python app\main.py
 6. **Simulation → Commit staged results** — publish the run as the active result
 7. View results in the **S-Params**, **Antenna**, and **Fields** tabs; old
    committed runs remain available under **Simulation → Run history…**
+
+### Save your own project template
+
+1. Set up geometry, materials, variables, ports, mesh and solver settings.
+2. **Presets → Save current project as template…** — give it a name and a
+   short description. Results, markers and the S-parameter reference are not
+   stored.
+3. Later use **Presets → New project from template…** to browse the template
+   with preview/metadata and create a fresh unsaved project. The manager can
+   also open/change the template folder or delete a template.
 
 ### Try the AI features
 
@@ -952,7 +971,7 @@ python -m pytest tests -q
 
 The suite covers the project model, simulation helpers, S-parameter comparison,
 variable sweeps, AI diagnosis/fixes/context/backend parsing, project templates,
-structured patches and the structural preflight. Current result: **511 passed**.
+structured patches and the structural preflight. Current result: **531 passed**.
 
 ### Quick verification
 
@@ -975,6 +994,7 @@ python tests\tab_help_smoke.py
 python tests\tree_edit_smoke.py
 python tests\ai_assistant_smoke.py
 python tests\project_generator_smoke.py
+python tests\project_template_smoke.py
 ```
 
 ### Physics tests
