@@ -111,7 +111,7 @@ Built with Python 3.11, PySide6 (Qt 6), and the openEMS/CSXCAD Python APIs.
 - FDTD via openEMS Python bindings (`FDTD` / `CSXCAD`)
 - Configurable frequency range, excitation (Gaussian pulse f0/fc), boundary conditions (PML / Mur / periodic / PEC / PMC), air margin, and timestep limits
 - **Boundary “all sides equal”**: set all six faces to PEC, PMC, MUR or PML in one action; individual faces stay editable
-- **Transactional runs**: a run is written to a project-local `staging/` folder, then explicitly committed to an immutable `runs/<id>/` folder; older runs are retained and the project JSON is only written by Save/Commit. **Save** offers to commit a staged run; the close dialog offers Commit / Keep staged / Discard / Cancel.
+- **Transactional runs**: a run is written to a project-local `staging/` folder, then explicitly committed to an immutable `runs/<id>/` folder; older runs are retained and the project JSON is only written by Save/Commit. **Save** offers to commit a staged run; the close dialog offers Commit / Keep staged / Discard / Cancel. On reopening, leftover staging is detected and can be loaded for inspection or committed.
 - Multi-threaded solver control (auto or manual thread count)
 - Field dumps (Et/Hz time-domain, Ef/Hf frequency-domain) on configurable grids
 - NF2FF (Near-Field to Far-Field) box with automatic positioning

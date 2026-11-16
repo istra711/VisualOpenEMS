@@ -110,18 +110,36 @@ def main() -> int:
     with patch("app.ui.main_window.QMessageBox.exec", return_value=0), patch(
         "app.ui.main_window.QMessageBox.clickedButton", return_value=None
     ):
-        assert win._confirm_close_staged_results() is True
+        assert win._confirm_close_staged_results() is False
     win._discard_staged_run(reason="test cleanup")
     print("  close dialog with staged results OK")
 
     # Re-opening the project restores exactly the committed active run.
+    staging_recover = win._fresh_staged_run()
+    _write_run_outputs(staging_recover, 0.27)
+    win._staged_run_status = "complete"
     win2 = MainWindow(settings)
     win2._open_project_path(project_path)
     app.processEvents()
     assert win2._active_run_dir() == Path(active_save), win2._active_run_dir()
     assert run2.is_dir(), "older committed run disappeared after Save"
     assert win2.sparam_viewer.network is not None, "reopened S-params missing"
+    # A staging folder from the earlier session is not in the project JSON;
+    # recovering it must make its data visible and then committable.
+    win2._adopt_staged_run(staging_recover, "complete")
+    assert win2._staged_run_dir == staging_recover
+    assert win2._result_data_root() == staging_recover
+    staged_network = Path(win2.sparam_viewer.network_path or "")
+    assert staging_recover in staged_network.parents, (
+        "recovered staged S-params were not loaded",
+        staged_network,
+    )
+    run_recover = win2._commit_staged_run()
+    assert run_recover is not None and run_recover.is_dir()
+    assert win2._staged_run_dir is None
+    assert (run_recover / "sparams" / "sparams.json").is_file()
     win2.close()
+    print("  staged-run recovery -> load -> commit OK")
 
     # Save As with a pending third run: old project/data untouched, new project
     # gets a copy of the staged run.

@@ -516,6 +516,10 @@ Results: staging, commit, history
   • Closing with staged results offers Commit and close / Keep staged and
     close / Discard and close / Cancel; a failed run needs a second
     confirmation before it is committed.
+  • Opening a project detects staging folders left by an earlier session and
+    offers **Load for inspection**, **Commit and load**, **Discard staging** or
+    **Cancel**. Loaded results are visible immediately; Commit publishes them
+    under runs/ and makes them active.
   • Save As creates a new project: staged results are copied into the new
     project, the old project file/data folder stay untouched.
   • The project JSON is written only by Save / Commit (plus explicit dialogs),

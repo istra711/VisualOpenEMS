@@ -29,7 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   staged and close**, **Discard and close** and **Cancel**, and states that
   saving the project alone does not publish results. This removes the
   misleading "results are still staged" warning after a normal Save without
-  silently committing a run.
+  silently committing a run. When a project is reopened, leftover staging from
+  an earlier session is detected and can be **loaded for inspection**,
+  **committed and loaded** or discarded, so results remain visible even after
+  an interrupted/kept-staged session.
 
 ### Fixed
 

@@ -456,7 +456,7 @@ class MainWindow(QMainWindow):
         box.setEscapeButton(cancel_btn)
         box.exec()
         clicked = box.clickedButton()
-        if clicked is cancel_btn:
+        if clicked is None or clicked is cancel_btn:
             return False
         if clicked is discard_btn:
             self._discard_staged_run(reason="discarded while closing")
@@ -5176,8 +5176,30 @@ class MainWindow(QMainWindow):
         _update_ref_button()
         dlg.exec()
 
+    def _staging_status(self, staging: Path | str) -> str:
+        """Best-effort status of a staging folder left by an earlier session."""
+        path = Path(staging)
+        markers = (
+            path / "sparams",
+            path / "sparams.json",
+            path / "nf2ff",
+            path / "vtk",
+            path / "fields",
+            path / "sweep.json",
+        )
+        return "complete" if any(marker.exists() for marker in markers) else "failed"
+
+    def _adopt_staged_run(self, staging: Path | str, status: str) -> None:
+        """Make a recovered staging folder the current (uncommitted) run."""
+        path = Path(staging)
+        self._staged_run_dir = path
+        self._staged_run_status = str(status or self._staging_status(path))
+        self._staged_run_kind = "sweep" if (path / "sweep.json").is_file() else "single"
+        self._update_run_actions()
+        self._load_last_results()
+
     def _recover_staged_runs(self) -> None:
-        """Offer to keep or discard staging folders left by an earlier session."""
+        """Offer to load/commit/discard staging folders from an earlier session."""
         try:
             stale = [
                 p
@@ -5188,25 +5210,70 @@ class MainWindow(QMainWindow):
             return
         if not stale:
             return
-        # Do not delete automatically: a crashed solver run may be the only
-        # copy of a diagnosis.  Ask once; "Keep" leaves it in staging.
+        # Prefer the newest folder that contains actual result files; fall back
+        # to the newest folder (a crashed run may only hold a log/script).
+        with_results = [p for p in stale if self._staging_status(p) == "complete"]
+        candidate = (
+            max(with_results, key=lambda p: p.stat().st_mtime)
+            if with_results
+            else max(stale, key=lambda p: p.stat().st_mtime)
+        )
+        status = self._staging_status(candidate)
         names = ", ".join(p.name for p in stale[:4])
         if len(stale) > 4:
             names += ", …"
-        reply = QMessageBox.question(
-            self,
-            "Uncommitted staged results",
-            f"Staging folder(s) from an earlier session were found:\n{names}\n\n"
-            "Keep them for recovery? (No = discard them.)",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Staged results from an earlier session")
+        box.setText(
+            "Simulation results from an earlier session are still in the "
+            "project's staging folder and are not part of the saved project:"
         )
-        if reply == QMessageBox.StandardButton.No:
-            for p in stale:
+        box.setInformativeText(
+            f"{names}\n\nNewest: {candidate.name}\n\n"
+            "Load for inspection shows the staged data without publishing it. "
+            "Commit and load publishes the newest run and makes it active. "
+            "Discard deletes the staging folder(s). Cancel keeps them on disk."
+        )
+        load_btn = box.addButton(
+            "Load for inspection", QMessageBox.ButtonRole.AcceptRole
+        )
+        commit_btn = box.addButton(
+            "Commit and load", QMessageBox.ButtonRole.ActionRole
+        )
+        discard_btn = box.addButton(
+            "Discard staging", QMessageBox.ButtonRole.DestructiveRole
+        )
+        cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+        commit_btn.setEnabled(
+            status == "complete" and self._current_file_path is not None
+        )
+        box.setDefaultButton(load_btn)
+        box.setEscapeButton(cancel_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is None or clicked is cancel_btn:
+            return
+        if clicked is discard_btn:
+            for path in stale:
                 try:
-                    self._project_store().discard(p)
-                except Exception as e:  # noqa: BLE001
-                    self._log(f"Could not discard stale staging {p}: {e}")
+                    self._project_store().discard(path)
+                except Exception as exc:  # noqa: BLE001
+                    self._log(f"Could not discard stale staging {path}: {exc}")
+            self._log("Discarded staged results from an earlier session.")
+            return
+        self._adopt_staged_run(candidate, status)
+        if clicked is commit_btn:
+            run = self._commit_staged_run()
+            if run is None:
+                self._load_last_results()
+            else:
+                self._log(f"Committed recovered staged run: {run} (active)")
+        else:
+            self._log(
+                f"Loaded staged results for inspection: {candidate} — use "
+                "Simulation → Commit staged results to publish them."
+            )
 
     def _backup_project_before_run(self) -> Path | None:
         """Copy the current project JSON to ``<stem>.fcsim.json.bak``.
@@ -5431,7 +5498,15 @@ class MainWindow(QMainWindow):
         # recorded mesh -> fixed locations (new project folder, legacy
         # simulation/ folder); never another project's folder
         project_dir = self._project_work_dir()
-        candidates = [rec.get("csx_xml"), rec.get("mesh_xml")]
+        staged = self._staged_run_dir
+        candidates: list = []
+        if (
+            staged is not None
+            and Path(staged).is_dir()
+            and self._path_within(Path(staged), project_dir)
+        ):
+            candidates.append(Path(staged) / "csx.xml")
+        candidates += [rec.get("csx_xml"), rec.get("mesh_xml")]
         rec_sim = self._existing_path(rec.get("sim_dir"))
         if rec_sim is not None and self._path_within(rec_sim, project_dir):
             candidates.append(rec_sim / "csx.xml")
@@ -5649,6 +5724,16 @@ class MainWindow(QMainWindow):
         """
         rec = dict(self.project.results or {})
         expected_dir = self._project_work_dir()
+        staged = self._staged_run_dir
+        using_staged = bool(
+            staged is not None
+            and Path(staged).is_dir()
+            and self._path_within(Path(staged), expected_dir)
+        )
+        if using_staged:
+            # While inspecting a staged run, never mix in paths recorded for
+            # the committed active run.
+            rec = {}
         rec_dir = self._existing_path(rec.get("project_dir"))
         # Strict scoping: a recorded path from another folder/name is stale and
         # must not pull a different simulation's results into this project.
@@ -5658,9 +5743,13 @@ class MainWindow(QMainWindow):
             )
             rec = {}
         project_dir = expected_dir
+        data_dir = self._result_data_root()
         active_run = self._active_run_dir()
-        data_dir = active_run or project_dir
-        sim_dir = active_run or project_dir / "simulation"
+        sim_dir = (
+            data_dir
+            if data_dir != project_dir
+            else (active_run or project_dir / "simulation")
+        )
         loaded: list[str] = []
         cleared: list[str] = []
 

@@ -737,7 +737,9 @@ and NF2FF) is planned but not implemented.
      it the active result. Older runs stay on disk.
    - **File → Save** writes the project definition; if a run is staged, Save
      asks whether to commit it. **Yes** publishes it, **No** keeps it in the
-     staging folder. Closing offers Commit/Keep/Discard/Cancel.
+     staging folder. Closing offers Commit/Keep/Discard/Cancel. Reopening a
+     project detects leftover staging and offers Load for inspection / Commit
+     and load / Discard / Cancel.
    - **Discard staged results** deletes only the staging folder.
    - **Run history…** lists committed runs and can switch the active run.
 4. **Script…** (Simulation menu) — view and edit the project-level `project_run.py`
